@@ -1,0 +1,117 @@
+/* AGC Inventory plugin — shared styles for both widgets.
+ * Deliberately neutral so it inherits your Elementor theme typography.
+ * Only contributes layout + metal accent colors.
+ */
+.agc-inv-wrap {
+    font-family: inherit;
+    color: inherit;
+    max-width: 100%;
+}
+
+.agc-inv-wrap .agc-inv-section {
+    margin-bottom: 1.75rem;
+}
+
+.agc-inv-wrap .agc-inv-metal-heading {
+    font-size: 1.1rem;
+    font-weight: 600;
+    padding: 0.35rem 0.75rem;
+    border-radius: 4px;
+    margin: 0 0 0.5rem 0;
+    border: 1px solid transparent;
+}
+
+.agc-inv-section--gold .agc-inv-metal-heading {
+    background: #fffbeb;
+    border-color: #fcd34d;
+    color: #92400e;
+}
+
+.agc-inv-section--silver .agc-inv-metal-heading {
+    background: #f1f5f9;
+    border-color: #cbd5e1;
+    color: #334155;
+}
+
+.agc-inv-section--platinum .agc-inv-metal-heading {
+    background: #f0f9ff;
+    border-color: #7dd3fc;
+    color: #075985;
+}
+
+.agc-inv-section--palladium .agc-inv-metal-heading {
+    background: #f5f3ff;
+    border-color: #c4b5fd;
+    color: #5b21b6;
+}
+
+.agc-inv-section--other .agc-inv-metal-heading {
+    background: #f3f4f6;
+    border-color: #d1d5db;
+    color: #374151;
+}
+
+.agc-inv-wrap .agc-inv-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.95rem;
+    margin-top: 0.25rem;
+}
+
+.agc-inv-wrap .agc-inv-table th,
+.agc-inv-wrap .agc-inv-table td {
+    border-bottom: 1px solid #e5e7eb;
+    padding: 0.55rem 0.6rem;
+    text-align: left;
+    vertical-align: baseline;
+}
+
+.agc-inv-wrap .agc-inv-table th {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #6b7280;
+    font-weight: 600;
+    background: #fafafa;
+}
+
+.agc-inv-wrap .agc-inv-col-qty,
+.agc-inv-wrap .agc-inv-col-price {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    width: 7rem;
+}
+
+.agc-inv-wrap .agc-inv-name {
+    font-weight: 500;
+}
+
+.agc-inv-wrap .agc-inv-footnote {
+    margin-top: 1rem;
+    font-size: 0.8rem;
+    color: #6b7280;
+}
+
+.agc-inv-wrap .agc-inv-empty {
+    padding: 1.5rem;
+    text-align: center;
+    color: #6b7280;
+    background: #fafafa;
+    border-radius: 4px;
+}
+
+.agc-inv-error {
+    padding: 1rem;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #991b1b;
+    border-radius: 4px;
+}
+
+/* Subtle fade-in when rows re-render after a poll so the update is
+   visible without being distracting. */
+.agc-inv-wrap.agc-inv-refreshing {
+    opacity: 0.7;
+    transition: opacity 120ms ease-in-out;
+}

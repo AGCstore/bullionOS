@@ -7,8 +7,10 @@ import { PageTint } from '@/components/page-tint';
 import type { SheetRow } from '@/lib/sheet-types';
 import {
   SECTIONS,
+  METAL_GROUPS,
   deriveDisplayCategory,
   compareByFamily,
+  groupSectionsByMetal,
   type DisplayCategory,
 } from '@/lib/product-category';
 
@@ -134,26 +136,35 @@ export default function AdminInventoryPage() {
           />
         </section>
 
-        {/* Sticky jump bar so the operator can hop sections without
-            scrolling. Scrolls horizontally on narrow viewports. */}
+        {/* Jump bar grouped by metal so the operator sees Gold / Silver /
+            Platinum / Palladium as primary hubs with category sub-links. */}
         {sectionsToRender.length > 0 && (
           <nav className="sticky top-0 z-10 -mx-2 mt-6 overflow-x-auto rounded-xl border border-sell-200 bg-white/95 px-2 py-2 backdrop-blur">
-            <div className="flex min-w-max gap-1 text-xs">
-              {sectionsToRender.map((s) => {
-                const b = sectionRows.get(s.id)!;
-                return (
-                  <a
-                    key={s.id}
-                    href={`#${s.id}`}
-                    className="flex items-center gap-1.5 rounded-md px-3 py-1.5 font-medium text-ink-700 hover:bg-sell-50"
+            <div className="flex min-w-max items-center gap-4 text-xs">
+              {groupSectionsByMetal(sectionsToRender).map((g) => (
+                <div key={g.metal} className="flex items-center gap-1">
+                  <span
+                    className={`rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide border ${METAL_GROUPS[g.metal].accentClass}`}
                   >
-                    {s.label}
-                    <span className="rounded-full bg-sell-100 px-1.5 text-[10px] text-sell-700">
-                      {b.inStock.length}
-                    </span>
-                  </a>
-                );
-              })}
+                    {METAL_GROUPS[g.metal].label}
+                  </span>
+                  {g.sections.map((s) => {
+                    const b = sectionRows.get(s.id)!;
+                    return (
+                      <a
+                        key={s.id}
+                        href={`#${s.id}`}
+                        className="flex items-center gap-1 rounded-md px-2 py-1 font-medium text-ink-700 hover:bg-sell-50"
+                      >
+                        {s.label}
+                        <span className="rounded-full bg-sell-100 px-1.5 text-[10px] text-sell-700">
+                          {b.inStock.length}
+                        </span>
+                      </a>
+                    );
+                  })}
+                </div>
+              ))}
             </div>
           </nav>
         )}
@@ -165,18 +176,27 @@ export default function AdminInventoryPage() {
         )}
 
         {!isLoading &&
-          sectionsToRender.map((s) => {
-            const b = sectionRows.get(s.id)!;
-            return (
-              <CategorySection
-                key={s.id}
-                id={s.id}
-                label={s.label}
-                inStock={b.inStock}
-                outOfStock={b.outOfStock}
-              />
-            );
-          })}
+          groupSectionsByMetal(sectionsToRender).map((g) => (
+            <div key={g.metal}>
+              <h2
+                className={`mt-10 mb-2 rounded-md border px-3 py-2 text-lg font-semibold ${METAL_GROUPS[g.metal].accentClass}`}
+              >
+                {METAL_GROUPS[g.metal].label}
+              </h2>
+              {g.sections.map((s) => {
+                const b = sectionRows.get(s.id)!;
+                return (
+                  <CategorySection
+                    key={s.id}
+                    id={s.id}
+                    label={s.label}
+                    inStock={b.inStock}
+                    outOfStock={b.outOfStock}
+                  />
+                );
+              })}
+            </div>
+          ))}
 
         {!isLoading && sectionsToRender.length === 0 && (
           <div className="mt-8 rounded-xl border border-ink-200 bg-white p-12 text-center text-sm text-ink-400">

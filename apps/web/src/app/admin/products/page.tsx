@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, ApiError } from '@/lib/api-client';
 import {
@@ -19,6 +19,14 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import {
+  SECTIONS,
+  METAL_GROUPS,
+  deriveDisplayCategory,
+  compareByFamily,
+  groupSectionsByMetal,
+  type DisplayCategory,
+} from '@/lib/product-category';
 
 interface Product {
   id: string;
@@ -35,11 +43,13 @@ interface Product {
 }
 
 /**
- * Catalog page (formerly the "Products" sidebar link; now renamed to
- * "Catalog" since the inventory page owns the "Products" label). Rows are
- * draggable — grab the ⋮⋮ handle and drop anywhere. We keep a local mirror
- * of the server order so the drop is instant, then persist to
- * /admin/products/reorder. If the POST fails we roll back.
+ * Catalog page. Products are grouped by metal → category (Gold Coins, Gold
+ * Bars, Pre-1933 Gold, Silver Coins, Generic Silver, Platinum Coins / Bars,
+ * Palladium Coins / Bars, Other) with a family sort inside each.
+ *
+ * Drag-reorder still works, but scoped per category: the drop zone is the
+ * current section only. Cross-section drag is intentionally disabled —
+ * changing a product's metal/category happens on the detail page, not here.
  */
 export default function ProductsPage() {
   const qc = useQueryClient();
@@ -48,34 +58,84 @@ export default function ProductsPage() {
     queryFn: () => apiFetch<Product[]>('/admin/products'),
   });
 
+  // Local mirror of the server order. We split by section for the DnD
+  // contexts; on drop we persist the flattened order back to the server.
   const [items, setItems] = useState<Product[]>([]);
   useEffect(() => {
-    if (data) setItems(data);
+    if (!data) return;
+    // Default order within each category: family sort (keeps Eagles, etc.
+    // grouped by size). Operators can still drag to override; after a
+    // drag, sort_order becomes the source of truth for that section.
+    const sorted = [...data].sort((a, b) => {
+      const ca = deriveDisplayCategory(a);
+      const cb = deriveDisplayCategory(b);
+      // Use the SECTIONS array index to order categories consistently.
+      const ia = SECTIONS.findIndex((s) => s.id === ca);
+      const ib = SECTIONS.findIndex((s) => s.id === cb);
+      if (ia !== ib) return ia - ib;
+      // Within the same category, fall back to server sort_order if it
+      // diverges from a pristine family sort — respects manual reorders.
+      if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
+      return compareByFamily(a, b);
+    });
+    setItems(sorted);
   }, [data]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
-      // Require a small drag before kicking off sort so clicking on the
-      // SKU link still navigates to the detail page.
       activationConstraint: { distance: 6 },
     }),
+  );
+
+  const sectionRows = useMemo(() => {
+    const out = new Map<DisplayCategory, Product[]>();
+    for (const s of SECTIONS) out.set(s.id, []);
+    for (const p of items) {
+      const c = deriveDisplayCategory(p);
+      out.get(c)?.push(p);
+    }
+    return out;
+  }, [items]);
+
+  const sectionsToRender = SECTIONS.filter(
+    (s) => (sectionRows.get(s.id)?.length ?? 0) > 0,
   );
 
   async function onDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
-    const oldIdx = items.findIndex((p) => p.id === active.id);
-    const newIdx = items.findIndex((p) => p.id === over.id);
+
+    // Find which category the drag originated in so we can constrain the
+    // reorder to that section.
+    const activeProduct = items.find((p) => p.id === active.id);
+    const overProduct = items.find((p) => p.id === over.id);
+    if (!activeProduct || !overProduct) return;
+    const aCat = deriveDisplayCategory(activeProduct);
+    const oCat = deriveDisplayCategory(overProduct);
+    if (aCat !== oCat) return;
+
+    const sectionList = sectionRows.get(aCat)!;
+    const oldIdx = sectionList.findIndex((p) => p.id === active.id);
+    const newIdx = sectionList.findIndex((p) => p.id === over.id);
     if (oldIdx < 0 || newIdx < 0) return;
-    const next = arrayMove(items, oldIdx, newIdx);
+    const reorderedSection = arrayMove(sectionList, oldIdx, newIdx);
+
+    // Rebuild the full flat list from per-section arrays so server
+    // sort_order reflects the visible UI.
+    const nextFlat: Product[] = [];
+    for (const s of SECTIONS) {
+      if (s.id === aCat) nextFlat.push(...reorderedSection);
+      else if (sectionRows.get(s.id)) nextFlat.push(...sectionRows.get(s.id)!);
+    }
+
     const previous = items;
-    setItems(next);
+    setItems(nextFlat);
     try {
       await apiFetch('/admin/products/reorder', {
         method: 'POST',
-        body: JSON.stringify({ order: next.map((p) => p.id) }),
+        body: JSON.stringify({ order: nextFlat.map((p) => p.id) }),
       });
-      qc.setQueryData(['admin', 'products'], next);
+      qc.setQueryData(['admin', 'products'], nextFlat);
     } catch (err) {
       setItems(previous);
       alert(
@@ -92,9 +152,9 @@ export default function ProductsPage() {
         <div>
           <h1 className="text-2xl font-semibold">Catalog</h1>
           <p className="mt-1 text-sm text-ink-400">
-            Drag the <span className="font-mono">⋮⋮</span> handle to reorder.
-            Order applies everywhere the catalog is listed (invoice wizard,
-            in-stock sheet, what-we-pay).
+            Grouped by metal and family. Drag the{' '}
+            <span className="font-mono">⋮⋮</span> handle to reorder within a
+            category — order applies everywhere the catalog is listed.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -113,44 +173,106 @@ export default function ProductsPage() {
         </div>
       </div>
 
-      <div className="mt-6 overflow-hidden rounded-xl border border-ink-200 bg-white">
-        {isLoading ? (
-          <div className="p-8 text-center text-sm text-ink-400">Loading…</div>
-        ) : (
-          <table className="w-full text-sm">
-            <thead className="bg-ink-50 text-left text-xs uppercase tracking-wide text-ink-400">
-              <tr>
-                <th className="w-8 px-2 py-3" />
-                <th className="px-4 py-3">SKU</th>
-                <th className="px-4 py-3">Name</th>
-                <th className="px-4 py-3">Metal</th>
-                <th className="px-4 py-3 text-right">Weight (oz)</th>
-                <th className="px-4 py-3 text-right">Purity</th>
-                <th className="px-4 py-3 text-right">Content (oz)</th>
-                <th className="px-4 py-3 text-center">On website</th>
-                <th className="px-4 py-3"></th>
-              </tr>
-            </thead>
-            <DndContext
-              sensors={sensors}
-              collisionDetection={closestCenter}
-              onDragEnd={onDragEnd}
-            >
-              <SortableContext
-                items={items.map((p) => p.id)}
-                strategy={verticalListSortingStrategy}
+      {sectionsToRender.length > 0 && (
+        <nav className="sticky top-0 z-10 -mx-2 mt-6 overflow-x-auto rounded-xl border border-ink-200 bg-white/95 px-2 py-2 backdrop-blur">
+          <div className="flex min-w-max items-center gap-4 text-xs">
+            {groupSectionsByMetal(sectionsToRender).map((g) => (
+              <div key={g.metal} className="flex items-center gap-1">
+                <span
+                  className={`rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide border ${METAL_GROUPS[g.metal].accentClass}`}
+                >
+                  {METAL_GROUPS[g.metal].label}
+                </span>
+                {g.sections.map((s) => (
+                  <a
+                    key={s.id}
+                    href={`#${s.id}`}
+                    className="flex items-center gap-1 rounded-md px-2 py-1 font-medium text-ink-700 hover:bg-ink-50"
+                  >
+                    {s.label}
+                    <span className="rounded-full bg-ink-100 px-1.5 text-[10px] text-ink-600">
+                      {sectionRows.get(s.id)!.length}
+                    </span>
+                  </a>
+                ))}
+              </div>
+            ))}
+          </div>
+        </nav>
+      )}
+
+      {isLoading ? (
+        <div className="mt-6 rounded-xl border border-ink-200 bg-white p-8 text-center text-sm text-ink-400">
+          Loading…
+        </div>
+      ) : (
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={onDragEnd}
+        >
+          {groupSectionsByMetal(sectionsToRender).map((g) => (
+            <div key={g.metal}>
+              <h2
+                className={`mt-10 mb-2 rounded-md border px-3 py-2 text-lg font-semibold ${METAL_GROUPS[g.metal].accentClass}`}
               >
-                <tbody>
-                  {items.map((p) => (
-                    <SortableRow key={p.id} product={p} />
-                  ))}
-                </tbody>
-              </SortableContext>
-            </DndContext>
-          </table>
-        )}
-      </div>
+                {METAL_GROUPS[g.metal].label}
+              </h2>
+              {g.sections.map((s) => (
+                <CatalogSection
+                  key={s.id}
+                  id={s.id}
+                  label={s.label}
+                  rows={sectionRows.get(s.id)!}
+                />
+              ))}
+            </div>
+          ))}
+        </DndContext>
+      )}
     </div>
+  );
+}
+
+function CatalogSection({
+  id,
+  label,
+  rows,
+}: {
+  id: string;
+  label: string;
+  rows: Product[];
+}) {
+  return (
+    <section id={id} className="mt-4 scroll-mt-24">
+      <h3 className="mb-2 text-sm font-semibold text-ink-700">{label}</h3>
+      <div className="overflow-hidden rounded-xl border border-ink-200 bg-white">
+        <table className="w-full text-sm">
+          <thead className="bg-ink-50 text-left text-xs uppercase tracking-wide text-ink-400">
+            <tr>
+              <th className="w-8 px-2 py-3" />
+              <th className="px-4 py-3">SKU</th>
+              <th className="px-4 py-3">Name</th>
+              <th className="px-4 py-3 text-right">Weight (oz)</th>
+              <th className="px-4 py-3 text-right">Purity</th>
+              <th className="px-4 py-3 text-right">Content (oz)</th>
+              <th className="px-4 py-3 text-center">On website</th>
+              <th className="px-4 py-3"></th>
+            </tr>
+          </thead>
+          <SortableContext
+            items={rows.map((p) => p.id)}
+            strategy={verticalListSortingStrategy}
+          >
+            <tbody>
+              {rows.map((p) => (
+                <SortableRow key={p.id} product={p} />
+              ))}
+            </tbody>
+          </SortableContext>
+        </table>
+      </div>
+    </section>
   );
 }
 
@@ -166,12 +288,10 @@ function SortableRow({ product }: { product: Product }) {
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
-    // Lift the row while it's being dragged so the drop target is obvious.
     opacity: isDragging ? 0.6 : 1,
     background: isDragging ? '#f7f7f8' : undefined,
   };
 
-  // Sync local toggle when server data changes (after reorder invalidation).
   useEffect(() => {
     setChecked(product.show_on_website);
   }, [product.show_on_website]);
@@ -226,7 +346,6 @@ function SortableRow({ product }: { product: Product }) {
           </span>
         )}
       </td>
-      <td className="px-4 py-3 capitalize text-ink-600">{product.metal}</td>
       <td className="px-4 py-3 text-right font-mono">
         {Number(product.weight_troy_oz).toFixed(4)}
       </td>

@@ -25,23 +25,61 @@ export type DisplayCategory =
   | 'palladium_bars'
   | 'other';
 
+export type MetalGroup = 'gold' | 'silver' | 'platinum' | 'palladium' | 'other';
+
 export interface DisplaySection {
   id: DisplayCategory;
   label: string;
+  /** Metal this section rolls up under for the top-level header strip. */
+  metal: MetalGroup;
 }
 
 export const SECTIONS: DisplaySection[] = [
-  { id: 'gold_coins', label: 'Gold Coins' },
-  { id: 'gold_bars', label: 'Gold Bars' },
-  { id: 'pre_1933_gold', label: 'Pre-1933 Gold' },
-  { id: 'silver_coins', label: 'Silver Coins' },
-  { id: 'silver_generic', label: 'Generic Silver Rounds & Bars' },
-  { id: 'platinum_coins', label: 'Platinum Coins' },
-  { id: 'platinum_bars', label: 'Platinum Bars' },
-  { id: 'palladium_coins', label: 'Palladium Coins' },
-  { id: 'palladium_bars', label: 'Palladium Bars' },
-  { id: 'other', label: 'Other' },
+  { id: 'gold_coins', label: 'Gold Coins', metal: 'gold' },
+  { id: 'gold_bars', label: 'Gold Bars', metal: 'gold' },
+  { id: 'pre_1933_gold', label: 'Pre-1933 Gold', metal: 'gold' },
+  { id: 'silver_coins', label: 'Silver Coins', metal: 'silver' },
+  { id: 'silver_generic', label: 'Generic Silver Rounds & Bars', metal: 'silver' },
+  { id: 'platinum_coins', label: 'Platinum Coins', metal: 'platinum' },
+  { id: 'platinum_bars', label: 'Platinum Bars', metal: 'platinum' },
+  { id: 'palladium_coins', label: 'Palladium Coins', metal: 'palladium' },
+  { id: 'palladium_bars', label: 'Palladium Bars', metal: 'palladium' },
+  { id: 'other', label: 'Other', metal: 'other' },
 ];
+
+/** Display label + visual accent for each metal group. */
+export const METAL_GROUPS: Record<
+  MetalGroup,
+  { label: string; accentClass: string }
+> = {
+  gold: { label: 'Gold', accentClass: 'text-amber-700 border-amber-300 bg-amber-50' },
+  silver: { label: 'Silver', accentClass: 'text-slate-700 border-slate-300 bg-slate-50' },
+  platinum: { label: 'Platinum', accentClass: 'text-sky-700 border-sky-300 bg-sky-50' },
+  palladium: {
+    label: 'Palladium',
+    accentClass: 'text-violet-700 border-violet-300 bg-violet-50',
+  },
+  other: { label: 'Other', accentClass: 'text-ink-600 border-ink-200 bg-ink-50' },
+};
+
+/**
+ * Partition a list of sections into metal groups, preserving order.
+ * Used by every view that renders the metal → section → items structure.
+ */
+export function groupSectionsByMetal(
+  sections: DisplaySection[],
+): Array<{ metal: MetalGroup; sections: DisplaySection[] }> {
+  const out: Array<{ metal: MetalGroup; sections: DisplaySection[] }> = [];
+  for (const s of sections) {
+    const tail = out[out.length - 1];
+    if (tail && tail.metal === s.metal) {
+      tail.sections.push(s);
+    } else {
+      out.push({ metal: s.metal, sections: [s] });
+    }
+  }
+  return out;
+}
 
 export function deriveDisplayCategory(p: {
   metal: string;

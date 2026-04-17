@@ -48,7 +48,14 @@ export class InventoryService {
   }
 
   /** Public-shop view: items with positive available stock + flagged for web. */
-  inStock(): Promise<Array<Pick<InventoryRow, 'product_id' | 'sku' | 'name' | 'metal' | 'category' | 'available'>>> {
+  inStock(): Promise<
+    Array<
+      Pick<
+        InventoryRow,
+        'product_id' | 'sku' | 'name' | 'metal' | 'category' | 'available'
+      > & { weight_troy_oz: string }
+    >
+  > {
     return this.db
       .selectFrom('products as p')
       .innerJoin('inventory as inv', 'inv.product_id', 'p.id')
@@ -58,6 +65,7 @@ export class InventoryService {
         'p.name',
         'p.metal',
         'p.category',
+        'p.weight_troy_oz',
         sql<number>`(inv.quantity_on_hand - inv.quantity_reserved)`.as('available'),
       ])
       .where('p.is_active', '=', true)
