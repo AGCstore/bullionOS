@@ -20,8 +20,7 @@ COPY apps/api/package.json ./apps/api/
 COPY packages/shared/package.json ./packages/shared/
 
 # Install all deps (incl. dev for tsc/nest cli).
-RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile
 
 # Copy source and build.
 COPY apps/api ./apps/api
@@ -38,8 +37,7 @@ WORKDIR /repo
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY apps/api/package.json ./apps/api/
 COPY packages/shared/package.json ./packages/shared/
-RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile --prod --filter @agc/api...
+RUN pnpm install --frozen-lockfile --prod --filter @agc/api...
 
 # ---------- Stage 3: runtime ----------
 FROM node:20-alpine AS runtime
