@@ -54,6 +54,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           <NavLink href="/admin/quotes">Quotes</NavLink>
           <NavLink href="/admin/inventory">Inventory</NavLink>
           <NavLink href="/admin/in-stock-sheet">In stock sheet</NavLink>
+          <NavLink href="/admin/buy-sheet">What we pay</NavLink>
           <NavLink href="/admin/products">Products</NavLink>
           <NavLink href="/admin/integrations">Integrations</NavLink>
           <NavLink href="/admin/settings">Settings</NavLink>

@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api-client';
@@ -14,12 +15,47 @@ interface InvoiceRow {
   total: string;
   created_at: string;
   payment_status: string;
+  client_name: string;
+  client_type: 'retail' | 'wholesaler';
+}
+
+type Tab = 'drafts' | 'sales' | 'purchase' | 'wholesale' | 'all';
+
+const TABS: Array<{ id: Tab; label: string }> = [
+  { id: 'drafts', label: 'Drafts' },
+  { id: 'sales', label: 'Sales' },
+  { id: 'purchase', label: 'Purchase' },
+  { id: 'wholesale', label: 'Wholesale' },
+  { id: 'all', label: 'All' },
+];
+
+/**
+ * Map each tab to a server-side filter. Drafts cuts by status; Sales and
+ * Purchase cut by invoice type (sell vs buy); Wholesale cuts by the
+ * client's client_type. Passing the filter as a query param keeps the
+ * payload small — no client-side filtering needed.
+ */
+function queryFor(tab: Tab): string {
+  switch (tab) {
+    case 'drafts':
+      return '/admin/invoices?status=draft';
+    case 'sales':
+      return '/admin/invoices?type=sell&client_type=retail';
+    case 'purchase':
+      return '/admin/invoices?type=buy';
+    case 'wholesale':
+      return '/admin/invoices?client_type=wholesaler';
+    case 'all':
+    default:
+      return '/admin/invoices';
+  }
 }
 
 export default function InvoicesPage() {
+  const [tab, setTab] = useState<Tab>('drafts');
   const { data } = useQuery({
-    queryKey: ['admin', 'invoices'],
-    queryFn: () => apiFetch<InvoiceRow[]>('/admin/invoices'),
+    queryKey: ['admin', 'invoices', tab],
+    queryFn: () => apiFetch<InvoiceRow[]>(queryFor(tab)),
   });
 
   return (
@@ -34,11 +70,28 @@ export default function InvoicesPage() {
         </Link>
       </div>
 
-      <div className="mt-6 overflow-hidden rounded-xl border border-ink-200 bg-white">
+      <nav className="mt-5 flex gap-1 border-b border-ink-200 text-sm">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`-mb-px border-b-2 px-3 py-2 transition ${
+              tab === t.id
+                ? 'border-ink-900 font-medium text-ink-900'
+                : 'border-transparent text-ink-600 hover:text-ink-900'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </nav>
+
+      <div className="mt-4 overflow-hidden rounded-xl border border-ink-200 bg-white">
         <table className="w-full text-sm">
           <thead className="bg-ink-50 text-left text-xs uppercase tracking-wide text-ink-400">
             <tr>
               <th className="px-4 py-3">Invoice</th>
+              <th className="px-4 py-3">Client</th>
               <th className="px-4 py-3">Type</th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">Payment</th>
@@ -53,6 +106,14 @@ export default function InvoicesPage() {
                   <Link href={`/admin/invoices/${inv.id}`} className="hover:underline">
                     {inv.invoice_number}
                   </Link>
+                </td>
+                <td className="px-4 py-3">
+                  <div className="font-medium">{inv.client_name}</div>
+                  {inv.client_type === 'wholesaler' && (
+                    <span className="text-[10px] font-medium uppercase tracking-wide text-gold-600">
+                      Wholesale
+                    </span>
+                  )}
                 </td>
                 <td className="px-4 py-3">{inv.type.toUpperCase()}</td>
                 <td className="px-4 py-3">
@@ -69,8 +130,8 @@ export default function InvoicesPage() {
             ))}
             {(!data || data.length === 0) && (
               <tr>
-                <td colSpan={6} className="px-4 py-12 text-center text-ink-400">
-                  No invoices yet.
+                <td colSpan={7} className="px-4 py-12 text-center text-ink-400">
+                  No invoices in this view.
                 </td>
               </tr>
             )}

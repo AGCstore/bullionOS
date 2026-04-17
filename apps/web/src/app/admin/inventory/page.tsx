@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, ApiError } from '@/lib/api-client';
 import { PageTint } from '@/components/page-tint';
+import type { SheetRow } from '@/lib/sheet-types';
 
 interface InventoryRow {
   product_id: string;
@@ -26,6 +27,18 @@ export default function AdminInventoryPage() {
     queryFn: () => apiFetch<InventoryRow[]>('/admin/inventory'),
     refetchInterval: 60_000,
   });
+  // Pull live sell prices from the sheet endpoint so the inventory table
+  // can show "what we sell it for" in place of the old weighted avg cost.
+  const { data: sheet } = useQuery({
+    queryKey: ['admin', 'products', 'sheet'],
+    queryFn: () => apiFetch<SheetRow[]>('/admin/products/sheet'),
+    refetchInterval: 60_000,
+  });
+  const sellPriceById = useMemo(() => {
+    const map = new Map<string, string | null>();
+    for (const s of sheet ?? []) map.set(s.product_id, s.sell_price);
+    return map;
+  }, [sheet]);
 
   // Partition into in-stock (available > 0) and everything else so operators
   // see what they can actually sell first. Within each bucket, sort by name
@@ -73,6 +86,7 @@ export default function AdminInventoryPage() {
         title="In stock"
         subtitle="Available to sell right now"
         rows={inStock}
+        sellPriceById={sellPriceById}
         isLoading={isLoading}
         emptyText="Nothing in stock. Buy tickets marked PAID add to this list."
       />
@@ -81,6 +95,7 @@ export default function AdminInventoryPage() {
         title="Out of stock"
         subtitle="Tracked products with no availability"
         rows={outOfStock}
+        sellPriceById={sellPriceById}
         isLoading={isLoading}
         emptyText="Everything tracked is currently in stock."
         muted
@@ -123,6 +138,7 @@ function InventoryTable({
   title,
   subtitle,
   rows,
+  sellPriceById,
   isLoading,
   emptyText,
   muted,
@@ -130,6 +146,7 @@ function InventoryTable({
   title: string;
   subtitle: string;
   rows: InventoryRow[];
+  sellPriceById: Map<string, string | null>;
   isLoading: boolean;
   emptyText: string;
   muted?: boolean;
@@ -154,13 +171,17 @@ function InventoryTable({
                 <th className="px-4 py-3 text-right">On hand</th>
                 <th className="px-4 py-3 text-right">Reserved</th>
                 <th className="px-4 py-3 text-right">Available</th>
-                <th className="px-4 py-3 text-right">Avg cost</th>
+                <th className="px-4 py-3 text-right">We sell for</th>
                 <th className="px-4 py-3 text-right">Adjust</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((r) => (
-                <InventoryRowView key={r.product_id} row={r} />
+                <InventoryRowView
+                  key={r.product_id}
+                  row={r}
+                  sellPrice={sellPriceById.get(r.product_id) ?? null}
+                />
               ))}
               {rows.length === 0 && (
                 <tr>
@@ -177,7 +198,13 @@ function InventoryTable({
   );
 }
 
-function InventoryRowView({ row }: { row: InventoryRow }) {
+function InventoryRowView({
+  row,
+  sellPrice,
+}: {
+  row: InventoryRow;
+  sellPrice: string | null;
+}) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [delta, setDelta] = useState('');
@@ -222,8 +249,8 @@ function InventoryRowView({ row }: { row: InventoryRow }) {
           {row.quantity_reserved || '—'}
         </td>
         <td className="px-4 py-3 text-right font-mono font-semibold">{row.available}</td>
-        <td className="px-4 py-3 text-right font-mono text-ink-600">
-          ${Number(row.weighted_avg_cost).toFixed(2)}
+        <td className="px-4 py-3 text-right font-mono text-ink-900">
+          {sellPrice ? `$${Number(sellPrice).toFixed(2)}` : '—'}
         </td>
         <td className="px-4 py-3 text-right">
           <button

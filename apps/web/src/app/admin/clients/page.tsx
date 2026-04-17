@@ -19,17 +19,24 @@ interface ClientRow {
   last_invoice_at: string | null;
   score?: number;
   created_at: string;
+  client_type: 'retail' | 'wholesaler';
 }
+
+type Tab = 'retail' | 'wholesaler' | 'all';
 
 export default function ClientsListPage() {
   const [q, setQ] = useState('');
+  const [tab, setTab] = useState<Tab>('all');
 
   const { data, isLoading } = useQuery({
-    queryKey: ['admin', 'clients', q],
-    queryFn: () =>
-      apiFetch<ClientRow[]>(
-        `/admin/clients${q.trim() ? `?q=${encodeURIComponent(q.trim())}` : ''}`,
-      ),
+    queryKey: ['admin', 'clients', q, tab],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (q.trim()) params.set('q', q.trim());
+      if (tab !== 'all') params.set('client_type', tab);
+      const qs = params.toString();
+      return apiFetch<ClientRow[]>(`/admin/clients${qs ? `?${qs}` : ''}`);
+    },
     placeholderData: keepPreviousData,
   });
 
@@ -49,6 +56,26 @@ export default function ClientsListPage() {
           New client
         </Link>
       </div>
+
+      <nav className="mt-5 flex gap-1 border-b border-ink-200 text-sm">
+        {[
+          { id: 'all' as const, label: 'All' },
+          { id: 'retail' as const, label: 'Retail' },
+          { id: 'wholesaler' as const, label: 'Wholesale' },
+        ].map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`-mb-px border-b-2 px-3 py-2 transition ${
+              tab === t.id
+                ? 'border-ink-900 font-medium text-ink-900'
+                : 'border-transparent text-ink-600 hover:text-ink-900'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </nav>
 
       <div className="mt-4">
         <input
@@ -90,6 +117,11 @@ export default function ClientsListPage() {
                     >
                       {c.last_name}, {c.first_name}
                     </Link>
+                    {c.client_type === 'wholesaler' && (
+                      <span className="ml-2 rounded-full bg-gold-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-gold-600">
+                        Wholesale
+                      </span>
+                    )}
                     {c.score !== undefined && (
                       <span className="ml-2 font-mono text-[10px] text-ink-400">
                         {c.score.toFixed(2)}
