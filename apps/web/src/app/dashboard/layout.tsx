@@ -24,7 +24,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="flex min-h-screen bg-ink-50 text-ink-900">
-      <aside className="hidden w-60 flex-col border-r border-ink-200 bg-white px-4 py-6 md:flex">
+      <aside className="sticky top-0 hidden h-screen w-60 flex-col overflow-y-auto border-r border-ink-200 bg-white px-4 py-6 md:flex">
         <div className="flex items-center gap-2 px-2">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img

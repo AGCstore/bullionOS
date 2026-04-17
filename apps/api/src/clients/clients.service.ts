@@ -511,6 +511,136 @@ export class ClientsService {
     return { deleted, skipped };
   }
 
+  /**
+   * Merge one or more duplicate client rows into a canonical keeper.
+   *
+   * Steps, all inside one transaction:
+   *   1. Verify keeper + losers exist and are distinct.
+   *   2. Re-point foreign keys from each loser to the keeper:
+   *        invoices, price_quotes, deal_requests, audit_logs (entity_id).
+   *        Shipments are linked via invoice_id, so they ride along for free.
+   *   3. Backfill any null field on the keeper from the losers in order
+   *      (first non-null wins). Keeps useful data that might only live on
+   *      a duplicate — email, phone, address, notes, heard_from.
+   *   4. Delete the loser rows. If any loser had a linked portal user, we
+   *      disable it so the stale login can't outlive the row.
+   *   5. Emit one client.merge audit event with { keeper, losers }.
+   *
+   * Returns the merged count.
+   */
+  async merge(
+    keeperId: string,
+    loserIds: string[],
+    actorUserId: string,
+  ): Promise<{ merged: number; keeper_id: string }> {
+    const uniqLosers = Array.from(new Set(loserIds)).filter((id) => id !== keeperId);
+    if (uniqLosers.length === 0) return { merged: 0, keeper_id: keeperId };
+
+    return this.db.transaction().execute(async (trx) => {
+      const keeper = await trx
+        .selectFrom('clients')
+        .selectAll()
+        .where('id', '=', keeperId)
+        .executeTakeFirst();
+      if (!keeper) throw new NotFoundException('Keeper client not found');
+
+      const losers = await trx
+        .selectFrom('clients')
+        .selectAll()
+        .where('id', 'in', uniqLosers)
+        .execute();
+      if (losers.length !== uniqLosers.length) {
+        throw new BadRequestException('One or more losers not found');
+      }
+
+      // 2. Re-point FKs. Kysely's update with IN is a single roundtrip per
+      //    table, which is fine for the handful of tables that reference
+      //    client_id.
+      await trx
+        .updateTable('invoices')
+        .set({ client_id: keeperId })
+        .where('client_id', 'in', uniqLosers)
+        .execute();
+      await trx
+        .updateTable('price_quotes')
+        .set({ client_id: keeperId })
+        .where('client_id', 'in', uniqLosers)
+        .execute();
+      await trx
+        .updateTable('deal_requests')
+        .set({ client_id: keeperId })
+        .where('client_id', 'in', uniqLosers)
+        .execute();
+      // Audit logs point at the entity id string; rewrite those too so the
+      // client detail timeline shows the combined history.
+      await trx
+        .updateTable('audit_logs')
+        .set({ entity_id: keeperId })
+        .where('entity_type', '=', 'client')
+        .where('entity_id', 'in', uniqLosers)
+        .execute();
+
+      // 3. Backfill keeper nulls from the first loser that has a value.
+      //    We do this in TS so the "first non-null wins" semantics are
+      //    crystal clear rather than hiding in COALESCE SQL.
+      const fillable: Array<keyof typeof keeper> = [
+        'email',
+        'phone',
+        'address_line1',
+        'address_line2',
+        'city',
+        'region',
+        'postal_code',
+        'country',
+        'notes',
+        'heard_from',
+      ];
+      const patch: Record<string, unknown> = {};
+      for (const k of fillable) {
+        if (keeper[k] == null) {
+          for (const l of losers) {
+            if (l[k] != null) {
+              patch[k as string] = l[k];
+              break;
+            }
+          }
+        }
+      }
+      if (Object.keys(patch).length > 0) {
+        await trx.updateTable('clients').set(patch).where('id', '=', keeperId).execute();
+      }
+
+      // 4. Disable any portal logins tied to the losers, then delete rows.
+      const loserUserIds = losers.map((l) => l.user_id).filter((x): x is string => !!x);
+      if (loserUserIds.length) {
+        await trx
+          .updateTable('users')
+          .set({ status: 'disabled' })
+          .where('id', 'in', loserUserIds)
+          .execute();
+      }
+      await trx.deleteFrom('clients').where('id', 'in', uniqLosers).execute();
+
+      // 5. Audit.
+      await trx
+        .insertInto('audit_logs')
+        .values({
+          actor_user_id: actorUserId,
+          action: 'client.merge',
+          entity_type: 'client',
+          entity_id: keeperId,
+          metadata: sql`${JSON.stringify({
+            keeper_id: keeperId,
+            loser_ids: uniqLosers,
+            backfilled_fields: Object.keys(patch),
+          })}::jsonb`,
+        })
+        .execute();
+
+      return { merged: uniqLosers.length, keeper_id: keeperId };
+    });
+  }
+
   private generateTempPassword(): string {
     // 14 chars, base64 → strip ambiguous chars. Guaranteed to meet the 12-char
     // + letter + digit minimum from the auth validator.

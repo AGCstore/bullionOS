@@ -25,6 +25,17 @@ class BulkDeleteDto {
   ids!: string[];
 }
 
+class MergeClientsDto {
+  @IsUUID()
+  keeper_id!: string;
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  @IsUUID(undefined, { each: true })
+  loser_ids!: string[];
+}
+
 @Controller('admin/clients')
 @Roles('admin', 'staff')
 export class AdminClientsController {
@@ -120,5 +131,23 @@ export class AdminClientsController {
   ) {
     if (dto.ids.length === 0) throw new BadRequestException('ids required');
     return this.clients.bulkDelete(dto.ids, user.id);
+  }
+
+  /**
+   * Merge duplicates into a single canonical record. Re-points invoices,
+   * quotes, shipments, deal-requests, and audit logs from every loser onto
+   * the keeper; then deletes the losers. One transaction — if anything
+   * fails the whole operation rolls back.
+   */
+  @Post('merge')
+  @Roles('admin')
+  async merge(
+    @Body() dto: MergeClientsDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    if (dto.loser_ids.includes(dto.keeper_id)) {
+      throw new BadRequestException('keeper_id cannot appear in loser_ids');
+    }
+    return this.clients.merge(dto.keeper_id, dto.loser_ids, user.id);
   }
 }

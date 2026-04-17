@@ -40,17 +40,25 @@ export default function AdminInventoryPage() {
     return map;
   }, [sheet]);
 
-  // Partition into in-stock (available > 0) and everything else so operators
-  // see what they can actually sell first. Within each bucket, sort by name
-  // for stable scan order.
+  // Column the two tables sort by. 'name' is the baseline; 'metal' is
+  // requested so the counter can group everything alphabetically by metal
+  // (gold, palladium, platinum, silver). Click the header to toggle.
+  const [sortBy, setSortBy] = useState<'name' | 'metal'>('name');
+
   const { inStock, outOfStock, totalUnits } = useMemo(() => {
     const rows = data ?? [];
-    const cmp = (a: InventoryRow, b: InventoryRow) => a.name.localeCompare(b.name);
+    const cmp = (a: InventoryRow, b: InventoryRow) => {
+      if (sortBy === 'metal') {
+        const m = a.metal.localeCompare(b.metal);
+        return m !== 0 ? m : a.name.localeCompare(b.name);
+      }
+      return a.name.localeCompare(b.name);
+    };
     const inStock = rows.filter((r) => r.available > 0).sort(cmp);
     const outOfStock = rows.filter((r) => r.available <= 0).sort(cmp);
     const totalUnits = inStock.reduce((n, r) => n + r.available, 0);
     return { inStock, outOfStock, totalUnits };
-  }, [data]);
+  }, [data, sortBy]);
 
   return (
     <PageTint side="sell">
@@ -89,6 +97,8 @@ export default function AdminInventoryPage() {
         sellPriceById={sellPriceById}
         isLoading={isLoading}
         emptyText="Nothing in stock. Buy tickets marked PAID add to this list."
+        sortBy={sortBy}
+        onSortChange={setSortBy}
       />
 
       <InventoryTable
@@ -99,6 +109,8 @@ export default function AdminInventoryPage() {
         isLoading={isLoading}
         emptyText="Everything tracked is currently in stock."
         muted
+        sortBy={sortBy}
+        onSortChange={setSortBy}
       />
     </div>
     </PageTint>
@@ -142,6 +154,8 @@ function InventoryTable({
   isLoading,
   emptyText,
   muted,
+  sortBy,
+  onSortChange,
 }: {
   title: string;
   subtitle: string;
@@ -150,6 +164,8 @@ function InventoryTable({
   isLoading: boolean;
   emptyText: string;
   muted?: boolean;
+  sortBy: 'name' | 'metal';
+  onSortChange: (k: 'name' | 'metal') => void;
 }) {
   return (
     <section className="mt-8">
@@ -166,11 +182,17 @@ function InventoryTable({
           <table className="w-full text-sm">
             <thead className="bg-ink-50 text-left text-xs uppercase tracking-wide text-ink-400">
               <tr>
-                <th className="px-4 py-3">Product</th>
-                <th className="px-4 py-3">Metal</th>
-                <th className="px-4 py-3 text-right">On hand</th>
-                <th className="px-4 py-3 text-right">Reserved</th>
-                <th className="px-4 py-3 text-right">Available</th>
+                <SortHeader
+                  label="Product"
+                  active={sortBy === 'name'}
+                  onClick={() => onSortChange('name')}
+                />
+                <SortHeader
+                  label="Metal"
+                  active={sortBy === 'metal'}
+                  onClick={() => onSortChange('metal')}
+                />
+                <th className="px-4 py-3 text-right">Qty</th>
                 <th className="px-4 py-3 text-right">We sell for</th>
                 <th className="px-4 py-3 text-right">Adjust</th>
               </tr>
@@ -185,7 +207,7 @@ function InventoryTable({
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-ink-400">
+                  <td colSpan={5} className="px-4 py-10 text-center text-ink-400">
                     {emptyText}
                   </td>
                 </tr>
@@ -195,6 +217,30 @@ function InventoryTable({
         )}
       </div>
     </section>
+  );
+}
+
+function SortHeader({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <th className="px-4 py-3">
+      <button
+        onClick={onClick}
+        className={`flex items-center gap-1 transition ${
+          active ? 'text-ink-900' : 'text-ink-400 hover:text-ink-900'
+        }`}
+      >
+        {label}
+        <span className="text-[10px]">{active ? '▼' : '⇅'}</span>
+      </button>
+    </th>
   );
 }
 
@@ -244,11 +290,14 @@ function InventoryRowView({
           <div className="font-mono text-xs text-ink-400">{row.sku}</div>
         </td>
         <td className="px-4 py-3 capitalize text-ink-600">{row.metal}</td>
-        <td className="px-4 py-3 text-right font-mono">{row.quantity_on_hand}</td>
-        <td className="px-4 py-3 text-right font-mono text-ink-500">
-          {row.quantity_reserved || '—'}
+        <td className="px-4 py-3 text-right font-mono font-semibold">
+          {row.available}
+          {row.quantity_reserved > 0 && (
+            <span className="ml-1 text-[10px] font-normal text-ink-400">
+              ({row.quantity_reserved} reserved)
+            </span>
+          )}
         </td>
-        <td className="px-4 py-3 text-right font-mono font-semibold">{row.available}</td>
         <td className="px-4 py-3 text-right font-mono text-ink-900">
           {sellPrice ? `$${Number(sellPrice).toFixed(2)}` : '—'}
         </td>
@@ -263,7 +312,7 @@ function InventoryRowView({
       </tr>
       {open && (
         <tr className="border-t border-ink-100 bg-ink-50/40">
-          <td colSpan={7} className="px-4 py-3">
+          <td colSpan={5} className="px-4 py-3">
             <div className="flex flex-col gap-2 md:flex-row md:items-center">
               <label className="text-xs font-medium text-ink-600">
                 Delta
