@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, ApiError } from '@/lib/api-client';
 import { useLiveSpot } from '@/lib/use-live-spot';
+import { PageTint } from '@/components/page-tint';
 
 interface PriceRow {
   product_id: string;
@@ -31,6 +32,7 @@ export default function ClientPricing() {
   const { spot } = useLiveSpot();
 
   return (
+    <PageTint side="buy">
     <div className="mx-auto max-w-5xl">
       <div className="flex items-start justify-between">
         <div>
@@ -89,6 +91,7 @@ export default function ClientPricing() {
         )}
       </section>
     </div>
+    </PageTint>
   );
 }
 

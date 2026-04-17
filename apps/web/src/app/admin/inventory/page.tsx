@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, ApiError } from '@/lib/api-client';
+import { PageTint } from '@/components/page-tint';
 
 interface InventoryRow {
   product_id: string;
@@ -26,19 +27,122 @@ export default function AdminInventoryPage() {
     refetchInterval: 30_000,
   });
 
+  // Partition into in-stock (available > 0) and everything else so operators
+  // see what they can actually sell first. Within each bucket, sort by name
+  // for stable scan order.
+  const { inStock, outOfStock, totalUnits } = useMemo(() => {
+    const rows = data ?? [];
+    const cmp = (a: InventoryRow, b: InventoryRow) => a.name.localeCompare(b.name);
+    const inStock = rows.filter((r) => r.available > 0).sort(cmp);
+    const outOfStock = rows.filter((r) => r.available <= 0).sort(cmp);
+    const totalUnits = inStock.reduce((n, r) => n + r.available, 0);
+    return { inStock, outOfStock, totalUnits };
+  }, [data]);
+
   return (
+    <PageTint side="sell">
     <div className="mx-auto max-w-6xl">
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Inventory</h1>
           <p className="mt-1 text-sm text-ink-400">
             Stock levels update automatically: buy invoices marked PAID add stock,
-            sell invoices marked SHIPPED remove stock.
+            sell invoices marked PAID remove stock.
           </p>
         </div>
       </div>
 
-      <div className="mt-6 overflow-hidden rounded-xl border border-ink-200 bg-white">
+      {/* In-stock summary — pinned at the top per operator request so you
+          see what's sellable before having to scroll past empty SKUs. */}
+      <section className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <SummaryCard label="In-stock SKUs" value={String(inStock.length)} />
+        <SummaryCard label="Total units available" value={String(totalUnits)} />
+        <SummaryCard
+          label="Out of stock"
+          value={String(outOfStock.length)}
+          muted
+        />
+        <SummaryCard
+          label="Total products tracked"
+          value={String((data ?? []).length)}
+          muted
+        />
+      </section>
+
+      <InventoryTable
+        title="In stock"
+        subtitle="Available to sell right now"
+        rows={inStock}
+        isLoading={isLoading}
+        emptyText="Nothing in stock. Buy tickets marked PAID add to this list."
+      />
+
+      <InventoryTable
+        title="Out of stock"
+        subtitle="Tracked products with no availability"
+        rows={outOfStock}
+        isLoading={isLoading}
+        emptyText="Everything tracked is currently in stock."
+        muted
+      />
+    </div>
+    </PageTint>
+  );
+}
+
+function SummaryCard({
+  label,
+  value,
+  muted,
+}: {
+  label: string;
+  value: string;
+  muted?: boolean;
+}) {
+  return (
+    <div
+      className={`rounded-xl border p-4 ${
+        muted ? 'border-ink-200 bg-white/70' : 'border-sell-200 bg-white'
+      }`}
+    >
+      <div className="text-[10px] font-medium uppercase tracking-wide text-ink-400">
+        {label}
+      </div>
+      <div
+        className={`mt-1 font-mono text-xl font-semibold ${
+          muted ? 'text-ink-600' : 'text-sell-700'
+        }`}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function InventoryTable({
+  title,
+  subtitle,
+  rows,
+  isLoading,
+  emptyText,
+  muted,
+}: {
+  title: string;
+  subtitle: string;
+  rows: InventoryRow[];
+  isLoading: boolean;
+  emptyText: string;
+  muted?: boolean;
+}) {
+  return (
+    <section className="mt-8">
+      <div className="mb-2 flex items-baseline justify-between">
+        <h2 className={`text-sm font-semibold ${muted ? 'text-ink-600' : 'text-sell-700'}`}>
+          {title}
+        </h2>
+        <span className="text-xs text-ink-400">{subtitle}</span>
+      </div>
+      <div className="overflow-hidden rounded-xl border border-ink-200 bg-white">
         {isLoading ? (
           <div className="p-8 text-center text-sm text-ink-400">Loading…</div>
         ) : (
@@ -55,13 +159,13 @@ export default function AdminInventoryPage() {
               </tr>
             </thead>
             <tbody>
-              {(data ?? []).map((r) => (
+              {rows.map((r) => (
                 <InventoryRowView key={r.product_id} row={r} />
               ))}
-              {(!data || data.length === 0) && (
+              {rows.length === 0 && (
                 <tr>
                   <td colSpan={7} className="px-4 py-10 text-center text-ink-400">
-                    No inventory records yet.
+                    {emptyText}
                   </td>
                 </tr>
               )}
@@ -69,7 +173,7 @@ export default function AdminInventoryPage() {
           </table>
         )}
       </div>
-    </div>
+    </section>
   );
 }
 

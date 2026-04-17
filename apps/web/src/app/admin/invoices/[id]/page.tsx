@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, ApiError, getAccessToken } from '@/lib/api-client';
 import { StatusPill } from '@/components/status-pill';
+import { PageTint } from '@/components/page-tint';
 
 interface LineItem {
   id: string;
@@ -94,6 +95,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
   const options = NEXT_STATUSES[data.status] ?? [];
 
   return (
+    <PageTint side={data.type === 'buy' ? 'buy' : 'sell'}>
     <div className="mx-auto max-w-4xl">
       <div className="mb-4">
         <Link href="/admin/invoices" className="text-sm text-ink-600 hover:text-ink-900">
@@ -191,6 +193,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
 
       <ShipmentSection invoiceId={data.id} invoiceStatus={data.status} />
     </div>
+    </PageTint>
   );
 }
 
