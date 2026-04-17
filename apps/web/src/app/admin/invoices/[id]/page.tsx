@@ -4,7 +4,7 @@ import { use, useState } from 'react';
 import Link from 'next/link';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, ApiError, getAccessToken } from '@/lib/api-client';
-import { StatusPill } from '../../page';
+import { StatusPill } from '@/components/status-pill';
 
 interface LineItem {
   id: string;

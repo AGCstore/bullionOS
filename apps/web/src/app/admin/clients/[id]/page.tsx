@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, ApiError } from '@/lib/api-client';
-import { StatusPill } from '@/app/admin/page';
+import { StatusPill } from '@/components/status-pill';
 
 interface Client {
   id: string;

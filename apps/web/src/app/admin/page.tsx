@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api-client';
+import { StatusPill } from '@/components/status-pill';
 
 interface InvoiceRow {
   id: string;
@@ -130,21 +131,3 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function StatusPill({ status }: { status: string }) {
-  const styles: Record<string, string> = {
-    draft: 'bg-ink-100 text-ink-600',
-    finalized: 'bg-blue-100 text-blue-700',
-    paid: 'bg-green-100 text-green-700',
-    shipped: 'bg-violet-100 text-violet-700',
-    canceled: 'bg-red-100 text-red-700',
-  };
-  return (
-    <span
-      className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${
-        styles[status] ?? 'bg-ink-100 text-ink-600'
-      }`}
-    >
-      {status}
-    </span>
-  );
-}

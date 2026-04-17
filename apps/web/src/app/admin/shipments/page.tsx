@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, ApiError } from '@/lib/api-client';
-import { ShipmentStatusBadge } from '@/app/dashboard/shipments/page';
+import { ShipmentStatusBadge } from '@/components/status-pill';
 
 interface AdminShipment {
   id: string;

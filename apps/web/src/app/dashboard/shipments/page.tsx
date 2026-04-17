@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api-client';
+import { ShipmentStatusBadge } from '@/components/status-pill';
 
 interface Shipment {
   id: string;
@@ -99,22 +100,3 @@ export default function ClientShipments() {
   );
 }
 
-export function ShipmentStatusBadge({ status }: { status: string }) {
-  const styles: Record<string, string> = {
-    label_created: 'bg-ink-100 text-ink-600',
-    in_transit: 'bg-blue-100 text-blue-700',
-    out_for_delivery: 'bg-violet-100 text-violet-700',
-    delivered: 'bg-green-100 text-green-700',
-    exception: 'bg-amber-100 text-amber-700',
-    returned: 'bg-red-100 text-red-700',
-  };
-  return (
-    <span
-      className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${
-        styles[status] ?? 'bg-ink-100 text-ink-600'
-      }`}
-    >
-      {status.replace(/_/g, ' ')}
-    </span>
-  );
-}

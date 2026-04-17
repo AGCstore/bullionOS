@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api-client';
-import { StatusPill } from '@/app/admin/page';
+import { StatusPill } from '@/components/status-pill';
 
 interface InvoiceRow {
   id: string;
