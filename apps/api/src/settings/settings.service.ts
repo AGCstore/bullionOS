@@ -111,10 +111,10 @@ export class SettingsService {
 
   async getAsset(
     slug: 'logo' | 'favicon',
-  ): Promise<{ mime: string; bytes: Buffer } | null> {
+  ): Promise<{ mime: string; bytes: Buffer; updatedAt: Date } | null> {
     const row = await this.db
       .selectFrom('branding_assets')
-      .select(['mime', 'bytes'])
+      .select(['mime', 'bytes', 'updated_at'])
       .where('slug', '=', slug)
       .executeTakeFirst();
     if (!row) return null;
@@ -122,6 +122,7 @@ export class SettingsService {
     return {
       mime: row.mime,
       bytes: Buffer.isBuffer(row.bytes) ? row.bytes : Buffer.from(row.bytes as never),
+      updatedAt: new Date(row.updated_at as unknown as string),
     };
   }
 

@@ -394,6 +394,123 @@ export class ClientsService {
     return { invoices, quotes, requests, shipments };
   }
 
+  /**
+   * Hard-delete a single client. Blocks if there are any invoices attached
+   * — historical totals + audit depends on the client row existing. Staff
+   * must archive by disabling the portal + clearing PII instead.
+   */
+  async delete(clientId: string, actorUserId: string): Promise<void> {
+    const client = await this.getById(clientId);
+    const invoiceCount = await this.db
+      .selectFrom('invoices')
+      .select(this.db.fn.count<string>('id').as('n'))
+      .where('client_id', '=', clientId)
+      .executeTakeFirstOrThrow();
+    if (Number(invoiceCount.n) > 0) {
+      throw new BadRequestException(
+        `Cannot delete — ${invoiceCount.n} invoice(s) reference this client. Delete invoices first or archive instead.`,
+      );
+    }
+    await this.db.transaction().execute(async (trx) => {
+      await trx.deleteFrom('clients').where('id', '=', clientId).execute();
+      // Disable any linked login user so a stale portal session can't outlive
+      // the client row. We intentionally keep the users row for audit history.
+      if (client.user_id) {
+        await trx
+          .updateTable('users')
+          .set({ status: 'disabled' })
+          .where('id', '=', client.user_id)
+          .execute();
+      }
+      await trx
+        .insertInto('audit_logs')
+        .values({
+          actor_user_id: actorUserId,
+          action: 'client.delete',
+          entity_type: 'client',
+          entity_id: clientId,
+          metadata: sql`${JSON.stringify({
+            first_name: client.first_name,
+            last_name: client.last_name,
+            email: client.email,
+          })}::jsonb`,
+        })
+        .execute();
+    });
+  }
+
+  /**
+   * Delete many clients, skipping any that still have invoices attached.
+   * Returns a summary so the UI can render "X deleted, Y skipped (reason)".
+   */
+  async bulkDelete(
+    ids: string[],
+    actorUserId: string,
+  ): Promise<{ deleted: number; skipped: Array<{ id: string; reason: string }> }> {
+    if (ids.length === 0) return { deleted: 0, skipped: [] };
+
+    // Find which ids still have invoices — those are the ones to skip.
+    const blocked = await this.db
+      .selectFrom('invoices')
+      .select(['client_id', this.db.fn.count<string>('id').as('n')])
+      .where('client_id', 'in', ids)
+      .groupBy('client_id')
+      .execute();
+    const blockedByClient = new Map(blocked.map((r) => [r.client_id, Number(r.n)]));
+
+    const deletable = ids.filter((id) => !blockedByClient.has(id));
+    const skipped: Array<{ id: string; reason: string }> = [];
+    for (const id of ids) {
+      if (blockedByClient.has(id)) {
+        skipped.push({
+          id,
+          reason: `Has ${blockedByClient.get(id)} invoice(s)`,
+        });
+      }
+    }
+    if (deletable.length === 0) {
+      return { deleted: 0, skipped };
+    }
+
+    // Capture the rows we're about to delete so the audit log has something
+    // to point at. One roundtrip, no-op if any IDs are missing.
+    const victims = await this.db
+      .selectFrom('clients')
+      .select(['id', 'first_name', 'last_name', 'email', 'user_id'])
+      .where('id', 'in', deletable)
+      .execute();
+
+    const deleted = await this.db.transaction().execute(async (trx) => {
+      const out = await trx
+        .deleteFrom('clients')
+        .where('id', 'in', deletable)
+        .executeTakeFirst();
+      const userIds = victims.map((v) => v.user_id).filter((x): x is string => !!x);
+      if (userIds.length) {
+        await trx
+          .updateTable('users')
+          .set({ status: 'disabled' })
+          .where('id', 'in', userIds)
+          .execute();
+      }
+      await trx
+        .insertInto('audit_logs')
+        .values({
+          actor_user_id: actorUserId,
+          action: 'client.bulk_delete',
+          entity_type: 'client',
+          entity_id: null,
+          metadata: sql`${JSON.stringify({
+            deleted: victims.length,
+            ids: victims.map((v) => v.id),
+          })}::jsonb`,
+        })
+        .execute();
+      return Number(out.numDeletedRows ?? 0);
+    });
+    return { deleted, skipped };
+  }
+
   private generateTempPassword(): string {
     // 14 chars, base64 → strip ambiguous chars. Guaranteed to meet the 12-char
     // + letter + digit minimum from the auth validator.

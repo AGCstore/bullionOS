@@ -139,8 +139,20 @@ export class SettingsController {
       res.status(404).end();
       return;
     }
+    // Revalidation-based caching instead of a hard TTL. An ETag derived
+    // from the upload timestamp lets the browser/CDN keep the bytes in
+    // its cache AND still pick up a fresh upload on the very next
+    // request without a hard refresh. max-age=0 + must-revalidate forces
+    // a conditional GET every time; 304s are cheap (no body).
+    const etag = `W/"${slug}-${asset.updatedAt.getTime()}"`;
+    if (res.req.headers['if-none-match'] === etag) {
+      res.status(304).end();
+      return;
+    }
     res.setHeader('Content-Type', asset.mime);
-    res.setHeader('Cache-Control', 'public, max-age=60');
+    res.setHeader('ETag', etag);
+    res.setHeader('Last-Modified', asset.updatedAt.toUTCString());
+    res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
     res.setHeader('Content-Length', asset.bytes.length);
     res.end(asset.bytes);
   }

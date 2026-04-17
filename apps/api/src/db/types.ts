@@ -91,6 +91,21 @@ export type User = Selectable<UsersTable>;
 export type NewUser = Insertable<UsersTable>;
 export type UserUpdate = Updateable<UsersTable>;
 
+export type BackupStatus = 'pending' | 'succeeded' | 'failed';
+export type BackupTrigger = 'cron' | 'manual';
+
+export interface BackupRunsTable {
+  id: Generated<string>;
+  status: ColumnType<BackupStatus, BackupStatus | undefined, BackupStatus>;
+  trigger: ColumnType<BackupTrigger, BackupTrigger | undefined, BackupTrigger>;
+  started_at: Generated<Timestamp>;
+  completed_at: Timestamp | null;
+  size_bytes: string | null;
+  dump_bytes: Buffer | null;
+  error: string | null;
+  created_by_user_id: string | null;
+}
+
 export interface BrandingAssetsTable {
   slug: string;
   mime: string;
@@ -296,6 +311,7 @@ export type NewInvoiceLineItem = Insertable<InvoiceLineItemsTable>;
 // ===== Database root =====
 export interface DB {
   users: UsersTable;
+  backup_runs: BackupRunsTable;
   branding_assets: BrandingAssetsTable;
   clients: ClientsTable;
   refresh_tokens: RefreshTokensTable;

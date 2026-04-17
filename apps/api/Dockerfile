@@ -41,7 +41,10 @@ RUN pnpm install --frozen-lockfile --prod --filter @agc/api...
 
 # ---------- Stage 3: runtime ----------
 FROM node:20-alpine AS runtime
-RUN apk add --no-cache tini \
+# tini → pid1 zombie reaping.
+# postgresql-client → provides pg_dump for the daily backup cron.
+#   We accept the ~12 MB footprint to avoid a separate backup worker service.
+RUN apk add --no-cache tini postgresql16-client \
   && addgroup -S agc && adduser -S agc -G agc
 USER agc
 WORKDIR /app

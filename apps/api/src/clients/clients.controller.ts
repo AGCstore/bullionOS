@@ -1,6 +1,8 @@
 import {
+  BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   Param,
@@ -9,10 +11,19 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsUUID } from 'class-validator';
 import { CurrentUser, type RequestUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { ClientsService } from './clients.service';
 import { CreateClientDto, UpdateClientDto } from './dto/upsert-client.dto';
+
+class BulkDeleteDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(500)
+  @IsUUID(undefined, { each: true })
+  ids!: string[];
+}
 
 @Controller('admin/clients')
 @Roles('admin', 'staff')
@@ -79,5 +90,35 @@ export class AdminClientsController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.clients.resetPassword(id, user.id);
+  }
+
+  /**
+   * Single delete. Only allowed when the client has no invoices — otherwise
+   * you'd orphan totals + the audit trail. Callers get a clean error.
+   */
+  @Delete(':id')
+  @Roles('admin')
+  @HttpCode(204)
+  async remove(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    await this.clients.delete(id, user.id);
+  }
+
+  /**
+   * Bulk delete: returns { deleted, skipped } so the UI can show per-row
+   * outcomes. IDs that still have invoices attached are skipped, not
+   * errored — the caller might have selected 500 rows and we don't want
+   * one dirty row to fail the whole batch.
+   */
+  @Post('bulk-delete')
+  @Roles('admin')
+  async bulkDelete(
+    @Body() dto: BulkDeleteDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    if (dto.ids.length === 0) throw new BadRequestException('ids required');
+    return this.clients.bulkDelete(dto.ids, user.id);
   }
 }

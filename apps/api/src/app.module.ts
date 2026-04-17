@@ -26,6 +26,7 @@ import { MessagesModule } from './messages/messages.module';
 import { CryptoModule } from './crypto/crypto.module';
 import { IntegrationsModule } from './integrations/integrations.module';
 import { KpiModule } from './kpi/kpi.module';
+import { BackupsModule } from './backups/backups.module';
 import { HealthController } from './health/health.controller';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
@@ -81,6 +82,7 @@ import { AllExceptionsFilter } from './common/filters/http-exception.filter';
     CryptoModule,
     IntegrationsModule,
     KpiModule,
+    BackupsModule,
     ClientPortalModule,
     SettingsModule,
   ],
