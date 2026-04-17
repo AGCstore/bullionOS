@@ -20,8 +20,11 @@ export class AdminClientsController {
   constructor(private readonly clients: ClientsService) {}
 
   @Get()
-  list(@Query('q') search?: string) {
-    return this.clients.list(search);
+  list(
+    @Query('q') search?: string,
+    @Query('client_type') client_type?: 'retail' | 'wholesaler',
+  ) {
+    return this.clients.list(search, client_type ? { client_type } : {});
   }
 
   @Get(':id')

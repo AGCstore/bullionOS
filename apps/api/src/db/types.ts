@@ -16,7 +16,27 @@ export type PremiumType = 'percent' | 'flat';
 export type PricingRuleScope = 'metal' | 'product';
 export type InvoiceType = 'buy' | 'sell';
 export type InvoiceStatus = 'draft' | 'finalized' | 'paid' | 'shipped' | 'canceled';
-export type PaymentMethod = 'wire' | 'check' | 'ach' | 'cash' | 'crypto' | 'card';
+export type PaymentMethod =
+  | 'wire'
+  | 'check'
+  | 'ach'
+  | 'cash'
+  | 'crypto'
+  | 'card'
+  | 'zelle'
+  | 'venmo';
+
+/** Discriminates retail walk-ins from wholesale partners for list/filtering. */
+export type ClientType = 'retail' | 'wholesaler';
+
+/** One leg of a split-payment invoice. Stored as JSONB in invoices.payment_methods. */
+export interface PaymentEntry {
+  method: PaymentMethod;
+  /** Free-form reference (check #, Zelle memo, last-4 of card, …). */
+  reference?: string | null;
+  /** Decimal amount as string (money-safe). */
+  amount: string;
+}
 export type PaymentStatus = 'unpaid' | 'partial' | 'paid' | 'refunded';
 export type InventoryMovementReason =
   | 'purchase'
@@ -89,6 +109,7 @@ export interface ClientsTable {
   notes: string | null;
   /** Free-form marketing source (migration 014). */
   heard_from: string | null;
+  client_type: ColumnType<ClientType, ClientType | undefined, ClientType>;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
   // Postgres GENERATED column (migration 006) — read-only from the app side.
@@ -222,6 +243,7 @@ export interface InvoicesTable {
   shipping: ColumnType<string, string | number | undefined, string | number>;
   total: ColumnType<string, string | number | undefined, string | number>;
   payment_method: PaymentMethod | null;
+  payment_methods: ColumnType<PaymentEntry[], PaymentEntry[] | undefined, PaymentEntry[]>;
   payment_status: ColumnType<PaymentStatus, PaymentStatus | undefined, PaymentStatus>;
   notes: string | null;
   created_by_user_id: string | null;

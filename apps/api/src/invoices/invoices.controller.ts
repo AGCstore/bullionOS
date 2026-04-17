@@ -13,7 +13,7 @@ import {
 import type { Response } from 'express';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser, type RequestUser } from '../common/decorators/current-user.decorator';
-import type { InvoiceStatus } from '../db/types';
+import type { InvoiceStatus, InvoiceType } from '../db/types';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { UpdateInvoiceStatusDto } from './dto/update-invoice-status.dto';
 import { InvoicesService } from './invoices.service';
@@ -31,8 +31,10 @@ export class AdminInvoicesController {
   list(
     @Query('client_id') clientId?: string,
     @Query('status') status?: InvoiceStatus,
+    @Query('type') type?: InvoiceType,
+    @Query('client_type') client_type?: 'retail' | 'wholesaler',
   ) {
-    return this.invoices.list({ clientId, status });
+    return this.invoices.list({ clientId, status, type, client_type });
   }
 
   @Get(':id')

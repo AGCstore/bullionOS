@@ -60,15 +60,34 @@ export class InvoicesService {
     return row;
   }
 
-  async list(opts: { clientId?: string; status?: InvoiceStatus } = {}): Promise<Invoice[]> {
+  async list(
+    opts: {
+      clientId?: string;
+      status?: InvoiceStatus;
+      type?: InvoiceType;
+      /** 'wholesaler' or 'retail' — joins clients to filter by segment. */
+      client_type?: 'retail' | 'wholesaler';
+    } = {},
+  ): Promise<Array<Invoice & { client_name: string; client_type: string }>> {
+    // Include client name + type with the invoice so the tab'd list view
+    // can render rows without a second roundtrip.
     let q = this.db
-      .selectFrom('invoices')
-      .selectAll()
-      .orderBy('created_at', 'desc')
+      .selectFrom('invoices as i')
+      .innerJoin('clients as c', 'c.id', 'i.client_id')
+      .selectAll('i')
+      .select([
+        sql<string>`c.first_name || ' ' || c.last_name`.as('client_name'),
+        'c.client_type as client_type',
+      ])
+      .orderBy('i.created_at', 'desc')
       .limit(500);
-    if (opts.clientId) q = q.where('client_id', '=', opts.clientId);
-    if (opts.status) q = q.where('status', '=', opts.status);
-    return q.execute();
+    if (opts.clientId) q = q.where('i.client_id', '=', opts.clientId);
+    if (opts.status) q = q.where('i.status', '=', opts.status);
+    if (opts.type) q = q.where('i.type', '=', opts.type);
+    if (opts.client_type) q = q.where('c.client_type', '=', opts.client_type);
+    return q.execute() as unknown as Promise<
+      Array<Invoice & { client_name: string; client_type: string }>
+    >;
   }
 
   async getById(id: string): Promise<InvoiceWithLines> {
@@ -108,6 +127,17 @@ export class InvoicesService {
     const hasOverride = dto.line_items.some((li) => li.override_unit_price !== undefined);
     if (hasOverride && actor.role !== 'admin') {
       throw new ForbiddenException('Only admins can override unit prices');
+    }
+
+    // Payment method is required — either a legacy single method or at
+    // least one entry in the multi-payment array. Normalize so the row
+    // always has *both* columns populated for back-compat and reporting.
+    const multi = dto.payment_methods ?? [];
+    const primary = dto.payment_method ?? multi[0]?.method;
+    if (!primary) {
+      throw new BadRequestException(
+        'Payment method is required. Provide payment_method or at least one payment_methods entry.',
+      );
     }
 
     // Pre-compute quotes outside the transaction (reads from Redis + Postgres).
@@ -166,7 +196,17 @@ export class InvoicesService {
           tax: toDbString(dto.tax ?? 0),
           shipping: toDbString(dto.shipping ?? 0),
           total: '0',
-          payment_method: dto.payment_method ?? null,
+          payment_method: primary,
+          // JSONB columns need an explicit cast — pg's type inference on
+          // parameterized values drops to text otherwise. Pattern mirrors
+          // what audit_logs.metadata uses elsewhere in this service.
+          payment_methods: sql`${JSON.stringify(
+            multi.map((m) => ({
+              method: m.method,
+              reference: m.reference ?? null,
+              amount: toDbString(m.amount),
+            })),
+          )}::jsonb`,
           notes: dto.notes ?? null,
           created_by_user_id: actor.id,
         })

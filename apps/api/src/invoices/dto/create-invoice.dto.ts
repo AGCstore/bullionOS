@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   ArrayMinSize,
   IsArray,
   IsIn,
@@ -12,6 +13,34 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+
+const ALL_PAYMENT_METHODS = [
+  'wire',
+  'check',
+  'ach',
+  'cash',
+  'crypto',
+  'card',
+  'zelle',
+  'venmo',
+] as const;
+type PaymentMethodValue = (typeof ALL_PAYMENT_METHODS)[number];
+
+/** One leg of a split payment. */
+export class PaymentEntryDto {
+  @IsIn(ALL_PAYMENT_METHODS)
+  method!: PaymentMethodValue;
+
+  /** Check #, Zelle memo, last-4 on card, etc. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  reference?: string;
+
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  amount!: number;
+}
 
 export class CreateInvoiceLineItemDto {
   @IsUUID()
@@ -46,9 +75,27 @@ export class CreateInvoiceDto {
   @Type(() => CreateInvoiceLineItemDto)
   line_items!: CreateInvoiceLineItemDto[];
 
+  /**
+   * Legacy single-method field. Still written for back-compat on the invoice
+   * row and PDF header. New code should prefer `payment_methods` (below) —
+   * we derive the primary from its first entry when both are provided.
+   */
   @IsOptional()
-  @IsIn(['wire', 'check', 'ach', 'cash', 'crypto', 'card'])
-  payment_method?: 'wire' | 'check' | 'ach' | 'cash' | 'crypto' | 'card';
+  @IsIn(ALL_PAYMENT_METHODS)
+  payment_method?: PaymentMethodValue;
+
+  /**
+   * Up to 3 split-payment legs — e.g. cash + check, Zelle + cash. If any
+   * entries are present, payment_method is optional (derived from entry 0);
+   * if none are present AND payment_method is empty, invoice creation fails
+   * at the service layer (payment method is now required).
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(3)
+  @ValidateNested({ each: true })
+  @Type(() => PaymentEntryDto)
+  payment_methods?: PaymentEntryDto[];
 
   @IsOptional()
   @IsNumber({ maxDecimalPlaces: 8 })

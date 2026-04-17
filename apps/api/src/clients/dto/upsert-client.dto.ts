@@ -1,11 +1,13 @@
 import {
   IsBoolean,
   IsEmail,
+  IsIn,
   IsOptional,
   IsString,
   MaxLength,
   MinLength,
 } from 'class-validator';
+import type { ClientType } from '../../db/types';
 
 export class CreateClientDto {
   @IsString()
@@ -67,6 +69,10 @@ export class CreateClientDto {
   @IsString()
   @MaxLength(200)
   heard_from?: string;
+
+  @IsOptional()
+  @IsIn(['retail', 'wholesaler'])
+  client_type?: ClientType;
 
   @IsOptional()
   @IsBoolean()
@@ -135,6 +141,10 @@ export class UpdateClientDto {
   @IsString()
   @MaxLength(200)
   heard_from?: string;
+
+  @IsOptional()
+  @IsIn(['retail', 'wholesaler'])
+  client_type?: ClientType;
 
   @IsOptional()
   @IsBoolean()

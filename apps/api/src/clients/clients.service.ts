@@ -9,7 +9,7 @@ import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { Kysely, sql } from 'kysely';
 import { KYSELY } from '../db/database.module';
-import type { Client, DB } from '../db/types';
+import type { Client, ClientType, DB } from '../db/types';
 import type { CreateClientDto, UpdateClientDto } from './dto/upsert-client.dto';
 
 export interface ClientSearchResult extends Client {
@@ -40,13 +40,16 @@ export class ClientsService {
    *  - Counts are fetched in a single follow-up query and merged in app code —
    *    mixing aggregates with selectAll + groupBy made for brittle runtime shapes.
    */
-  async list(search?: string): Promise<ClientSearchResult[]> {
+  async list(
+    search?: string,
+    opts: { client_type?: ClientType } = {},
+  ): Promise<ClientSearchResult[]> {
     let clients: Array<Client & { score?: number }>;
 
     if (!search || !search.trim()) {
-      clients = (await this.db
-        .selectFrom('clients')
-        .selectAll()
+      let q = this.db.selectFrom('clients').selectAll();
+      if (opts.client_type) q = q.where('client_type', '=', opts.client_type);
+      clients = (await q
         .orderBy('last_name')
         .orderBy('first_name')
         .limit(500)
@@ -63,7 +66,7 @@ export class ClientsService {
         await sql`SELECT set_limit(0.10)`.execute(trx);
         await sql`SET LOCAL pg_trgm.word_similarity_threshold = 0.40`.execute(trx);
 
-        return trx
+        let q = trx
           .selectFrom('clients as c')
           .selectAll('c')
           .select(
@@ -77,7 +80,9 @@ export class ClientsService {
               sql<boolean>`${term} <% c.search_text`,
               eb('c.search_text', 'like', likePattern),
             ]),
-          )
+          );
+        if (opts.client_type) q = q.where('c.client_type', '=', opts.client_type);
+        return q
           .orderBy(
             sql`greatest(similarity(c.search_text, ${term}), word_similarity(${term}, c.search_text))`,
             'desc',
@@ -140,6 +145,7 @@ export class ClientsService {
         country: dto.country ?? null,
         notes: dto.notes ?? null,
         heard_from: dto.heard_from?.trim() ?? null,
+        client_type: dto.client_type ?? 'retail',
         is_portal_enabled: dto.is_portal_enabled ?? false,
       })
       .returningAll()
@@ -161,6 +167,7 @@ export class ClientsService {
       'country',
       'notes',
       'heard_from',
+      'client_type',
       'is_portal_enabled',
     ];
     for (const k of cols) {
