@@ -46,6 +46,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
         <nav className="mt-8 flex flex-col gap-1 text-sm">
           <NavLink href="/admin">Dashboard</NavLink>
+          <NavLink href="/admin/kpi">KPI</NavLink>
           <NavLink href="/admin/invoices">Invoices</NavLink>
           <NavLink href="/admin/invoices/new">New invoice</NavLink>
           <NavLink href="/admin/clients">Clients</NavLink>
@@ -65,6 +66,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             <div className="truncate font-medium text-ink-900">{user.email}</div>
             <div className="mt-0.5 text-ink-400">Role: {user.role}</div>
           </div>
+          {/* Switcher so staff can jump back to the client-facing portal
+              (where the non-admin tabs live) without having to sign out. */}
+          <a
+            href="/dashboard"
+            className="block w-full rounded-md border border-ink-200 px-3 py-1.5 text-center text-ink-700 hover:bg-ink-50"
+          >
+            Client portal view →
+          </a>
           <button
             onClick={logout}
             className="w-full rounded-md border border-ink-200 px-3 py-1.5 text-left hover:bg-ink-50"

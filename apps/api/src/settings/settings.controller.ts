@@ -13,58 +13,34 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { IsOptional, IsString, MaxLength } from 'class-validator';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 import type { Response } from 'express';
 import { memoryStorage } from 'multer';
 import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser, type RequestUser } from '../common/decorators/current-user.decorator';
-import { SettingsService, UPLOADS_DIR } from './settings.service';
+import { SettingsService } from './settings.service';
 
 class UpdateBrandingDto {
-  @IsOptional()
-  @IsString()
-  @MaxLength(100)
-  company_name?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(200)
-  company_tagline?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(120)
-  address_line1?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(120)
-  address_line2?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(120)
-  address_city_state_zip?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(40)
-  phone?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(120)
-  website?: string;
+  @IsOptional() @IsString() @MaxLength(100) company_name?: string;
+  @IsOptional() @IsString() @MaxLength(200) company_tagline?: string;
+  @IsOptional() @IsString() @MaxLength(120) address_line1?: string;
+  @IsOptional() @IsString() @MaxLength(120) address_line2?: string;
+  @IsOptional() @IsString() @MaxLength(120) address_city_state_zip?: string;
+  @IsOptional() @IsString() @MaxLength(40) phone?: string;
+  @IsOptional() @IsString() @MaxLength(120) website?: string;
 }
 
+// Same mime + magic-byte validation for both logo and favicon. 1 MB max —
+// brand assets over that are rarely intentional, and this keeps DB bytea
+// storage bounded.
 const ALLOWED_MIME = new Map([
   ['image/png', '.png'],
   ['image/jpeg', '.jpg'],
   ['image/svg+xml', '.svg'],
+  ['image/x-icon', '.ico'],
+  ['image/vnd.microsoft.icon', '.ico'],
 ]);
-const MAX_LOGO_BYTES = 1_000_000; // 1 MB is plenty for a logo.
+const MAX_ASSET_BYTES = 1_000_000;
 
 @Controller()
 export class SettingsController {
@@ -73,15 +49,13 @@ export class SettingsController {
   @Get('admin/settings')
   @Roles('admin', 'staff')
   async get() {
-    return {
-      branding: await this.settings.getBranding(),
-    };
+    return { branding: await this.settings.getBranding() };
   }
 
   @Patch('admin/settings/branding')
   @Roles('admin')
   async updateBranding(@Body() dto: UpdateBrandingDto, @CurrentUser() user: RequestUser) {
-    const fieldMap: Array<[keyof UpdateBrandingDto, string]> = [
+    const fields: Array<[keyof UpdateBrandingDto, string]> = [
       ['company_name', 'branding.company_name'],
       ['company_tagline', 'branding.company_tagline'],
       ['address_line1', 'branding.address_line1'],
@@ -90,7 +64,7 @@ export class SettingsController {
       ['phone', 'branding.phone'],
       ['website', 'branding.website'],
     ];
-    for (const [dtoField, key] of fieldMap) {
+    for (const [dtoField, key] of fields) {
       const value = dto[dtoField];
       if (value !== undefined) await this.settings.setString(key, value, user.id);
     }
@@ -102,69 +76,89 @@ export class SettingsController {
   @UseInterceptors(
     FileInterceptor('file', {
       storage: memoryStorage(),
-      limits: { fileSize: MAX_LOGO_BYTES, files: 1 },
+      limits: { fileSize: MAX_ASSET_BYTES, files: 1 },
     }),
   )
   async uploadLogo(
     @UploadedFile() file: Express.Multer.File | undefined,
     @CurrentUser() user: RequestUser,
   ) {
-    if (!file) throw new BadRequestException('file is required (multipart/form-data)');
-
-    const ext = ALLOWED_MIME.get(file.mimetype);
-    if (!ext) {
-      throw new BadRequestException(
-        `Unsupported image type. Allowed: ${[...ALLOWED_MIME.keys()].join(', ')}`,
-      );
-    }
-
-    // Basic magic-byte sniff so a mislabeled file can't sneak through.
-    if (file.mimetype === 'image/png' && !this.startsWith(file.buffer, [0x89, 0x50, 0x4e, 0x47])) {
-      throw new BadRequestException('File content does not match PNG');
-    }
-    if (file.mimetype === 'image/jpeg' && !this.startsWith(file.buffer, [0xff, 0xd8, 0xff])) {
-      throw new BadRequestException('File content does not match JPEG');
-    }
-
-    await this.settings.ensureUploadsDir();
-
-    // Remove prior logo so we don't leak files.
-    await this.settings.deleteLogo(user.id);
-
-    const filename = `logo-${Date.now()}${ext}`;
-    const diskPath = path.join(UPLOADS_DIR, filename);
-    await fs.promises.writeFile(diskPath, file.buffer);
-
-    await this.settings.setLogoPath(diskPath, user.id);
+    this.validateImage(file);
+    await this.settings.setAsset('logo', file!.mimetype, file!.buffer, user.id);
     return this.settings.getBranding();
   }
 
   @Delete('admin/settings/logo')
   @Roles('admin')
   @HttpCode(204)
-  async removeLogo(@CurrentUser() user: RequestUser) {
-    await this.settings.deleteLogo(user.id);
+  async removeLogo() {
+    await this.settings.deleteAsset('logo');
   }
 
-  /** Serves the current logo. Public so it can be embedded in PDFs/emails. */
+  @Post('admin/settings/favicon')
+  @Roles('admin')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: MAX_ASSET_BYTES, files: 1 },
+    }),
+  )
+  async uploadFavicon(
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @CurrentUser() user: RequestUser,
+  ) {
+    this.validateImage(file);
+    await this.settings.setAsset('favicon', file!.mimetype, file!.buffer, user.id);
+    return this.settings.getBranding();
+  }
+
+  @Delete('admin/settings/favicon')
+  @Roles('admin')
+  @HttpCode(204)
+  async removeFavicon() {
+    await this.settings.deleteAsset('favicon');
+  }
+
+  /** Public: serves the logo for PDFs, email, and the web header. */
   @Public()
   @Get('public/branding/logo')
-  async getLogo(@Res() res: Response) {
-    const diskPath = await this.settings.resolveLogoFile();
-    if (!diskPath) {
+  getLogo(@Res() res: Response) {
+    return this.serveAsset('logo', res);
+  }
+
+  /** Public: serves the browser favicon. */
+  @Public()
+  @Get('public/branding/favicon')
+  getFavicon(@Res() res: Response) {
+    return this.serveAsset('favicon', res);
+  }
+
+  private async serveAsset(slug: 'logo' | 'favicon', res: Response) {
+    const asset = await this.settings.getAsset(slug);
+    if (!asset) {
       res.status(404).end();
       return;
     }
-    const ext = path.extname(diskPath).toLowerCase();
-    const mime =
-      ext === '.png'
-        ? 'image/png'
-        : ext === '.svg'
-          ? 'image/svg+xml'
-          : 'image/jpeg';
-    res.setHeader('Content-Type', mime);
+    res.setHeader('Content-Type', asset.mime);
     res.setHeader('Cache-Control', 'public, max-age=60');
-    fs.createReadStream(diskPath).pipe(res);
+    res.setHeader('Content-Length', asset.bytes.length);
+    res.end(asset.bytes);
+  }
+
+  private validateImage(file: Express.Multer.File | undefined) {
+    if (!file) throw new BadRequestException('file is required (multipart/form-data)');
+    const ext = ALLOWED_MIME.get(file.mimetype);
+    if (!ext) {
+      throw new BadRequestException(
+        `Unsupported image type. Allowed: ${[...ALLOWED_MIME.keys()].join(', ')}`,
+      );
+    }
+    if (file.mimetype === 'image/png' && !this.startsWith(file.buffer, [0x89, 0x50, 0x4e, 0x47])) {
+      throw new BadRequestException('File content does not match PNG');
+    }
+    if (file.mimetype === 'image/jpeg' && !this.startsWith(file.buffer, [0xff, 0xd8, 0xff])) {
+      throw new BadRequestException('File content does not match JPEG');
+    }
   }
 
   private startsWith(buf: Buffer, bytes: number[]): boolean {

@@ -91,6 +91,15 @@ export type User = Selectable<UsersTable>;
 export type NewUser = Insertable<UsersTable>;
 export type UserUpdate = Updateable<UsersTable>;
 
+export interface BrandingAssetsTable {
+  slug: string;
+  mime: string;
+  /** pg returns Buffer for bytea; we insert a Buffer too. */
+  bytes: Buffer;
+  updated_at: Generated<Timestamp>;
+  updated_by_user_id: string | null;
+}
+
 export interface ClientsTable {
   id: Generated<string>;
   // Optional link: a client can exist without a login (walk-in).
@@ -287,6 +296,7 @@ export type NewInvoiceLineItem = Insertable<InvoiceLineItemsTable>;
 // ===== Database root =====
 export interface DB {
   users: UsersTable;
+  branding_assets: BrandingAssetsTable;
   clients: ClientsTable;
   refresh_tokens: RefreshTokensTable;
   audit_logs: AuditLogsTable;

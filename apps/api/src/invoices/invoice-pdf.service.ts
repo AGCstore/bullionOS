@@ -1,7 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import PDFDocument from 'pdfkit';
 import { Readable } from 'node:stream';
-import * as path from 'node:path';
 import type { InvoiceWithLines } from './invoices.service';
 import { d, toDisplay } from '../common/money';
 import { SettingsService, type BrandingSettings } from '../settings/settings.service';
@@ -19,7 +18,9 @@ export class InvoicePdfService {
 
   async render(invoice: InvoiceWithLines): Promise<Readable> {
     const branding = await this.settings.getBranding();
-    const logoPath = await this.settings.resolveLogoFile();
+    // Pull the logo bytes straight from the DB. pdfkit can embed from a
+    // Buffer, so no disk write + no /tmp dance.
+    const logoAsset = await this.settings.getAsset('logo');
 
     const doc = new PDFDocument({
       size: 'LETTER',
@@ -33,11 +34,11 @@ export class InvoicePdfService {
 
     // --- Header: logo (if set) OR wordmark ---
     let headerUsedLogo = false;
-    if (logoPath && path.extname(logoPath).toLowerCase() !== '.svg') {
+    if (logoAsset && logoAsset.mime !== 'image/svg+xml') {
       try {
-        // pdfkit supports PNG + JPEG natively. SVG needs an extra dep, so we
-        // fall back to the wordmark for SVG logos (still readable in the UI).
-        doc.image(logoPath, 54, 48, { fit: [140, 40] });
+        // pdfkit supports PNG + JPEG from a Buffer. SVG needs an extra dep,
+        // so we fall back to the wordmark for SVG logos (still readable in UI).
+        doc.image(logoAsset.bytes, 54, 48, { fit: [140, 40] });
         headerUsedLogo = true;
       } catch (err) {
         this.logger.warn(`Failed to embed logo: ${(err as Error).message}`);

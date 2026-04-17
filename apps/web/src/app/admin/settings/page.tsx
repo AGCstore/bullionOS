@@ -12,8 +12,10 @@ interface Branding {
   address_city_state_zip: string;
   phone: string;
   website: string;
-  logo_path: string | null;
+  has_logo: boolean;
   logo_url: string | null;
+  has_favicon: boolean;
+  favicon_url: string | null;
 }
 
 export default function SettingsPage() {
@@ -37,7 +39,121 @@ export default function SettingsPage() {
         branding={data?.branding}
         onChanged={() => qc.invalidateQueries({ queryKey: ['admin', 'settings'] })}
       />
+
+      <FaviconCard
+        branding={data?.branding}
+        onChanged={() => qc.invalidateQueries({ queryKey: ['admin', 'settings'] })}
+      />
     </div>
+  );
+}
+
+function FaviconCard({
+  branding,
+  onChanged,
+}: {
+  branding?: Branding;
+  onChanged: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [bust, setBust] = useState(0);
+
+  async function upload(file: File) {
+    setError(null);
+    setUploading(true);
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      const token = getAccessToken();
+      const res = await fetch('/api/v1/admin/settings/favicon', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: fd,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message ?? 'Upload failed');
+      }
+      setBust(Date.now());
+      onChanged();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = '';
+    }
+  }
+
+  async function remove() {
+    setError(null);
+    try {
+      await apiFetch('/admin/settings/favicon', { method: 'DELETE' });
+      setBust(Date.now());
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Remove failed');
+    }
+  }
+
+  const has = Boolean(branding?.has_favicon);
+
+  return (
+    <section className="mt-6 rounded-xl border border-ink-200 bg-white p-5">
+      <h2 className="text-xs font-semibold uppercase tracking-wide text-ink-400">Favicon</h2>
+      <p className="mt-1 text-xs text-ink-400">
+        PNG, JPEG, SVG, or ICO up to 1 MB. Appears in the browser tab.
+      </p>
+
+      <div className="mt-4 flex items-center gap-6">
+        <div className="flex h-16 w-16 items-center justify-center rounded-md border border-dashed border-ink-200 bg-ink-50 p-2">
+          {has ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={`/api/v1/public/branding/favicon?v=${bust}`}
+              alt="Favicon preview"
+              className="max-h-full max-w-full object-contain"
+            />
+          ) : (
+            <span className="text-[10px] text-ink-400">none</span>
+          )}
+        </div>
+        <div className="flex flex-col gap-2">
+          <input
+            ref={inputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/svg+xml,image/x-icon,image/vnd.microsoft.icon,.ico"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) upload(f);
+            }}
+            className="hidden"
+            id="favicon-input"
+          />
+          <label
+            htmlFor="favicon-input"
+            className="inline-block cursor-pointer rounded-md bg-ink-900 px-4 py-1.5 text-sm font-medium text-white hover:bg-ink-800"
+          >
+            {uploading ? 'Uploading…' : has ? 'Replace favicon' : 'Upload favicon'}
+          </label>
+          {has && (
+            <button
+              onClick={remove}
+              className="rounded-md border border-ink-200 px-4 py-1.5 text-sm text-ink-700 hover:bg-red-50 hover:text-red-700"
+            >
+              Remove
+            </button>
+          )}
+        </div>
+      </div>
+
+      {error && (
+        <div role="alert" className="mt-3 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">
+          {error}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -217,7 +333,7 @@ function LogoCard({
     }
   }
 
-  const hasLogo = Boolean(branding?.logo_path);
+  const hasLogo = Boolean(branding?.has_logo);
 
   return (
     <section className="mt-6 rounded-xl border border-ink-200 bg-white p-5">
