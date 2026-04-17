@@ -4,6 +4,7 @@ import { ProductsService } from '../products/products.service';
 import { PricingService } from '../pricing/pricing.service';
 import { MetalsService } from '../metals/metals.service';
 import { toDisplay } from '../common/money';
+import { PublicCacheService } from './public-cache.service';
 
 interface WhatWePayRow {
   product_id: string;
@@ -17,12 +18,23 @@ interface WhatWePayRow {
   image_url: string | null;
 }
 
+interface WhatWePayResponse {
+  items: WhatWePayRow[];
+  as_of: string;
+}
+
+// TTL for the what-we-pay cache. Slightly larger than the metals cache (30s)
+// is fine — the feed is read far more than it's written to, and never used
+// for transactional decisions (those always hit pricing.quote() fresh).
+const WHAT_WE_PAY_TTL_SEC = 30;
+
 @Controller('public')
 export class PublicController {
   constructor(
     private readonly products: ProductsService,
     private readonly pricing: PricingService,
     private readonly metals: MetalsService,
+    private readonly cache: PublicCacheService,
   ) {}
 
   /** Public spot — displayed on landing pages, no auth. */
@@ -58,17 +70,46 @@ export class PublicController {
 
   /**
    * "What we pay" feed — BUY prices for website-visible products.
-   * Clients/public see only the buy side; sell prices are gated behind admin.
+   *
+   * Hot path:
+   *   1. Try Redis cache.
+   *   2. On miss, batch-quote all visible products in one pass:
+   *        1 SELECT products (IN list)
+   *        1 SELECT product rule overrides
+   *        1 SELECT metal defaults (distinct metals, IN list)
+   *        1 spot-read per distinct metal (Redis-cached upstream)
+   *      Total ~5 queries regardless of product count (was N+1).
+   *   3. Cache the response for WHAT_WE_PAY_TTL_SEC.
+   *
+   * Invalidation: Products/PricingRules services call
+   *   PublicCacheService.invalidatePricingDependent() on mutation.
+   * TTL is a backstop if a mutation path forgets to invalidate.
    */
   @Public()
   @Get('what-we-pay')
-  async whatWePay(): Promise<{ items: WhatWePayRow[]; as_of: string }> {
-    const products = await this.products.list({ onlyActive: true, onlyWebsite: true });
-    const spot = await this.metals.getSpot();
+  async whatWePay(): Promise<WhatWePayResponse> {
+    const cached = await this.cache.get<WhatWePayResponse>(
+      PublicCacheService.KEY_WHAT_WE_PAY,
+    );
+    if (cached) return cached;
 
-    const items = await Promise.all(
-      products.map(async (p): Promise<WhatWePayRow> => {
-        const q = await this.pricing.quote(p.id, 1);
+    const products = await this.products.list({ onlyActive: true, onlyWebsite: true });
+    if (products.length === 0) {
+      const empty: WhatWePayResponse = { items: [], as_of: new Date().toISOString() };
+      await this.cache.set(PublicCacheService.KEY_WHAT_WE_PAY, empty, WHAT_WE_PAY_TTL_SEC);
+      return empty;
+    }
+
+    const spot = await this.metals.getSpot();
+    const quotes = await this.pricing.quoteMany(
+      products.map((p) => ({ product_id: p.id, quantity: 1 })),
+    );
+    const quoteByProduct = new Map(quotes.map((q) => [q.product_id, q]));
+
+    const items: WhatWePayRow[] = products
+      .map((p): WhatWePayRow | null => {
+        const q = quoteByProduct.get(p.id);
+        if (!q) return null;
         return {
           product_id: p.id,
           sku: p.sku,
@@ -80,9 +121,11 @@ export class PublicController {
           buy_price: toDisplay(q.buy_unit_price, 2),
           image_url: p.image_url,
         };
-      }),
-    );
+      })
+      .filter((r): r is WhatWePayRow => r !== null);
 
-    return { items, as_of: spot.asOf };
+    const body: WhatWePayResponse = { items, as_of: spot.asOf };
+    await this.cache.set(PublicCacheService.KEY_WHAT_WE_PAY, body, WHAT_WE_PAY_TTL_SEC);
+    return body;
   }
 }

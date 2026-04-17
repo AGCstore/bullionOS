@@ -3,12 +3,16 @@ import { Kysely } from 'kysely';
 import { KYSELY } from '../db/database.module';
 import type { DB, Product } from '../db/types';
 import { d, toDbString } from '../common/money';
+import { PublicCacheService } from '../public/public-cache.service';
 import type { CreateProductDto } from './dto/create-product.dto';
 import type { UpdateProductDto } from './dto/update-product.dto';
 
 @Injectable()
 export class ProductsService {
-  constructor(@Inject(KYSELY) private readonly db: Kysely<DB>) {}
+  constructor(
+    @Inject(KYSELY) private readonly db: Kysely<DB>,
+    private readonly cache: PublicCacheService,
+  ) {}
 
   async list(opts: { onlyActive?: boolean; onlyWebsite?: boolean } = {}): Promise<Product[]> {
     let q = this.db.selectFrom('products').selectAll().orderBy('name');
@@ -29,8 +33,9 @@ export class ProductsService {
 
   async create(dto: CreateProductDto): Promise<Product> {
     const content = d(dto.weight_troy_oz).times(d(dto.purity));
+    let created: Product;
     try {
-      return await this.db
+      created = await this.db
         .insertInto('products')
         .values({
           sku: dto.sku,
@@ -53,6 +58,8 @@ export class ProductsService {
       }
       throw err;
     }
+    await this.cache.invalidatePricingDependent();
+    return created;
   }
 
   async update(id: string, dto: UpdateProductDto): Promise<Product> {
@@ -84,16 +91,22 @@ export class ProductsService {
       .executeTakeFirst();
 
     if (!row) throw new NotFoundException('Product not found');
+    await this.cache.invalidatePricingDependent();
     return row;
   }
 
   async delete(id: string): Promise<void> {
-    // Soft-delete: flip is_active. Never hard-delete — referenced by invoices/inventory.
+    // Soft-delete by default (flip is_active). Hard-delete is allowed at the
+    // DB level now (migrations 010 + 012: invoice line items snapshot every
+    // value, inventory cascades, inventory_movements sets product_id NULL)
+    // but we keep soft-delete in the default path so accidental catalog
+    // removals are trivially reversible.
     const r = await this.db
       .updateTable('products')
       .set({ is_active: false })
       .where('id', '=', id)
       .executeTakeFirst();
     if (Number(r.numUpdatedRows) === 0) throw new NotFoundException('Product not found');
+    await this.cache.invalidatePricingDependent();
   }
 }

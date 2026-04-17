@@ -281,7 +281,27 @@ export interface DB {
   totp_recovery_codes: TotpRecoveryCodesTable;
   messages: MessagesTable;
   integrations: IntegrationsTable;
+  shipment_tracking_events: ShipmentTrackingEventsTable;
 }
+
+export type TrackingEventSource = 'webhook' | 'poll' | 'manual';
+
+export interface ShipmentTrackingEventsTable {
+  id: Generated<string>;
+  shipment_id: string;
+  carrier: ShipmentCarrier;
+  tracking_number: string | null;
+  status: ShipmentStatus;
+  description: string | null;
+  occurred_at: Timestamp;
+  carrier_event_id: string | null;
+  raw_payload: unknown;
+  source: TrackingEventSource;
+  inserted_at: Generated<Timestamp>;
+}
+
+export type ShipmentTrackingEvent = Selectable<ShipmentTrackingEventsTable>;
+export type NewShipmentTrackingEvent = Insertable<ShipmentTrackingEventsTable>;
 
 export interface IntegrationsTable {
   provider: string;

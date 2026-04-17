@@ -3,11 +3,15 @@ import { Kysely } from 'kysely';
 import { KYSELY } from '../db/database.module';
 import type { DB, PricingRule } from '../db/types';
 import { toDbString } from '../common/money';
+import { PublicCacheService } from '../public/public-cache.service';
 import type { UpsertPricingRuleDto } from './dto/upsert-pricing-rule.dto';
 
 @Injectable()
 export class PricingRulesService {
-  constructor(@Inject(KYSELY) private readonly db: Kysely<DB>) {}
+  constructor(
+    @Inject(KYSELY) private readonly db: Kysely<DB>,
+    private readonly cache: PublicCacheService,
+  ) {}
 
   list(): Promise<PricingRule[]> {
     return this.db
@@ -31,7 +35,7 @@ export class PricingRulesService {
       throw new BadRequestException('product_id is required when scope=product');
     }
 
-    return this.db.transaction().execute(async (trx) => {
+    const rule = await this.db.transaction().execute(async (trx) => {
       // Deactivate previous active rule for the same key.
       let deactivateQ = trx
         .updateTable('pricing_rules')
@@ -61,6 +65,8 @@ export class PricingRulesService {
         .returningAll()
         .executeTakeFirstOrThrow();
     });
+    await this.cache.invalidatePricingDependent();
+    return rule;
   }
 
   async deactivate(id: string): Promise<void> {
@@ -70,5 +76,6 @@ export class PricingRulesService {
       .where('id', '=', id)
       .executeTakeFirst();
     if (Number(r.numUpdatedRows) === 0) throw new NotFoundException('Rule not found');
+    await this.cache.invalidatePricingDependent();
   }
 }
