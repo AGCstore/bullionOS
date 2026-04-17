@@ -135,6 +135,12 @@ export default function NewInvoicePage() {
   }
 
   const filledLines = lines.filter((l) => l.product_id && l.quantity > 0);
+  // Any line where the user clicked "New Item" but didn't also pick a
+  // catalog product from the dropdown below. Catch these at submit-time
+  // so the row doesn't silently get filtered out of the payload.
+  const orphanedAdHoc = lines.filter(
+    (l) => !l.product_id && l.custom_name.trim().length > 0,
+  );
   const validPayments = payments
     .filter((p) => p.method && Number(p.amount) > 0)
     .map((p) => ({
@@ -146,6 +152,11 @@ export default function NewInvoicePage() {
   async function submit() {
     setError(null);
     if (!clientId) return setError('Select a client');
+    if (orphanedAdHoc.length > 0) {
+      return setError(
+        'For "New item" lines, also pick a catalog product so we can snapshot the metal and weight. The name you typed will still be shown.',
+      );
+    }
     if (filledLines.length === 0) return setError('Add at least one line item');
     if (validPayments.length === 0)
       return setError('Payment method is required (at least one leg with an amount).');
