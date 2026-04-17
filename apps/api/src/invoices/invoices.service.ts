@@ -324,6 +324,7 @@ export class InvoicesService {
       | { kind: 'reserve' }
       | { kind: 'consume' }
       | { kind: 'release' }
+      | { kind: 'reverse_consume' }
       | null = this.classifyInventoryAction(current.type, current.status, status);
 
     const updated = await this.db.transaction().execute(async (trx) => {
@@ -378,6 +379,19 @@ export class InvoicesService {
                 actor_user_id: actor.id,
               });
               break;
+            case 'reverse_consume':
+              // Undo a prior paid-time deduction (return flow on a walk-in
+              // sale that was already consumed). reserved_delta stays 0 —
+              // the reservation was cleared at the same time we deducted.
+              await this.inventory.applyMovement(trx, {
+                product_id: line.product_id,
+                delta: line.quantity,
+                reserved_delta: 0,
+                reason: 'return',
+                invoice_id: id,
+                actor_user_id: actor.id,
+              });
+              break;
           }
         }
       }
@@ -408,27 +422,39 @@ export class InvoicesService {
    * trigger (or `null` if none). Pure function — fed to the transaction
    * handler in `updateStatus`.
    *
-   * Sell lifecycle:  draft ─reserve→ finalized ─no-op→ paid ─consume→ shipped
-   *                                            ╲─release→ canceled
-   *                                 finalized ─release→ canceled
-   *                                 finalized ─consume→ shipped
-   * Buy lifecycle:   draft ─no-op→ finalized ─purchase→ paid
+   * Sell lifecycle (most transactions are in-person — deduct at paid, not ship):
+   *   draft ─reserve→ finalized ─consume→ paid ─no-op→ shipped
+   *                          ╲            ╲reverse-consume→ canceled
+   *                           ╲release→ canceled
+   *                   finalized ─consume→ shipped (skip-paid path)
+   *
+   * Buy lifecycle: draft ─no-op→ finalized ─purchase→ paid ─no-op→ shipped
+   *
+   * The 'paid' state is treated as the real inventory event for sells because
+   * the shop's majority volume is walk-in. Shipped status is retained for
+   * mail-order completeness but no longer carries inventory weight on
+   * paid→shipped (already consumed at paid).
    */
   private classifyInventoryAction(
     type: InvoiceType,
     from: InvoiceStatus,
     to: InvoiceStatus,
-  ): { kind: 'purchase' | 'reserve' | 'consume' | 'release' } | null {
+  ): { kind: 'purchase' | 'reserve' | 'consume' | 'release' | 'reverse_consume' } | null {
     if (type === 'buy') {
       if (to === 'paid' && from !== 'paid') return { kind: 'purchase' };
       return null;
     }
     // type === 'sell'
     if (to === 'finalized' && from === 'draft') return { kind: 'reserve' };
-    if (to === 'shipped' && from !== 'shipped') return { kind: 'consume' };
-    if (to === 'canceled' && (from === 'finalized' || from === 'paid')) {
-      return { kind: 'release' };
-    }
+    // Consume at paid OR at shipped (if skipping paid). Only consume once —
+    // paid→shipped is a no-op because the deduction already happened.
+    if (to === 'paid' && from !== 'paid') return { kind: 'consume' };
+    if (to === 'shipped' && from === 'finalized') return { kind: 'consume' };
+    // Cancel paths. Paid→canceled means we already deducted, so we must
+    // restore stock (return flow). Finalized→canceled releases the reservation
+    // without any stock movement.
+    if (to === 'canceled' && from === 'finalized') return { kind: 'release' };
+    if (to === 'canceled' && from === 'paid') return { kind: 'reverse_consume' };
     return null;
   }
 

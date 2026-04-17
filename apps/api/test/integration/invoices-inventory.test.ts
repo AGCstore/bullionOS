@@ -174,7 +174,7 @@ describe('Inventory reservation workflow', () => {
     expect(after!.quantity_on_hand).toBe((before?.quantity_on_hand ?? 0) + 5);
   });
 
-  it('sell.finalized reserves without touching on_hand; sell.shipped consumes', async () => {
+  it('sell.finalized reserves; sell.paid CONSUMES (walk-in sales); shipped is a no-op after paid', async () => {
     const product = await makeTestProduct();
     await buyStock(product.id, 10);
     const snap0 = await inventoryFor(product.id);
@@ -195,19 +195,42 @@ describe('Inventory reservation workflow', () => {
     const fin = await inventoryFor(product.id);
     expect(fin!.quantity_reserved).toBe(snap0!.quantity_reserved + 3);
     expect(fin!.quantity_on_hand).toBe(snap0!.quantity_on_hand);
-    expect(fin!.available).toBe(fin!.quantity_on_hand - fin!.quantity_reserved);
 
-    // Paid: no inventory change
+    // Paid: consume — reserved -= 3, on_hand -= 3 (NEW BEHAVIOR for walk-in sales)
     await req('PATCH', `/admin/invoices/${inv.id}/status`, { status: 'paid' });
     const paid = await inventoryFor(product.id);
-    expect(paid!.quantity_reserved).toBe(fin!.quantity_reserved);
-    expect(paid!.quantity_on_hand).toBe(fin!.quantity_on_hand);
+    expect(paid!.quantity_reserved).toBe(snap0!.quantity_reserved);
+    expect(paid!.quantity_on_hand).toBe(snap0!.quantity_on_hand - 3);
 
-    // Shipped: reserved -= 3, on_hand -= 3
+    // Shipped: no additional movement — already consumed at paid
     await req('PATCH', `/admin/invoices/${inv.id}/status`, { status: 'shipped' });
     const shipped = await inventoryFor(product.id);
-    expect(shipped!.quantity_reserved).toBe(snap0!.quantity_reserved);
-    expect(shipped!.quantity_on_hand).toBe(snap0!.quantity_on_hand - 3);
+    expect(shipped!.quantity_reserved).toBe(paid!.quantity_reserved);
+    expect(shipped!.quantity_on_hand).toBe(paid!.quantity_on_hand);
+  });
+
+  it('canceling a paid sell reverses the consumption (return-to-stock)', async () => {
+    const product = await makeTestProduct();
+    await buyStock(product.id, 5);
+    const snap0 = await inventoryFor(product.id);
+
+    const inv = await req('POST', '/admin/invoices', {
+      client_id: CLIENT_ID,
+      type: 'sell',
+      payment_method: 'wire',
+      line_items: [{ product_id: product.id, quantity: 2 }],
+    });
+    await req('PATCH', `/admin/invoices/${inv.id}/status`, { status: 'finalized' });
+    await req('PATCH', `/admin/invoices/${inv.id}/status`, { status: 'paid' });
+
+    const afterPaid = await inventoryFor(product.id);
+    expect(afterPaid!.quantity_on_hand).toBe(snap0!.quantity_on_hand - 2);
+
+    // Cancel from paid — should restore on_hand (reserved was already cleared)
+    await req('PATCH', `/admin/invoices/${inv.id}/status`, { status: 'canceled' });
+    const afterCancel = await inventoryFor(product.id);
+    expect(afterCancel!.quantity_on_hand).toBe(snap0!.quantity_on_hand);
+    expect(afterCancel!.quantity_reserved).toBe(snap0!.quantity_reserved);
   });
 
   it('cancel releases reservation', async () => {
