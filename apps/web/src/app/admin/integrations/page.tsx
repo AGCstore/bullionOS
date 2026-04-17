@@ -386,9 +386,13 @@ function GoogleCalendarActions({ authorized }: { authorized: boolean }) {
     setErr(null);
     setBusy(true);
     try {
+      // Return to the full web URL, not just a path — the callback runs on
+      // the API origin (Railway) and a relative redirect would 404 the
+      // admin back onto the API host instead of the Next.js app.
+      const returnTo = `${window.location.origin}/admin/integrations`;
       const r = await apiFetch<{ url: string; redirect_uri: string }>(
         `/admin/integrations/google_calendar/authorize?return_to=${encodeURIComponent(
-          '/admin/integrations',
+          returnTo,
         )}`,
       );
       setRedirect(r.redirect_uri);

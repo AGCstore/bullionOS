@@ -295,9 +295,14 @@ export class CalendarController {
       );
       return;
     }
-    const returnTo = returnB64
+    // The UI sends an absolute URL (web origin + path) so we bounce the
+    // admin back to the Next.js app rather than the API host. If the
+    // state carries a relative path (older link, manual poke), fall back
+    // to WEB_ORIGIN from config — otherwise we'd 404 against the API.
+    const decoded = returnB64
       ? Buffer.from(returnB64, 'base64url').toString('utf8')
-      : '/admin/integrations';
+      : '';
+    const returnTo = safeReturnTo(decoded);
 
     try {
       const { refreshToken } = await this.calendar.completeAuthorization(
@@ -362,6 +367,39 @@ function deriveOrigin(req: Request): string {
   const host =
     (req.headers['x-forwarded-host'] as string) ?? (req.headers.host as string);
   return `${proto}://${host}`;
+}
+
+/**
+ * Validate the post-authorize redirect. We accept:
+ *   - An absolute URL whose host matches WEB_ORIGIN (env-configured).
+ *   - A relative path starting with '/' — resolved against WEB_ORIGIN.
+ * Anything else (or missing config) falls back to WEB_ORIGIN's root.
+ *
+ * The OAuth callback runs on the API origin but the admin UI lives on
+ * the web origin, so we must bounce across hosts.
+ */
+function safeReturnTo(raw: string): string {
+  const webOrigin = (process.env.WEB_ORIGIN ?? '').replace(/\/$/, '');
+  const fallback = webOrigin ? `${webOrigin}/admin/integrations` : '/admin/integrations';
+
+  if (!raw) return fallback;
+
+  // Absolute URL: require matching WEB_ORIGIN to avoid open-redirect abuse.
+  if (/^https?:\/\//i.test(raw)) {
+    try {
+      const u = new URL(raw);
+      if (webOrigin && `${u.protocol}//${u.host}` === webOrigin) return raw;
+    } catch {
+      /* fallthrough to fallback */
+    }
+    return fallback;
+  }
+
+  // Relative path: resolve against WEB_ORIGIN if we know it.
+  if (raw.startsWith('/')) {
+    return webOrigin ? `${webOrigin}${raw}` : fallback;
+  }
+  return fallback;
 }
 
 function escapeHtml(s: string): string {
