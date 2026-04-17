@@ -58,9 +58,14 @@ COPY --from=prod-deps   --chown=agc:agc /repo/apps/api/node_modules ./apps/api/n
 COPY --from=prod-deps   --chown=agc:agc /repo/packages             ./packages
 COPY --from=build       --chown=agc:agc /repo/apps/api/package.json ./package.json
 
-# Uploads dir must be writable by the non-root user.
+# Uploads dir must be writable by the non-root user. Persistence is the
+# host's responsibility — declare a volume mount in your platform:
+#   * Docker Compose: `volumes: ["uploads:/app/uploads"]`
+#   * Railway:         add a Volume on the service, mount path `/app/uploads`
+#   * Render:          set a Disk mount at `/app/uploads` (see render.yaml)
+# The VOLUME directive is intentionally NOT declared here — Railway rejects
+# it and Compose/Render both configure persistence externally anyway.
 RUN mkdir -p /app/uploads
-VOLUME ["/app/uploads"]
 
 EXPOSE 4000
 ENTRYPOINT ["/sbin/tini", "--"]
