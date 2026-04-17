@@ -12,7 +12,11 @@ import {
   Post,
   Put,
   Query,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { Kysely } from 'kysely';
 import { KYSELY } from '../db/database.module';
 import type { DB, PremiumType } from '../db/types';
@@ -22,6 +26,7 @@ import { PricingRulesService } from '../pricing/pricing-rules.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { ProductsService } from './products.service';
+import { ProductsImportService } from './products-import.service';
 import {
   IsNumber,
   IsIn,
@@ -54,8 +59,41 @@ export class AdminProductsController {
     private readonly products: ProductsService,
     private readonly pricing: PricingService,
     private readonly pricingRules: PricingRulesService,
+    private readonly importer: ProductsImportService,
     @Inject(KYSELY) private readonly db: Kysely<DB>,
   ) {}
+
+  /**
+   * CSV import — two-phase: preview first (shows create/update/error per row),
+   * then commit if the operator approves. Admin only, file capped at 2 MB.
+   */
+  @Post('import/preview')
+  @HttpCode(200)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 2_000_000, files: 1 },
+    }),
+  )
+  async previewImport(@UploadedFile() file: Express.Multer.File | undefined) {
+    if (!file) throw new BadRequestException('file is required (multipart/form-data)');
+    const text = file.buffer.toString('utf8');
+    return this.importer.preview(text);
+  }
+
+  @Post('import/commit')
+  @HttpCode(200)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 2_000_000, files: 1 },
+    }),
+  )
+  async commitImport(@UploadedFile() file: Express.Multer.File | undefined) {
+    if (!file) throw new BadRequestException('file is required (multipart/form-data)');
+    const text = file.buffer.toString('utf8');
+    return this.importer.commit(text);
+  }
 
   @Get()
   list() {
