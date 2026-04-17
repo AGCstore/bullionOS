@@ -21,8 +21,18 @@ export interface PriceQuote {
   metal: Metal;
   quantity: number;
 
-  spot_per_oz: string;
+  // ----- Snapshotted product physical attributes -----
+  // `product_weight_troy_oz` is the GROSS weight of one unit as listed in the
+  // catalog (1.0909 oz for a Gold Eagle, 1.0 for a Silver Eagle, etc.).
+  // `product_purity` is the fineness fraction (0.9167, 0.999, ...).
+  // `metal_content_per_unit` = product_weight_troy_oz * product_purity.
+  // We keep all three distinct: invoice snapshots must capture the raw product
+  // shape, not just the derived content.
+  product_weight_troy_oz: string;
+  product_purity: string;
   metal_content_per_unit: string;
+
+  spot_per_oz: string;
   melt_value_per_unit: string;
 
   buy_unit_price: string;
@@ -38,6 +48,15 @@ export interface PriceQuote {
   computed_at: string;
   source: 'metal' | 'product' | 'none';
   rule_id: string | null;
+}
+
+interface ProductRow {
+  id: string;
+  name: string;
+  metal: Metal;
+  weight_troy_oz: string;
+  purity: string;
+  metal_content_troy_oz: string;
 }
 
 /**
@@ -115,8 +134,35 @@ export class PricingService {
   /** Compute buy + sell price for a given product/quantity using current spot. */
   async quote(productId: string, quantity = 1): Promise<PriceQuote> {
     if (quantity <= 0) throw new Error('quantity must be positive');
+    const [result] = await this.quoteMany([{ product_id: productId, quantity }]);
+    if (!result) throw new NotFoundException('Product not found or inactive');
+    return result;
+  }
 
-    const product = await this.db
+  /**
+   * Batch variant: takes N product/quantity pairs and returns N quotes with:
+   *   - 1 SELECT over products        (IN-list)
+   *   - 1 SELECT over product overrides (IN-list)
+   *   - 1 SELECT over metal defaults    (IN-list of distinct metals)
+   *   - 1 spot-price read per distinct metal (Redis-cached)
+   *
+   * Input order is preserved in the output. Products that don't exist or are
+   * inactive are simply omitted from the result; callers that need strict
+   * parity should compare lengths or check by product_id.
+   */
+  async quoteMany(
+    items: Array<{ product_id: string; quantity: number }>,
+  ): Promise<PriceQuote[]> {
+    if (items.length === 0) return [];
+    for (const it of items) {
+      if (it.quantity <= 0) throw new Error('quantity must be positive');
+    }
+
+    // Deduplicate the product ids we need to look up.
+    const productIds = Array.from(new Set(items.map((i) => i.product_id)));
+
+    // Single product query.
+    const products = await this.db
       .selectFrom('products')
       .select([
         'id',
@@ -126,46 +172,146 @@ export class PricingService {
         'purity',
         'metal_content_troy_oz',
       ])
-      .where('id', '=', productId)
+      .where('id', 'in', productIds)
       .where('is_active', '=', true)
-      .executeTakeFirst();
+      .execute();
+    const productById = new Map<string, ProductRow>(
+      products.map((p) => [p.id, p as ProductRow]),
+    );
 
-    if (!product) throw new NotFoundException('Product not found or inactive');
+    if (productById.size === 0) return [];
 
-    const spot = await this.metals.getSpotFor(product.metal);
-    const rule = await this.resolveRule({ id: product.id, metal: product.metal });
+    // Resolve rules in two IN-list queries (product overrides + metal defaults).
+    const [overrides, metalDefaults] = await Promise.all([
+      this.db
+        .selectFrom('pricing_rules')
+        .selectAll()
+        .where('scope', '=', 'product')
+        .where('is_active', '=', true)
+        .where('product_id', 'in', productIds)
+        .execute(),
+      this.db
+        .selectFrom('pricing_rules')
+        .selectAll()
+        .where('scope', '=', 'metal')
+        .where('is_active', '=', true)
+        .where(
+          'metal',
+          'in',
+          Array.from(new Set(products.map((p) => p.metal))),
+        )
+        .execute(),
+    ]);
 
-    const content = d(product.metal_content_troy_oz);
-    const melt = d(spot).times(content);
+    const overrideByProduct = new Map(
+      overrides.filter((r) => r.product_id).map((r) => [r.product_id as string, r]),
+    );
+    const defaultByMetal = new Map(
+      metalDefaults.filter((r) => r.metal).map((r) => [r.metal as Metal, r]),
+    );
 
-    const buyUnit = this.applyPremium(melt, content, rule.buy_premium_type, rule.buy_premium_value);
-    const sellUnit = this.applyPremium(melt, content, rule.sell_premium_type, rule.sell_premium_value);
+    // Fetch each needed spot once (MetalsService caches in Redis anyway).
+    const metalsNeeded = Array.from(new Set(products.map((p) => p.metal)));
+    const spotByMetal = new Map<Metal, string>();
+    await Promise.all(
+      metalsNeeded.map(async (m) => {
+        spotByMetal.set(m, await this.metals.getSpotFor(m));
+      }),
+    );
 
-    const qty = d(quantity);
+    const now = new Date().toISOString();
 
+    // Compose results in the caller's input order.
+    const out: PriceQuote[] = [];
+    for (const item of items) {
+      const product = productById.get(item.product_id);
+      if (!product) continue;
+
+      const rule = this.resolveRuleFrom(
+        product.id,
+        product.metal,
+        overrideByProduct.get(product.id),
+        defaultByMetal.get(product.metal),
+      );
+
+      const spot = spotByMetal.get(product.metal)!;
+      const grossWeight = d(product.weight_troy_oz);
+      const purity = d(product.purity);
+      const content = d(product.metal_content_troy_oz);
+      const melt = d(spot).times(content);
+
+      const buyUnit = this.applyPremium(melt, content, rule.buy_premium_type, rule.buy_premium_value);
+      const sellUnit = this.applyPremium(melt, content, rule.sell_premium_type, rule.sell_premium_value);
+
+      const qty = d(item.quantity);
+
+      out.push({
+        product_id: product.id,
+        product_name: product.name,
+        metal: product.metal,
+        quantity: item.quantity,
+
+        product_weight_troy_oz: toDbString(grossWeight),
+        product_purity: toDbString(purity),
+        metal_content_per_unit: toDbString(content),
+
+        spot_per_oz: toDbString(spot),
+        melt_value_per_unit: toDbString(melt),
+
+        buy_unit_price: toDbString(buyUnit),
+        buy_line_total: toDbString(buyUnit.times(qty)),
+        buy_premium_type: rule.buy_premium_type,
+        buy_premium_value: rule.buy_premium_value,
+
+        sell_unit_price: toDbString(sellUnit),
+        sell_line_total: toDbString(sellUnit.times(qty)),
+        sell_premium_type: rule.sell_premium_type,
+        sell_premium_value: rule.sell_premium_value,
+
+        computed_at: now,
+        source: rule.source,
+        rule_id: rule.rule_id,
+      });
+    }
+    return out;
+  }
+
+  /** In-memory equivalent of resolveRule(), fed pre-fetched rows. */
+  private resolveRuleFrom(
+    productId: string,
+    metal: Metal,
+    override: { id: string; buy_premium_type: PremiumType; buy_premium_value: string; sell_premium_type: PremiumType; sell_premium_value: string } | undefined,
+    metalDefault: { id: string; buy_premium_type: PremiumType; buy_premium_value: string; sell_premium_type: PremiumType; sell_premium_value: string } | undefined,
+  ): ResolvedRule {
+    if (override) {
+      return {
+        buy_premium_type: override.buy_premium_type,
+        buy_premium_value: override.buy_premium_value,
+        sell_premium_type: override.sell_premium_type,
+        sell_premium_value: override.sell_premium_value,
+        source: 'product',
+        rule_id: override.id,
+      };
+    }
+    if (metalDefault) {
+      return {
+        buy_premium_type: metalDefault.buy_premium_type,
+        buy_premium_value: metalDefault.buy_premium_value,
+        sell_premium_type: metalDefault.sell_premium_type,
+        sell_premium_value: metalDefault.sell_premium_value,
+        source: 'metal',
+        rule_id: metalDefault.id,
+      };
+    }
+    void productId;
+    void metal;
     return {
-      product_id: product.id,
-      product_name: product.name,
-      metal: product.metal,
-      quantity,
-
-      spot_per_oz: toDbString(spot),
-      metal_content_per_unit: toDbString(content),
-      melt_value_per_unit: toDbString(melt),
-
-      buy_unit_price: toDbString(buyUnit),
-      buy_line_total: toDbString(buyUnit.times(qty)),
-      buy_premium_type: rule.buy_premium_type,
-      buy_premium_value: rule.buy_premium_value,
-
-      sell_unit_price: toDbString(sellUnit),
-      sell_line_total: toDbString(sellUnit.times(qty)),
-      sell_premium_type: rule.sell_premium_type,
-      sell_premium_value: rule.sell_premium_value,
-
-      computed_at: new Date().toISOString(),
-      source: rule.source,
-      rule_id: rule.rule_id,
+      buy_premium_type: 'percent',
+      buy_premium_value: '0',
+      sell_premium_type: 'percent',
+      sell_premium_value: '0',
+      source: 'none',
+      rule_id: null,
     };
   }
 

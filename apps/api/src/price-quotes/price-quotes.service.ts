@@ -115,7 +115,14 @@ export class PriceQuotesService {
 
     const product = await this.db
       .selectFrom('products')
-      .select(['id', 'name', 'metal', 'metal_content_troy_oz'])
+      .select([
+        'id',
+        'name',
+        'metal',
+        'weight_troy_oz',
+        'purity',
+        'metal_content_troy_oz',
+      ])
       .where('id', '=', quote.product_id)
       .executeTakeFirstOrThrow();
 
@@ -151,9 +158,10 @@ export class PriceQuotesService {
           position: 1,
           quantity: quote.quantity,
           product_name_snapshot: product.name,
-          unit_weight_troy_oz: product.metal_content_troy_oz,
-          unit_purity: '1',
-          unit_metal_content_troy_oz: product.metal_content_troy_oz,
+          // Snapshot real product attributes separately (see invoices.service).
+          gross_weight_troy_oz: product.weight_troy_oz,
+          purity: product.purity,
+          metal_content_troy_oz: product.metal_content_troy_oz,
           spot_price_per_oz: quote.spot_price_per_oz,
           premium_type: quote.premium_type,
           premium_value: quote.premium_value,

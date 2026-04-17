@@ -67,21 +67,33 @@ export class InventoryService {
       .execute() as never;
   }
 
+  // ─── Primitives ─────────────────────────────────────────────────────────
+  //
+  // All mutating ops go through `applyMovement`, which:
+  //   - locks the inventory row with SELECT ... FOR UPDATE inside the caller's
+  //     transaction (prevents concurrent oversell / double-reserve)
+  //   - upserts the inventory row if this is the first movement
+  //   - enforces non-negative counters at the app layer; the DB CHECK
+  //     constraints provide the belt-and-suspenders
+  //   - writes exactly one audit row per call
+  //
+  // Reservation primitives (`reserveFor`, `releaseReservationFor`,
+  // `consumeReservationFor`) wrap `applyMovement` with the invoice context
+  // and the correct delta signs, so the invoice state machine doesn't need
+  // to know about movement internals.
+
   /**
-   * Apply an inventory movement atomically:
-   *  - Upserts the inventory row
-   *  - Updates quantity_on_hand (+delta)
-   *  - Maintains weighted_avg_cost on positive deltas
-   *  - Writes an inventory_movements audit row
-   *
-   * Negative deltas require sufficient stock or the transaction aborts,
-   * which guarantees we never go below zero (also enforced by CHECK).
+   * Apply an arbitrary inventory movement. Callers must provide their own
+   * Kysely transaction — every mutation happens inside one atomic block so
+   * the row lock stays held across the read/write pair.
    */
   async applyMovement(
     trx: Transaction<DB>,
     params: {
       product_id: string;
       delta: number;
+      /** Change to quantity_reserved. Optional; defaults to 0. */
+      reserved_delta?: number;
       reason: InventoryMovementReason;
       unit_cost?: string | number | null;
       invoice_id?: string | null;
@@ -89,38 +101,62 @@ export class InventoryService {
       notes?: string | null;
     },
   ): Promise<void> {
-    if (params.delta === 0) return;
+    const delta = params.delta;
+    const reservedDelta = params.reserved_delta ?? 0;
+    if (delta === 0 && reservedDelta === 0) return;
 
+    // Lock the row (or the product's would-be row) for the remainder of the tx.
+    // SELECT FOR UPDATE against the existing row; if none exists we fall through
+    // to an insert path. Concurrent callers will serialize on the FOR UPDATE.
     const existing = await trx
       .selectFrom('inventory')
-      .select(['quantity_on_hand', 'weighted_avg_cost'])
+      .select([
+        'quantity_on_hand',
+        'quantity_reserved',
+        'weighted_avg_cost',
+      ])
       .where('product_id', '=', params.product_id)
+      .forUpdate()
       .executeTakeFirst();
 
-    const current = existing?.quantity_on_hand ?? 0;
-    const next = current + params.delta;
-    if (next < 0) {
+    const currentOnHand = existing?.quantity_on_hand ?? 0;
+    const currentReserved = existing?.quantity_reserved ?? 0;
+    const nextOnHand = currentOnHand + delta;
+    const nextReserved = currentReserved + reservedDelta;
+
+    if (nextOnHand < 0) {
       throw new BadRequestException(
-        `Insufficient stock for product ${params.product_id}: have ${current}, needed ${-params.delta}`,
+        `Insufficient on-hand stock for product ${params.product_id}: have ${currentOnHand}, needed ${-delta}`,
+      );
+    }
+    if (nextReserved < 0) {
+      throw new BadRequestException(
+        `Reservation underflow for product ${params.product_id}: reserved ${currentReserved}, releasing ${-reservedDelta}`,
+      );
+    }
+    if (nextReserved > nextOnHand) {
+      throw new BadRequestException(
+        `Cannot reserve more than is on hand for product ${params.product_id}: on_hand=${nextOnHand}, reserved=${nextReserved}`,
       );
     }
 
-    // Weighted-average cost update (only on positive, cost-bearing movements).
+    // Weighted-average cost updates only on positive on-hand deltas with a cost.
     let newWac: string | null = null;
-    if (params.delta > 0 && params.unit_cost !== undefined && params.unit_cost !== null) {
+    if (delta > 0 && params.unit_cost !== undefined && params.unit_cost !== null) {
       const prevWac = d(existing?.weighted_avg_cost ?? 0);
-      const prevTotal = prevWac.times(current);
-      const newTotal = prevTotal.plus(d(params.unit_cost).times(params.delta));
-      newWac = toDbString(next > 0 ? newTotal.div(next) : 0);
+      const prevTotal = prevWac.times(currentOnHand);
+      const newTotal = prevTotal.plus(d(params.unit_cost).times(delta));
+      newWac = toDbString(nextOnHand > 0 ? newTotal.div(nextOnHand) : 0);
     }
 
     if (existing) {
       await trx
         .updateTable('inventory')
         .set({
-          quantity_on_hand: next,
+          quantity_on_hand: nextOnHand,
+          quantity_reserved: nextReserved,
           ...(newWac !== null && { weighted_avg_cost: newWac }),
-          ...(params.delta > 0 &&
+          ...(delta > 0 &&
             params.unit_cost !== undefined &&
             params.unit_cost !== null && {
               last_purchase_price: toDbString(params.unit_cost),
@@ -133,7 +169,8 @@ export class InventoryService {
         .insertInto('inventory')
         .values({
           product_id: params.product_id,
-          quantity_on_hand: next,
+          quantity_on_hand: nextOnHand,
+          quantity_reserved: nextReserved,
           weighted_avg_cost:
             params.unit_cost !== undefined && params.unit_cost !== null
               ? toDbString(params.unit_cost)
@@ -150,7 +187,8 @@ export class InventoryService {
       .insertInto('inventory_movements')
       .values({
         product_id: params.product_id,
-        delta: params.delta,
+        delta,
+        reserved_delta: reservedDelta,
         reason: params.reason,
         invoice_id: params.invoice_id ?? null,
         unit_cost:
@@ -163,7 +201,65 @@ export class InventoryService {
       .execute();
   }
 
-  /** Manual adjustment by an admin. Uses its own transaction. */
+  // ─── Reservation wrappers ─────────────────────────────────────────────
+
+  /**
+   * Reserve `qty` units for a sell-side invoice. Fails atomically on
+   * insufficient stock. Writes a movement row keyed to invoice_id for audit.
+   */
+  async reserveFor(
+    trx: Transaction<DB>,
+    params: { product_id: string; qty: number; invoice_id: string; actor_user_id: string },
+  ): Promise<void> {
+    if (params.qty <= 0) throw new BadRequestException('qty must be positive');
+    await this.applyMovement(trx, {
+      product_id: params.product_id,
+      delta: 0,
+      reserved_delta: params.qty,
+      reason: 'reservation',
+      invoice_id: params.invoice_id,
+      actor_user_id: params.actor_user_id,
+    });
+  }
+
+  /** Inverse of reserveFor. Used on invoice cancellation before shipment. */
+  async releaseReservationFor(
+    trx: Transaction<DB>,
+    params: { product_id: string; qty: number; invoice_id: string; actor_user_id: string },
+  ): Promise<void> {
+    if (params.qty <= 0) throw new BadRequestException('qty must be positive');
+    await this.applyMovement(trx, {
+      product_id: params.product_id,
+      delta: 0,
+      reserved_delta: -params.qty,
+      reason: 'reservation_release',
+      invoice_id: params.invoice_id,
+      actor_user_id: params.actor_user_id,
+    });
+  }
+
+  /**
+   * Ship-time consumption: convert a reservation into a real deduction.
+   * Both counters drop by qty; `quantity_reserved` hits zero for this line,
+   * `quantity_on_hand` finally decreases.
+   */
+  async consumeReservationFor(
+    trx: Transaction<DB>,
+    params: { product_id: string; qty: number; invoice_id: string; actor_user_id: string },
+  ): Promise<void> {
+    if (params.qty <= 0) throw new BadRequestException('qty must be positive');
+    await this.applyMovement(trx, {
+      product_id: params.product_id,
+      delta: -params.qty,
+      reserved_delta: -params.qty,
+      reason: 'sale',
+      invoice_id: params.invoice_id,
+      actor_user_id: params.actor_user_id,
+    });
+  }
+
+  // ─── Admin-initiated adjustment (unrelated to invoices) ───────────────
+
   async adjust(
     productId: string,
     delta: number,

@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { Kysely, sql } from 'kysely';
 import { KYSELY } from '../db/database.module';
-import type { DB, Invoice, InvoiceLineItem, InvoiceStatus, UserRole } from '../db/types';
+import type { DB, Invoice, InvoiceLineItem, InvoiceStatus, InvoiceType, UserRole } from '../db/types';
 import { d, toDbString, Decimal } from '../common/money';
 import { PricingService } from '../pricing/pricing.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -142,9 +142,9 @@ export class InvoicesService {
         position: number;
         quantity: number;
         product_name_snapshot: string;
-        unit_weight_troy_oz: string;
-        unit_purity: string;
-        unit_metal_content_troy_oz: string;
+        gross_weight_troy_oz: string;
+        purity: string;
+        metal_content_troy_oz: string;
         spot_price_per_oz: string;
         premium_type: 'percent' | 'flat';
         premium_value: string;
@@ -194,9 +194,15 @@ export class InvoicesService {
           position: idx + 1,
           quantity: li.quantity,
           product_name_snapshot: quote.product_name,
-          unit_weight_troy_oz: quote.metal_content_per_unit, // if you also want gross weight, snapshot separately
-          unit_purity: '1', // purity already folded into metal_content; we snapshot content
-          unit_metal_content_troy_oz: quote.metal_content_per_unit,
+          // Snapshot all three product physical attributes INDEPENDENTLY so an
+          // audit of this invoice years later can reproduce the math without
+          // re-reading a potentially-mutated product record.
+          //   weight  — gross troy oz per unit (e.g. 1.0909 for a Gold Eagle)
+          //   purity  — fineness fraction      (e.g. 0.9167)
+          //   content — weight * purity        (e.g. ~1.0000)
+          gross_weight_troy_oz: quote.product_weight_troy_oz,
+          purity: quote.product_purity,
+          metal_content_troy_oz: quote.metal_content_per_unit,
           spot_price_per_oz: quote.spot_per_oz,
           premium_type: premiumType,
           premium_value: premiumValue,
@@ -296,13 +302,29 @@ export class InvoicesService {
       patch.payment_status = 'paid';
     }
 
-    // Inventory policy:
-    //   BUY invoice (we buy from client):  paid      → +stock
-    //   SELL invoice (we sell to client):  shipped   → -stock
-    // Both sides are applied atomically with the invoice status update.
-    const applyInventory =
-      (current.type === 'buy' && status === 'paid' && current.status !== 'paid') ||
-      (current.type === 'sell' && status === 'shipped' && current.status !== 'shipped');
+    // Inventory policy (driven entirely by status transition):
+    //   BUY  invoice:  paid         → +on_hand         (purchase)
+    //   SELL invoice:  finalized    → +reserved        (reservation)
+    //                  shipped      → -on_hand -reserved (consume)
+    //                  canceled*    → -reserved        (release, if held)
+    //
+    //   * canceled from 'shipped' is a no-op — consumption is irreversible
+    //     until we build an explicit return flow.
+    //
+    // The line-items SELECT inside this block does NOT require product_id to
+    // be non-null (see migration 010): a deleted product has product_id=null
+    // and is silently skipped here — no inventory to move, history row will
+    // still reflect the original sale.
+    //
+    // Everything below runs inside a single transaction. applyMovement takes
+    // a SELECT ... FOR UPDATE on the inventory row, so concurrent finalize
+    // attempts for the same product serialize and oversell is impossible.
+    const inventoryAction:
+      | { kind: 'purchase' }
+      | { kind: 'reserve' }
+      | { kind: 'consume' }
+      | { kind: 'release' }
+      | null = this.classifyInventoryAction(current.type, current.status, status);
 
     const updated = await this.db.transaction().execute(async (trx) => {
       const updatedRow = await trx
@@ -312,7 +334,7 @@ export class InvoicesService {
         .returningAll()
         .executeTakeFirstOrThrow();
 
-      if (applyInventory) {
+      if (inventoryAction) {
         const lines = await trx
           .selectFrom('invoice_line_items')
           .select(['product_id', 'quantity', 'unit_price'])
@@ -320,15 +342,43 @@ export class InvoicesService {
           .execute();
 
         for (const line of lines) {
-          const delta = current.type === 'buy' ? line.quantity : -line.quantity;
-          await this.inventory.applyMovement(trx, {
-            product_id: line.product_id,
-            delta,
-            reason: current.type === 'buy' ? 'purchase' : 'sale',
-            unit_cost: current.type === 'buy' ? line.unit_price : null,
-            invoice_id: id,
-            actor_user_id: actor.id,
-          });
+          if (!line.product_id) continue; // product was deleted; nothing to move
+          switch (inventoryAction.kind) {
+            case 'purchase':
+              await this.inventory.applyMovement(trx, {
+                product_id: line.product_id,
+                delta: line.quantity,
+                reason: 'purchase',
+                unit_cost: line.unit_price,
+                invoice_id: id,
+                actor_user_id: actor.id,
+              });
+              break;
+            case 'reserve':
+              await this.inventory.reserveFor(trx, {
+                product_id: line.product_id,
+                qty: line.quantity,
+                invoice_id: id,
+                actor_user_id: actor.id,
+              });
+              break;
+            case 'consume':
+              await this.inventory.consumeReservationFor(trx, {
+                product_id: line.product_id,
+                qty: line.quantity,
+                invoice_id: id,
+                actor_user_id: actor.id,
+              });
+              break;
+            case 'release':
+              await this.inventory.releaseReservationFor(trx, {
+                product_id: line.product_id,
+                qty: line.quantity,
+                invoice_id: id,
+                actor_user_id: actor.id,
+              });
+              break;
+          }
         }
       }
 
@@ -342,7 +392,7 @@ export class InvoicesService {
           metadata: sql`${JSON.stringify({
             from: current.status,
             to: status,
-            inventory_applied: applyInventory,
+            inventory_action: inventoryAction?.kind ?? null,
           })}::jsonb`,
         })
         .execute();
@@ -353,12 +403,41 @@ export class InvoicesService {
     return updated;
   }
 
+  /**
+   * Map an invoice status transition to the inventory side-effect it must
+   * trigger (or `null` if none). Pure function — fed to the transaction
+   * handler in `updateStatus`.
+   *
+   * Sell lifecycle:  draft ─reserve→ finalized ─no-op→ paid ─consume→ shipped
+   *                                            ╲─release→ canceled
+   *                                 finalized ─release→ canceled
+   *                                 finalized ─consume→ shipped
+   * Buy lifecycle:   draft ─no-op→ finalized ─purchase→ paid
+   */
+  private classifyInventoryAction(
+    type: InvoiceType,
+    from: InvoiceStatus,
+    to: InvoiceStatus,
+  ): { kind: 'purchase' | 'reserve' | 'consume' | 'release' } | null {
+    if (type === 'buy') {
+      if (to === 'paid' && from !== 'paid') return { kind: 'purchase' };
+      return null;
+    }
+    // type === 'sell'
+    if (to === 'finalized' && from === 'draft') return { kind: 'reserve' };
+    if (to === 'shipped' && from !== 'shipped') return { kind: 'consume' };
+    if (to === 'canceled' && (from === 'finalized' || from === 'paid')) {
+      return { kind: 'release' };
+    }
+    return null;
+  }
+
   private canTransition(from: InvoiceStatus, to: InvoiceStatus): boolean {
     if (from === to) return true;
     const allowed: Record<InvoiceStatus, InvoiceStatus[]> = {
       draft: ['finalized', 'canceled'],
       finalized: ['paid', 'shipped', 'canceled'],
-      paid: ['shipped'],
+      paid: ['shipped', 'canceled'], // canceling a paid sell releases reservation
       shipped: [],
       canceled: [],
     };

@@ -24,7 +24,9 @@ export type InventoryMovementReason =
   | 'adjustment'
   | 'return'
   | 'damage'
-  | 'manual';
+  | 'manual'
+  | 'reservation'
+  | 'reservation_release';
 export type DealRequestStatus =
   | 'pending'
   | 'accepted'
@@ -190,8 +192,13 @@ export interface InventoryTable {
 
 export interface InventoryMovementsTable {
   id: Generated<string>;
-  product_id: string;
+  // Nullable as of migration 010: a product deletion sets this to NULL so
+  // the movement history row survives.
+  product_id: string | null;
+  /** Signed change to inventory.quantity_on_hand. */
   delta: number;
+  /** Signed change to inventory.quantity_reserved (migration 011). */
+  reserved_delta: ColumnType<number, number | undefined, number>;
   reason: InventoryMovementReason;
   invoice_id: string | null;
   unit_cost: Numeric | null;
@@ -229,13 +236,16 @@ export type InvoiceUpdate = Updateable<InvoicesTable>;
 export interface InvoiceLineItemsTable {
   id: Generated<string>;
   invoice_id: string;
-  product_id: string;
+  // Nullable as of migration 010: the invoice line survives a product
+  // deletion. Readers must rely on the snapshot columns below, which are
+  // already the source of truth for historical accuracy.
+  product_id: string | null;
   position: number;
   quantity: number;
   product_name_snapshot: string;
-  unit_weight_troy_oz: Numeric;
-  unit_purity: Numeric;
-  unit_metal_content_troy_oz: Numeric;
+  gross_weight_troy_oz: Numeric;
+  purity: Numeric;
+  metal_content_troy_oz: Numeric;
   spot_price_per_oz: Numeric;
   premium_type: PremiumType;
   premium_value: Numeric;
