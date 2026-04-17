@@ -9,6 +9,8 @@
     "start": "node dist/main.js",
     "lint": "eslint \"src/**/*.ts\" --fix",
     "test": "vitest run",
+    "test:unit": "vitest run test/unit",
+    "test:integration": "vitest run test/integration",
     "test:watch": "vitest",
     "db:migrate": "tsx src/db/migrator.ts up",
     "db:rollback": "tsx src/db/migrator.ts down",
