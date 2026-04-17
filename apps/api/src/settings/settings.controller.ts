@@ -32,6 +32,31 @@ class UpdateBrandingDto {
   @IsString()
   @MaxLength(200)
   company_tagline?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  address_line1?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  address_line2?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  address_city_state_zip?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  phone?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  website?: string;
 }
 
 const ALLOWED_MIME = new Map([
@@ -56,11 +81,18 @@ export class SettingsController {
   @Patch('admin/settings/branding')
   @Roles('admin')
   async updateBranding(@Body() dto: UpdateBrandingDto, @CurrentUser() user: RequestUser) {
-    if (dto.company_name !== undefined) {
-      await this.settings.setString('branding.company_name', dto.company_name, user.id);
-    }
-    if (dto.company_tagline !== undefined) {
-      await this.settings.setString('branding.company_tagline', dto.company_tagline, user.id);
+    const fieldMap: Array<[keyof UpdateBrandingDto, string]> = [
+      ['company_name', 'branding.company_name'],
+      ['company_tagline', 'branding.company_tagline'],
+      ['address_line1', 'branding.address_line1'],
+      ['address_line2', 'branding.address_line2'],
+      ['address_city_state_zip', 'branding.address_city_state_zip'],
+      ['phone', 'branding.phone'],
+      ['website', 'branding.website'],
+    ];
+    for (const [dtoField, key] of fieldMap) {
+      const value = dto[dtoField];
+      if (value !== undefined) await this.settings.setString(key, value, user.id);
     }
     return this.settings.getBranding();
   }

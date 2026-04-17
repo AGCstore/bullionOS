@@ -32,17 +32,38 @@ export class InvoicePdfService {
     });
 
     // --- Header: logo (if set) OR wordmark ---
+    let headerUsedLogo = false;
     if (logoPath && path.extname(logoPath).toLowerCase() !== '.svg') {
       try {
         // pdfkit supports PNG + JPEG natively. SVG needs an extra dep, so we
         // fall back to the wordmark for SVG logos (still readable in the UI).
         doc.image(logoPath, 54, 48, { fit: [140, 40] });
+        headerUsedLogo = true;
       } catch (err) {
         this.logger.warn(`Failed to embed logo: ${(err as Error).message}`);
         this.drawWordmark(doc, branding);
       }
     } else {
       this.drawWordmark(doc, branding);
+    }
+
+    // Company address block — sits below the logo/wordmark. Five lines max
+    // (name is included when logo crowds out the wordmark so it's still legible).
+    const addrY = 96;
+    const addrLines: string[] = [];
+    if (headerUsedLogo) addrLines.push(branding.company_name);
+    if (branding.address_line1) addrLines.push(branding.address_line1);
+    if (branding.address_line2) addrLines.push(branding.address_line2);
+    if (branding.address_city_state_zip) addrLines.push(branding.address_city_state_zip);
+    const contactBits = [branding.website, branding.phone].filter(Boolean);
+    if (contactBits.length) addrLines.push(contactBits.join('  ·  '));
+    if (addrLines.length) {
+      doc.font('Helvetica').fontSize(9).fillColor('#55555c');
+      let y = addrY;
+      for (const line of addrLines) {
+        doc.text(line, 54, y, { width: 280 });
+        y += 11;
+      }
     }
 
     // Invoice block (right side)
@@ -68,8 +89,9 @@ export class InvoicePdfService {
       .text(`Status: ${invoice.status.toUpperCase()}`, { align: 'right', width: 200 });
 
     // --- Client / Bill-to ---
-    doc.moveDown(3);
-    const billToY = doc.y;
+    // Anchor below the address block rather than doc.y so the layout is
+    // stable regardless of which header branch ran.
+    const billToY = Math.max(addrY + addrLines.length * 11 + 16, 170);
     doc
       .font('Helvetica-Bold')
       .fontSize(9)
@@ -121,6 +143,53 @@ export class InvoicePdfService {
     cursorY += 4;
     doc.font('Helvetica-Bold').fillColor('#17171a');
     this.drawTotalRow(doc, cursorY, 'Total', invoice.total, true);
+    cursorY += 24;
+
+    // --- Notes (operator-entered) ---
+    if (invoice.notes && invoice.notes.trim().length > 0) {
+      if (cursorY > 640) {
+        doc.addPage();
+        cursorY = 54;
+      }
+      doc
+        .font('Helvetica-Bold')
+        .fontSize(9)
+        .fillColor('#8a8a92')
+        .text('NOTES', 54, cursorY);
+      cursorY += 14;
+      doc
+        .font('Helvetica')
+        .fontSize(9)
+        .fillColor('#17171a')
+        .text(invoice.notes, 54, cursorY, { width: 504 });
+      cursorY = doc.y + 14;
+    }
+
+    // --- Per-side legal disclosure ---
+    // Buy invoices: we are acquiring from the seller — include Seller Cert.
+    // Sell invoices: we are transferring to the buyer — include market disclosure.
+    const disclosureTitle =
+      invoice.type === 'buy' ? 'SELLER CERTIFICATION' : 'PRODUCT CONDITION & MARKET DISCLOSURE';
+    const disclosureBody =
+      invoice.type === 'buy'
+        ? 'The seller certifies that all items presented are owned outright and are not stolen or subject to any legal claim. Seller agrees to indemnify and hold harmless Atlanta Gold and Coin from any disputes arising from ownership claims.'
+        : 'Precious metals products are subject to market volatility. All sales are final once payment is confirmed. Atlanta Gold and Coin does not guarantee future market performance.';
+
+    if (cursorY > 640) {
+      doc.addPage();
+      cursorY = 54;
+    }
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(9)
+      .fillColor('#8a8a92')
+      .text(disclosureTitle, 54, cursorY);
+    cursorY += 14;
+    doc
+      .font('Helvetica')
+      .fontSize(8.5)
+      .fillColor('#17171a')
+      .text(disclosureBody, 54, cursorY, { width: 504, align: 'justify' });
 
     // --- Footer ---
     doc
@@ -130,7 +199,7 @@ export class InvoicePdfService {
       .text(
         'Prices computed against live spot. This document is a record of a transaction at the time of creation.',
         54,
-        740,
+        760,
         { width: 504, align: 'center' },
       );
 

@@ -7,6 +7,11 @@ import { apiFetch, ApiError, getAccessToken } from '@/lib/api-client';
 interface Branding {
   company_name: string;
   company_tagline: string;
+  address_line1: string;
+  address_line2: string;
+  address_city_state_zip: string;
+  phone: string;
+  website: string;
   logo_path: string | null;
   logo_url: string | null;
 }
@@ -43,15 +48,38 @@ function BrandingForm({
   branding?: Branding;
   onChanged: () => void;
 }) {
-  const [name, setName] = useState(branding?.company_name ?? '');
-  const [tagline, setTagline] = useState(branding?.company_tagline ?? '');
+  // One piece of state so syncing from the server payload is a single assignment.
+  const [form, setForm] = useState({
+    company_name: '',
+    company_tagline: '',
+    address_line1: '',
+    address_line2: '',
+    address_city_state_zip: '',
+    phone: '',
+    website: '',
+  });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Sync local state when fresh data lands.
-  if (branding && name === '' && branding.company_name) {
-    setName(branding.company_name);
-    setTagline(branding.company_tagline);
+  // Sync once when fresh data lands and the form is still empty.
+  if (branding && form.company_name === '' && branding.company_name) {
+    setForm({
+      company_name: branding.company_name,
+      company_tagline: branding.company_tagline,
+      address_line1: branding.address_line1,
+      address_line2: branding.address_line2,
+      address_city_state_zip: branding.address_city_state_zip,
+      phone: branding.phone,
+      website: branding.website,
+    });
+  }
+
+  function field<K extends keyof typeof form>(k: K) {
+    return {
+      value: form[k],
+      onChange: (e: React.ChangeEvent<HTMLInputElement>) =>
+        setForm((f) => ({ ...f, [k]: e.target.value })),
+    };
   }
 
   async function save() {
@@ -60,7 +88,7 @@ function BrandingForm({
     try {
       await apiFetch('/admin/settings/branding', {
         method: 'PATCH',
-        body: JSON.stringify({ company_name: name, company_tagline: tagline }),
+        body: JSON.stringify(form),
       });
       onChanged();
     } catch (err) {
@@ -73,23 +101,51 @@ function BrandingForm({
   return (
     <section className="mt-6 rounded-xl border border-ink-200 bg-white p-5">
       <h2 className="text-xs font-semibold uppercase tracking-wide text-ink-400">Company</h2>
-      <div className="mt-3 space-y-3">
+      <p className="mt-1 text-xs text-ink-400">
+        Name, address, and contact info appear on every invoice PDF.
+      </p>
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
         <label className="block">
           <span className="text-sm font-medium text-ink-800">Name</span>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="input mt-1"
-            maxLength={100}
-          />
+          <input {...field('company_name')} className="input mt-1" maxLength={100} />
         </label>
         <label className="block">
           <span className="text-sm font-medium text-ink-800">Tagline</span>
+          <input {...field('company_tagline')} className="input mt-1" maxLength={200} />
+        </label>
+        <label className="block sm:col-span-2">
+          <span className="text-sm font-medium text-ink-800">Address line 1</span>
+          <input {...field('address_line1')} className="input mt-1" maxLength={120} />
+        </label>
+        <label className="block sm:col-span-2">
+          <span className="text-sm font-medium text-ink-800">Address line 2 (optional)</span>
+          <input {...field('address_line2')} className="input mt-1" maxLength={120} />
+        </label>
+        <label className="block sm:col-span-2">
+          <span className="text-sm font-medium text-ink-800">City, State ZIP</span>
           <input
-            value={tagline}
-            onChange={(e) => setTagline(e.target.value)}
+            {...field('address_city_state_zip')}
             className="input mt-1"
-            maxLength={200}
+            maxLength={120}
+            placeholder="Alpharetta, GA 30022"
+          />
+        </label>
+        <label className="block">
+          <span className="text-sm font-medium text-ink-800">Phone</span>
+          <input
+            {...field('phone')}
+            className="input mt-1"
+            maxLength={40}
+            placeholder="404-236-9744"
+          />
+        </label>
+        <label className="block">
+          <span className="text-sm font-medium text-ink-800">Website</span>
+          <input
+            {...field('website')}
+            className="input mt-1"
+            maxLength={120}
+            placeholder="atlantagoldandcoin.com"
           />
         </label>
       </div>

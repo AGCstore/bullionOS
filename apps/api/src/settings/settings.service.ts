@@ -10,6 +10,12 @@ export const UPLOADS_DIR = path.resolve(process.cwd(), 'uploads');
 export interface BrandingSettings {
   company_name: string;
   company_tagline: string;
+  /** Street address block — free-form, rendered verbatim on PDFs. */
+  address_line1: string;
+  address_line2: string;
+  address_city_state_zip: string;
+  phone: string;
+  website: string;
   /** Absolute path on disk to the logo file, or null if not set. */
   logo_path: string | null;
   /** Public URL the web UI can render. */
@@ -37,8 +43,15 @@ export class SettingsService {
     const all = await this.getAll();
     const logoPath = (all['branding.logo_path'] as string | null) ?? null;
     return {
-      company_name: (all['branding.company_name'] as string) ?? 'AGC',
+      company_name: (all['branding.company_name'] as string) ?? 'Atlanta Gold and Coin',
       company_tagline: (all['branding.company_tagline'] as string) ?? '',
+      address_line1:
+        (all['branding.address_line1'] as string) ?? '8480 Holcomb Bridge Rd #200',
+      address_line2: (all['branding.address_line2'] as string) ?? '',
+      address_city_state_zip:
+        (all['branding.address_city_state_zip'] as string) ?? 'Alpharetta, GA 30022',
+      phone: (all['branding.phone'] as string) ?? '404-236-9744',
+      website: (all['branding.website'] as string) ?? 'atlantagoldandcoin.com',
       logo_path: logoPath,
       logo_url: logoPath ? `/api/v1/public/branding/logo` : null,
     };
