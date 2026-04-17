@@ -233,7 +233,10 @@ export class InvoicesService {
           product_id: li.product_id,
           position: idx + 1,
           quantity: li.quantity,
-          product_name_snapshot: quote.product_name,
+          product_name_snapshot:
+            li.custom_name && li.custom_name.trim().length > 0
+              ? li.custom_name.trim()
+              : quote.product_name,
           // Snapshot all three product physical attributes INDEPENDENTLY so an
           // audit of this invoice years later can reproduce the math without
           // re-reading a potentially-mutated product record.

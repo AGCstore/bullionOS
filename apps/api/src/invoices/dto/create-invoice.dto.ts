@@ -60,6 +60,18 @@ export class CreateInvoiceLineItemDto {
   @IsString()
   @MaxLength(500)
   override_reason?: string;
+
+  /**
+   * Free-form label that replaces the product name on the invoice snapshot.
+   * Use for 'New Item' walk-ins where the counter has scrap gold or a
+   * one-off piece that doesn't map cleanly to a catalogue SKU. The
+   * operator still picks a product for metal + weight snapshotting; the
+   * custom_name just reflows onto the PDF and detail view.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  custom_name?: string;
 }
 
 export class CreateInvoiceDto {
