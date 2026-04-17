@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, ApiError } from '@/lib/api-client';
-import { useLiveSpot } from '@/lib/use-live-spot';
+import { useLiveSpot, type ChangePoint } from '@/lib/use-live-spot';
 import { PageTint } from '@/components/page-tint';
 
 interface PriceRow {
@@ -27,7 +27,7 @@ export default function ClientPricing() {
   const { data, isLoading } = useQuery({
     queryKey: ['client', 'prices'],
     queryFn: () => apiFetch<PricesResponse>('/client/prices'),
-    refetchInterval: 30_000,
+    refetchInterval: 60_000,
   });
   const { spot } = useLiveSpot();
 
@@ -49,19 +49,14 @@ export default function ClientPricing() {
         </Link>
       </div>
 
-      <section className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
+      <section className="mt-6 grid grid-cols-2 gap-4 md:grid-cols-4">
         {METALS.map((m) => (
-          <div key={m} className="rounded-xl border border-ink-200 bg-white p-4">
-            <div className="text-[10px] font-medium uppercase tracking-wide text-ink-400">{m}</div>
-            <div className="mt-1 font-mono text-xl font-semibold text-ink-900">
-              {spot ? (
-                `$${Number(spot[m]).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-              ) : (
-                <span className="text-ink-400">—</span>
-              )}
-            </div>
-            <div className="text-[10px] text-ink-400">per troy oz</div>
-          </div>
+          <SpotCard
+            key={m}
+            label={m}
+            price={spot?.[m]}
+            change={spot?.change?.[m]}
+          />
         ))}
       </section>
 
@@ -92,6 +87,56 @@ export default function ClientPricing() {
       </section>
     </div>
     </PageTint>
+  );
+}
+
+function SpotCard({
+  label,
+  price,
+  change,
+}: {
+  label: string;
+  price: string | undefined;
+  change: ChangePoint | undefined;
+}) {
+  const num = price ? Number(price) : null;
+  const delta = change ? Number(change.delta) : null;
+  const pct = change ? Number(change.percent) : null;
+  const dir = delta === null || delta === 0 ? 'flat' : delta > 0 ? 'up' : 'down';
+
+  return (
+    <div className="rounded-xl border border-ink-200 bg-white p-5 shadow-sm">
+      <div className="text-xs font-semibold uppercase tracking-wide text-ink-400">
+        {label}
+      </div>
+      <div className="mt-2 font-mono text-4xl font-semibold text-ink-900 tabular-nums">
+        {num !== null ? (
+          `$${num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+        ) : (
+          <span className="text-ink-400">—</span>
+        )}
+      </div>
+      <div className="mt-2 flex items-baseline gap-2">
+        {delta !== null && pct !== null ? (
+          <span
+            className={`font-mono text-sm font-semibold tabular-nums ${
+              dir === 'up'
+                ? 'text-green-700'
+                : dir === 'down'
+                  ? 'text-red-700'
+                  : 'text-ink-400'
+            }`}
+          >
+            {dir === 'up' ? '▲' : dir === 'down' ? '▼' : '·'}{' '}
+            ${Math.abs(delta).toFixed(2)} ({pct >= 0 ? '+' : ''}
+            {pct.toFixed(2)}%)
+          </span>
+        ) : (
+          <span className="text-xs text-ink-400">session change…</span>
+        )}
+      </div>
+      <div className="mt-1 text-[10px] text-ink-400">per troy oz</div>
+    </div>
   );
 }
 

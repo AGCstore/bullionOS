@@ -2,11 +2,26 @@
 
 import { useEffect, useState } from 'react';
 
+export interface ChangePoint {
+  baseline: string;
+  delta: string;
+  percent: string;
+}
+
+export interface LiveSpotChange {
+  gold: ChangePoint;
+  silver: ChangePoint;
+  platinum: ChangePoint;
+  palladium: ChangePoint;
+}
+
 export interface LiveSpot {
   gold: string;
   silver: string;
   platinum: string;
   palladium: string;
+  /** Session change vs today's first-seen spot (US/Eastern). */
+  change?: LiveSpotChange;
   asOf: string;
   cachedAt: number;
 }

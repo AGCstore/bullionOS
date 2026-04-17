@@ -24,7 +24,7 @@ export default function AdminInventoryPage() {
   const { data, isLoading } = useQuery({
     queryKey: ['admin', 'inventory'],
     queryFn: () => apiFetch<InventoryRow[]>('/admin/inventory'),
-    refetchInterval: 30_000,
+    refetchInterval: 60_000,
   });
 
   // Partition into in-stock (available > 0) and everything else so operators

@@ -100,6 +100,62 @@ export class AdminProductsController {
     return this.products.list();
   }
 
+  /**
+   * One-shot payload for the printable sheets (/admin/in-stock-sheet and
+   * /admin/buy-sheet). Joins products + current buy/sell quotes + inventory
+   * so the front-end needs exactly one fetch per page load.
+   *
+   * All pricing uses `quoteMany` (bounded-N DB reads) and the cached spot,
+   * so this is cheap enough to call every 60s without rate-limit concerns.
+   */
+  @Get('sheet')
+  async sheet() {
+    const products = await this.products.list({ onlyActive: true });
+    if (products.length === 0) return [];
+
+    const quotes = await this.pricing.quoteMany(
+      products.map((p) => ({ product_id: p.id, quantity: 1 })),
+    );
+    const quoteById = new Map(quotes.map((q) => [q.product_id, q]));
+
+    // Pull all inventory in one query, then index by product_id.
+    const invRows = await this.db
+      .selectFrom('inventory')
+      .select([
+        'product_id',
+        'quantity_on_hand',
+        'quantity_reserved',
+        'weighted_avg_cost',
+      ])
+      .where(
+        'product_id',
+        'in',
+        products.map((p) => p.id),
+      )
+      .execute();
+    const invByProduct = new Map(invRows.map((r) => [r.product_id, r]));
+
+    return products.map((p) => {
+      const q = quoteById.get(p.id);
+      const inv = invByProduct.get(p.id);
+      const on_hand = Number(inv?.quantity_on_hand ?? 0);
+      const reserved = Number(inv?.quantity_reserved ?? 0);
+      return {
+        product_id: p.id,
+        sku: p.sku,
+        name: p.name,
+        metal: p.metal,
+        category: p.category,
+        show_on_website: p.show_on_website,
+        buy_price: q ? q.buy_unit_price : null,
+        sell_price: q ? q.sell_unit_price : null,
+        quantity_on_hand: on_hand,
+        quantity_reserved: reserved,
+        available: on_hand - reserved,
+      };
+    });
+  }
+
   @Get(':id')
   getById(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.products.getById(id);

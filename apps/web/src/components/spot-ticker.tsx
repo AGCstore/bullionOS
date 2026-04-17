@@ -13,13 +13,13 @@ interface SpotResponse {
   cachedAt?: number;
 }
 
-// Polls every 15s. Backend caches upstream for 30s so this is cheap —
-// WebSocket push is Phase 2; polling is indistinguishable to the user at this cadence.
+// Polls every 60s. Anywhere pricing is shown (except the invoice wizard,
+// which locks prices at line-add time) refreshes on this cadence.
 export function SpotTicker() {
   const { data, isError, isLoading } = useQuery({
     queryKey: ['spot'],
     queryFn: () => apiFetch<SpotResponse>('/metals/spot'),
-    refetchInterval: 15_000,
+    refetchInterval: 60_000,
     refetchIntervalInBackground: true,
   });
 

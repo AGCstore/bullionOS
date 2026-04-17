@@ -47,6 +47,7 @@ export class PublicController {
       silver: toDisplay(s.silver, 2),
       platinum: toDisplay(s.platinum, 2),
       palladium: toDisplay(s.palladium, 2),
+      change: s.change ?? null,
       as_of: s.asOf,
     };
   }

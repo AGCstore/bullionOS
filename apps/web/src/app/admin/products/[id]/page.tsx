@@ -58,7 +58,7 @@ export default function ProductDetailPage({
   const { data: quote } = useQuery({
     queryKey: ['admin', 'product', id, 'quote'],
     queryFn: () => apiFetch<LiveQuote>(`/admin/products/${id}/quote?quantity=1`),
-    refetchInterval: 30_000,
+    refetchInterval: 60_000,
   });
 
   if (!product || !rule) {

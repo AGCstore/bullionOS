@@ -14,9 +14,31 @@ export interface SpotPrices {
   asOf: string;
   /** Epoch ms we cached this response. */
   cachedAt: number;
+  /**
+   * Absolute and percent change vs. the first spot captured today (US/Eastern
+   * midnight). Null until we've seen at least one earlier sample. This is a
+   * best-effort session-change, not a true 24h change — metals.dev's free
+   * tier doesn't surface previous close.
+   */
+  change?: {
+    gold: ChangePoint;
+    silver: ChangePoint;
+    platinum: ChangePoint;
+    palladium: ChangePoint;
+  };
+}
+
+export interface ChangePoint {
+  /** Baseline we compared against (first spot of the day). */
+  baseline: string;
+  /** Current minus baseline, signed. */
+  delta: string;
+  /** (delta / baseline) × 100, signed, 2dp. */
+  percent: string;
 }
 
 const CACHE_KEY = 'metals:spot:v1';
+const BASELINE_KEY_PREFIX = 'metals:baseline:'; // + YYYY-MM-DD (US/Eastern)
 
 /**
  * Resolved metals credential. Comes from one of three places, in priority order:
@@ -55,7 +77,10 @@ export class MetalsService {
     const cached = await this.redis.get(CACHE_KEY);
     if (cached) {
       try {
-        return JSON.parse(cached) as SpotPrices;
+        const base = JSON.parse(cached) as SpotPrices;
+        // Recompute change on every read — the baseline rolls at midnight
+        // and we cache the raw prices only, not the deltas.
+        return this.withChange(base);
       } catch {
         // fall through to refetch
       }
@@ -115,7 +140,67 @@ export class MetalsService {
     };
 
     await this.redis.set(CACHE_KEY, JSON.stringify(prices), 'EX', this.ttlSec);
-    return prices;
+    // Seed today's baseline the first time we see a spot after midnight.
+    await this.ensureBaseline(prices);
+    return this.withChange(prices);
+  }
+
+  /**
+   * Attach session-change data to a SpotPrices. If we don't have a baseline
+   * yet (brand new Redis, or before the daily rollover), `change` is omitted.
+   */
+  private async withChange(prices: SpotPrices): Promise<SpotPrices> {
+    const baseline = await this.loadBaseline();
+    if (!baseline) return prices;
+    const mk = (cur: string, base: string): ChangePoint => {
+      const c = Number(cur);
+      const b = Number(base);
+      const delta = c - b;
+      const pct = b > 0 ? (delta / b) * 100 : 0;
+      return {
+        baseline: base,
+        delta: delta.toFixed(2),
+        percent: pct.toFixed(2),
+      };
+    };
+    return {
+      ...prices,
+      change: {
+        gold: mk(prices.gold, baseline.gold),
+        silver: mk(prices.silver, baseline.silver),
+        platinum: mk(prices.platinum, baseline.platinum),
+        palladium: mk(prices.palladium, baseline.palladium),
+      },
+    };
+  }
+
+  /**
+   * Store today's first-seen spot as the baseline the change bar compares
+   * against. Keys are per-day (US/Eastern) so the baseline naturally resets
+   * at midnight ET without a cron. TTL is 48h so yesterday's key ages out
+   * even if the server is idle.
+   */
+  private async ensureBaseline(prices: SpotPrices): Promise<void> {
+    const key = BASELINE_KEY_PREFIX + todayEasternDateKey();
+    const existing = await this.redis.get(key);
+    if (existing) return;
+    const payload: Record<Metal, string> = {
+      gold: prices.gold,
+      silver: prices.silver,
+      platinum: prices.platinum,
+      palladium: prices.palladium,
+    };
+    await this.redis.set(key, JSON.stringify(payload), 'EX', 60 * 60 * 48);
+  }
+
+  private async loadBaseline(): Promise<Record<Metal, string> | null> {
+    const raw = await this.redis.get(BASELINE_KEY_PREFIX + todayEasternDateKey());
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw) as Record<Metal, string>;
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -159,6 +244,13 @@ export class MetalsService {
    * resolve (admin integration wins; env is fallback). Called by the
    * /admin/integrations "Test connection" button.
    */
+  async forceBaselineReset(): Promise<void> {
+    // Escape hatch — admin can reset the change-baseline if a bad sample
+    // got captured first. Not wired to the UI yet; can be triggered from a
+    // script. Intentionally private-ish — no external caller today.
+    await this.redis.del(BASELINE_KEY_PREFIX + todayEasternDateKey());
+  }
+
   async testConnection(): Promise<{ ok: boolean; message: string }> {
     const creds = await this.resolveCreds();
     if (!creds) return { ok: false, message: 'Not configured (no admin integration and no env fallback)' };
@@ -184,4 +276,19 @@ export class MetalsService {
       return { ok: false, message: (err as Error).message.slice(0, 500) };
     }
   }
+}
+
+/**
+ * Today's date as YYYY-MM-DD in US/Eastern. Pure string math so we don't
+ * pull in a tz library. Intl.DateTimeFormat gives us America/New_York with
+ * DST handled correctly.
+ */
+function todayEasternDateKey(): string {
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  return fmt.format(new Date()); // en-CA yields YYYY-MM-DD
 }
