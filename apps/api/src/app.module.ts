@@ -23,6 +23,8 @@ import { SmsModule } from './sms/sms.module';
 import { PriceQuotesModule } from './price-quotes/price-quotes.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { MessagesModule } from './messages/messages.module';
+import { CryptoModule } from './crypto/crypto.module';
+import { IntegrationsModule } from './integrations/integrations.module';
 import { HealthController } from './health/health.controller';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
@@ -75,6 +77,8 @@ import { AllExceptionsFilter } from './common/filters/http-exception.filter';
     InventoryModule,
     MessagesModule,
     SmsModule,
+    CryptoModule,
+    IntegrationsModule,
     ClientPortalModule,
     SettingsModule,
   ],

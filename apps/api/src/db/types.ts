@@ -270,7 +270,24 @@ export interface DB {
   deal_request_photos: DealRequestPhotosTable;
   totp_recovery_codes: TotpRecoveryCodesTable;
   messages: MessagesTable;
+  integrations: IntegrationsTable;
 }
+
+export interface IntegrationsTable {
+  provider: string;
+  // AES-256-GCM output (nonce + ciphertext + tag). node-postgres returns Buffer.
+  credentials_encrypted: Buffer;
+  display_hint: string | null;
+  is_enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  last_tested_at: Timestamp | null;
+  last_test_ok: boolean | null;
+  last_test_message: string | null;
+  updated_by_user_id: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
+export type Integration = Selectable<IntegrationsTable>;
 
 export type MessageAuthorRole = 'admin' | 'staff' | 'client';
 

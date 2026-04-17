@@ -27,6 +27,20 @@ const envSchema = z.object({
   LOGIN_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(5),
   LOGIN_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
 
+  // AES-256 key for encrypting integration credentials at rest.
+  // Base64 of exactly 32 bytes.
+  // Generate with: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+  APP_ENCRYPTION_KEY: z.string().refine(
+    (v) => {
+      try {
+        return Buffer.from(v, 'base64').length === 32;
+      } catch {
+        return false;
+      }
+    },
+    { message: 'APP_ENCRYPTION_KEY must be base64 of exactly 32 bytes' },
+  ),
+
   METALS_API_KEY: z.string().min(1),
   METALS_API_URL: z.string().url(),
   METALS_CACHE_TTL_SEC: z.coerce.number().int().positive().default(30),
