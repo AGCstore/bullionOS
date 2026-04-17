@@ -1,346 +1,231 @@
 # AGC CRM + Trading + Client Portal
 
-Production-grade CRM, trading desk, inventory, and secure client portal.
-
-> **Status: Phase 0 — Foundation.** Auth, DB schema, and base UI are complete and runnable. Trading/invoice/pricing/shipments modules land in Phase 1+.
-
----
-
-## Stack
-
-| Layer      | Choice                                                          |
-|------------|-----------------------------------------------------------------|
-| Monorepo   | pnpm workspaces                                                  |
-| Backend    | NestJS 10 + Kysely + PostgreSQL 16 + Redis 7                     |
-| Auth       | JWT (HS256) access + rotating refresh tokens + bcrypt (cost 12)  |
-| Frontend   | Next.js 15 (App Router) + React 19 + Tailwind + TanStack Query   |
-| Money      | `NUMERIC(20,8)` on all monetary columns                          |
-| Containers | Docker Compose (Postgres + Redis)                                |
+Precious-metals trading desk, client portal, and integrated CRM.
+NestJS + Kysely + PostgreSQL + Redis + Next.js monorepo.
 
 ---
 
-## One-time setup
+## Current state of the system
 
-### 1. Install prerequisites
+Everything below is implemented, wired end-to-end, and covered by tests or smoke scripts.
 
-- **Node.js 20.11+** — https://nodejs.org (LTS)
-- **pnpm 9+** — `npm install -g pnpm`
-- **Docker Desktop** — https://www.docker.com/products/docker-desktop (needed for Postgres + Redis)
-- **Git** — https://git-scm.com
+### Production-ready
 
-Verify:
+- **Auth.** Email + password (bcrypt cost 12), JWT HS256 access tokens in memory, rotating refresh tokens as **`httpOnly; Secure; SameSite=Lax` cookies** scoped to `/api/v1/auth`. Refresh-token reuse detection revokes all user sessions. Account lockout after 10 failed attempts. TOTP 2FA with QR enrollment and 10 one-time recovery codes.
+- **Products catalog + pricing engine.** Product override beats metal default, with percent *or* flat-per-troy-oz premiums. Decimal arithmetic end-to-end (`decimal.js` + `NUMERIC(20,8)`), never JS float.
+- **Metals feed.** Live spot from metals.dev, Redis-cached with stale-on-upstream-failure fallback.
+- **Invoices.** Create → finalize → paid → shipped state machine for both buy and sell sides. Each line item captures a full snapshot (name, gross weight, purity, metal content, spot, premium type/value, unit price, line total). **An invoice is 100% reproducible after the underlying product is hard-deleted.**
+- **Admin override** on individual line items; admin role only, logged in `audit_logs`.
+- **Invoice PDF** generated with pdfkit (logo upload + branding configurable in Settings).
+- **Inventory with real reservation.** Sell-side `draft → finalized` reserves stock; `shipped` consumes it; `canceled` releases it. Buy-side `paid` adds stock. `SELECT ... FOR UPDATE` on the inventory row serializes concurrent finalize attempts, making oversell impossible. Weighted-average cost maintained on buy-side movements.
+- **Public feed** `/public/what-we-pay`: batch-priced (~5 queries regardless of product count), Redis-cached with hook-based invalidation on product + pricing-rule changes.
+- **Client portal** at `/dashboard/*` — transactions, invoice PDFs, live pricing via SSE, lock-in quotes, in-stock feed, deal requests with photo uploads, shipments with carrier tracking URLs, staff↔client messaging, 2FA setup.
+- **Admin console** at `/admin/*` — dashboard with live spot ticker, clients CRM (pg_trgm fuzzy search), products, pricing rules, invoices (create wizard + status board), deal-request queue with inline photo gallery + messaging, shipments, inventory, lock-in quote converter, branding, integrations.
+- **Notifications** — in-app inbox + email via nodemailer (SMTP or dev log) + SMS via Twilio (live or dev log). Per-user opt-in for email and SMS. SMS limited to high-signal events.
+- **Integrations** — UPS / FedEx / USPS / DocuSign credentials configured in-app at `/admin/integrations`. AES-256-GCM encrypted at rest; secrets never leave the server (redacted in API responses, never in env). One master `APP_ENCRYPTION_KEY` is the only secret the env needs for these.
+- **Shipment adapter** layer (`ShipmentAdapter` interface). Each carrier is an isolated adapter class; `CarrierService` is a thin dispatcher. A `shipment_tracking_events` table stores normalized event history with idempotent ingestion.
 
-```bash
-node -v     # should be >= 20.11
-pnpm -v     # should be >= 9
-docker -v
-```
+### Partially implemented — structure complete, needs external keys or one last wire
 
-### 2. Clone / open the project
+- **Carrier tracking auto-refresh.** `CarrierService.track()` + `ShipmentIngestService.ingest()` are wired. Admin "Test connection" exercises the real OAuth endpoints. Background polling job is not scheduled yet — expected wiring is a cron tick calling `ShipmentIngestService.refreshShipment(id)` per active shipment.
+- **Carrier webhooks.** `CarrierWebhooksController` at `/api/v1/webhooks/carriers/:carrier` is live. Each adapter's `verifyWebhook()` / `parseWebhook()` methods are optional and currently only stubs; wire them when you enroll a carrier in push delivery.
+- **DocuSign.** JWT-grant token exchange + HMAC webhook verification implemented. Envelope creation / template fill path is scaffolded but not wired to the invoice finalize flow yet.
+- **EasyPost.** Adapter class present as a structural placeholder.
 
-```bash
-cd /e/agc-crm        # or E:\agc-crm on Windows
-```
+### Deliberately not planned
 
-### 3. Configure environment
-
-```bash
-cp apps/api/.env.example apps/api/.env
-cp apps/web/.env.example apps/web/.env.local
-```
-
-Then edit `apps/api/.env` and replace the two JWT secrets with strong random values:
-
-```bash
-# Generates a 64-byte base64 secret; run it twice and paste into .env
-openssl rand -base64 64
-```
-
-Set:
-- `JWT_ACCESS_SECRET`
-- `JWT_REFRESH_SECRET`
-
-> On Windows without OpenSSL, use PowerShell:
-> `[Convert]::ToBase64String((1..64 | % { [byte](Get-Random -Max 256) }))`
-
-The `METALS_API_KEY` is already pre-filled from metals.dev.
-
-### 4. Install dependencies
-
-```bash
-pnpm install
-```
-
-### 5. Start Postgres + Redis
-
-```bash
-pnpm db:up
-```
-
-Wait a few seconds, then:
-
-```bash
-pnpm db:migrate
-pnpm db:seed
-```
-
-The seed creates a default admin:
-- Email: `admin@agc.local`
-- Password: `ChangeMe_Admin_123!`
-
-> **Rotate this password immediately** for any non-local use (log in then change, or delete the user and create a fresh one).
-
-### 6. Run the dev servers
-
-In one terminal:
-
-```bash
-pnpm api:dev
-```
-
-In another:
-
-```bash
-pnpm web:dev
-```
-
-- API:  http://localhost:4000/api/v1/health
-- Web:  http://localhost:3001
-
-> Web runs on **3001** (not 3000) to avoid conflict with Open WebUI / other common dev containers.
-
-Register a new client at `/register`, or sign in with the admin seed credentials at `/login`.
+- ACH rails (Plaid / Dwolla).
+- Mobile app — future.
 
 ---
 
-## Project structure
+## Repo layout
 
 ```
 agc-crm/
 ├── apps/
-│   ├── api/                     # NestJS backend
-│   │   └── src/
-│   │       ├── auth/            # register, login, refresh, logout, /me
-│   │       ├── common/          # guards, decorators, filters
-│   │       ├── config/          # env schema (zod)
-│   │       ├── db/              # Kysely + migrations + seed
-│   │       ├── health/
-│   │       ├── app.module.ts
-│   │       └── main.ts
-│   └── web/                     # Next.js 15 portal (client + admin shell)
-│       └── src/
-│           ├── app/
-│           │   ├── login/
-│           │   ├── register/
-│           │   └── dashboard/
-│           └── lib/             # api client, auth context
-├── packages/
-│   └── shared/                  # shared zod schemas + types
-├── docker-compose.yml
+│   ├── api/                  NestJS backend
+│   │   ├── src/
+│   │   │   ├── auth/         login, 2FA, refresh cookies, guards
+│   │   │   ├── clients/      CRM + pg_trgm fuzzy search + portal enable/disable/reset
+│   │   │   ├── client-portal/ /client/* endpoints
+│   │   │   ├── common/       money helpers, decorators, filters
+│   │   │   ├── config/       env schema (zod)
+│   │   │   ├── crypto/       AES-256-GCM for integration creds
+│   │   │   ├── db/           Kysely + all migrations (001..013)
+│   │   │   ├── deal-requests/ + photo uploads
+│   │   │   ├── email/        nodemailer (dev fallback)
+│   │   │   ├── integrations/ carrier adapters + DocuSign + webhook controller
+│   │   │   │   └── adapters/ ups, fedex, usps, easypost
+│   │   │   ├── inventory/    on_hand + reserved counters, movement audit
+│   │   │   ├── invoices/     create + state machine + PDF
+│   │   │   ├── messages/     staff ↔ client threads
+│   │   │   ├── metals/       spot feed + Redis cache + SSE stream
+│   │   │   ├── notifications/ inbox + email + SMS fan-out
+│   │   │   ├── price-quotes/ time-limited locked quotes
+│   │   │   ├── pricing/      engine + rules + quoteMany batch
+│   │   │   ├── products/
+│   │   │   ├── public/       public pages + Redis cache layer
+│   │   │   ├── redis/
+│   │   │   ├── settings/     branding + logo upload
+│   │   │   ├── shipments/
+│   │   │   └── sms/          Twilio (dev fallback)
+│   │   └── test/
+│   │       ├── unit/         pricing math, carrier status mapping
+│   │       └── integration/  invoice snapshot, reservation, oversell, public feed
+│   └── web/                  Next.js 15 client + admin portal
+├── packages/shared/          zod schemas shared with web
+├── .github/workflows/ci.yml  lint + typecheck + migrations + build
+├── docker-compose.yml        local Postgres 16 + Redis 7
+├── render.yaml               production blueprint
 └── README.md
 ```
 
 ---
 
-## API reference (Phase 0)
+## Setup
 
-All routes are prefixed with `/api/v1`.
+### Prerequisites
 
-| Method | Path              | Auth     | Purpose                          |
-|--------|-------------------|----------|----------------------------------|
-| GET    | `/health`         | public   | Health + DB ping                 |
-| POST   | `/auth/register`  | public   | Self-signup (role: client)       |
-| POST   | `/auth/login`     | public   | Issue access + refresh tokens    |
-| POST   | `/auth/refresh`   | public   | Rotate refresh token             |
-| POST   | `/auth/logout`    | public   | Revoke a refresh token           |
-| GET    | `/auth/me`        | bearer   | Current user profile             |
+- Node 20.11+
+- pnpm 9+
+- Docker Desktop (Postgres + Redis)
+- Git
 
-Upcoming (Phase 1+): `/admin/*`, `/client/*`, `/public/*`, `/shipping/*`, WebSocket namespace `/ws`.
+### First-time
 
----
-
-## Security posture (what's already enforced)
-
-- **Password storage:** bcrypt cost 12 (configurable).
-- **Account lockout:** 10 failed logins → 15-minute lock (per-user).
-- **Timing-safe login:** dummy bcrypt compare on unknown email to prevent enumeration.
-- **JWT algorithm pinning:** `HS256` only; no `alg: none` accepted.
-- **Refresh token rotation:** every `/auth/refresh` issues new tokens; old one is revoked.
-- **Reuse detection:** presenting an already-revoked refresh token revokes ALL sessions for that user.
-- **Hashed storage:** refresh tokens are stored as SHA-256; raw tokens never in DB.
-- **Rate limiting:** global 100/min; auth endpoints 5/min.
-- **Input validation:** `class-validator` + whitelist + `forbidNonWhitelisted`.
-- **Helmet** headers on all API responses.
-- **CORS** locked to `WEB_ORIGIN`.
-- **Log redaction:** pino scrubs `authorization`, `cookie`, `password`, `refresh_token`, `totp`.
-- **SQL injection:** Kysely parameterized queries only; no string interpolation into SQL.
-- **XSS:** React escapes by default; no `dangerouslySetInnerHTML`.
-- **Audit log:** every login and registration persisted to `audit_logs`.
-
-### What's stubbed / explicitly pending
-
-- **2FA**: DB column + login branch exist; TOTP verify is a placeholder. Wire `otplib` + QR in Phase 3.
-- **Refresh tokens in httpOnly cookies**: currently in `sessionStorage` for Phase 0. Move to httpOnly+Secure+SameSite=Lax cookies when we add the CSRF double-submit token.
-- **Email/SMS notifications**: SMTP config in env; provider not wired yet.
-
----
-
-## Common commands
-
-```bash
-# Monorepo
-pnpm install                 # install everything
-pnpm dev                     # run all apps in parallel
-pnpm build                   # build all apps
-
-# Database
-pnpm db:up                   # start Postgres + Redis
-pnpm db:down                 # stop them
-pnpm db:logs                 # tail postgres logs
-pnpm db:migrate              # apply pending migrations
-pnpm db:rollback             # revert last migration
-pnpm db:seed                 # seed admin + sample client
-
-# Per-app
-pnpm api:dev                 # NestJS hot-reload
-pnpm web:dev                 # Next.js hot-reload
+```powershell
+cd E:\agc-crm
+cp apps/api/.env.example apps/api/.env
+cp apps/web/.env.example apps/web/.env.local
 ```
 
----
+Edit `apps/api/.env` and fill in:
 
-## Adding a migration
+- `JWT_ACCESS_SECRET` and `JWT_REFRESH_SECRET` — run twice:
+  ```powershell
+  node -e "console.log(require('crypto').randomBytes(64).toString('base64'))"
+  ```
+- `APP_ENCRYPTION_KEY` — 32 bytes base64:
+  ```powershell
+  node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+  ```
+- `METALS_API_KEY` — grab from https://metals.dev
 
-```bash
-# 1. Create apps/api/src/db/migrations/00N_whatever.ts
-#    (copy the shape of 001_init.ts)
-# 2. Apply:
+Install + boot:
+
+```powershell
+pnpm install
+pnpm db:up
 pnpm db:migrate
+pnpm db:seed               # creates admin@agc.local / ChangeMe_Admin_123!
+pnpm db:seed:trading       # seeds product catalog + pricing rules
 ```
 
-Migrations are ordered by filename. Never edit a migration that has been applied in production — always add a new one.
+### Run dev
+
+Two terminals:
+
+```powershell
+pnpm api:dev    # http://localhost:4000
+pnpm web:dev    # http://localhost:3001
+```
+
+Sign in at http://localhost:3001/login as `admin@agc.local` / `ChangeMe_Admin_123!` and **change the password immediately**.
 
 ---
 
-## Troubleshooting
+## Running tests
 
-**`ECONNREFUSED 127.0.0.1:5432`** — Postgres isn't up. Run `pnpm db:up` and wait ~5s.
+Unit tests are pure and need no API:
 
-**`JWT_ACCESS_SECRET must be >= 32 chars`** — you didn't replace the `.env` placeholders. Generate secrets with `openssl rand -base64 64`.
+```powershell
+pnpm --filter @agc/api test:unit
+```
 
-**`port 3000 already in use`** — another dev server is running. Kill it or change `apps/web`'s port.
+Integration tests hit the live API and verify DB invariants. Need `pnpm api:dev` running:
 
-**Windows line endings in shell scripts** — use Git Bash or WSL. The project itself uses LF.
+```powershell
+pnpm --filter @agc/api test:integration
+```
+
+Covers:
+- pricing math (override precedence, percent vs flat, decimal safety)
+- carrier status mapping (UPS / FedEx / USPS codes)
+- invoice snapshot fidelity (gross/purity/content are three distinct values)
+- invoice survives hard-DELETE of its product (totals + PDF unchanged)
+- `buy.paid` → `+on_hand`
+- `sell.finalized` → `+reserved` only; `sell.shipped` → consume both counters
+- cancel → release reservation
+- oversell rejected atomically via `SELECT FOR UPDATE`
+- admin override persists `is_overridden=true` + `unit_price`
+- `/public/what-we-pay` filters by `show_on_website=true`
+
+CI (`.github/workflows/ci.yml`) runs lint + typecheck + migrations + build on every push.
+
+---
+
+## Migrations
+
+13 applied migrations. Additive only — rename/nullable changes happen in dedicated migrations that note their safety guarantee in the header comment.
+
+| #   | Purpose |
+|-----|---------|
+| 001 | auth: users, clients, refresh_tokens, audit_logs |
+| 002 | trading: products, pricing_rules, inventory, inventory_movements, invoices, invoice_line_items |
+| 003 | settings (branding, logo path) |
+| 004 | portal: deal_requests, shipments, notifications |
+| 005 | 2FA recovery codes, price_quotes, deal_request_photos, email prefs |
+| 006 | pg_trgm fuzzy search indexes (clients, products, invoices) |
+| 007 | messages (client↔staff) + phone/SMS prefs |
+| 008 | integrations (encrypted credential store) |
+| 009 | `invoice_line_items` column rename: `gross_weight_troy_oz`, `purity`, `metal_content_troy_oz` |
+| 010 | product delete SET NULL on `invoice_line_items` + `inventory_movements` |
+| 011 | `inventory_movements.reserved_delta` + reservation reason codes |
+| 012 | `inventory.product_id` CASCADE; `deal_requests.product_id` SET NULL |
+| 013 | `shipment_tracking_events` + idempotent unique index |
+
+Apply:
+```powershell
+pnpm db:migrate
+pnpm db:rollback   # reverts the most recent
+```
+
+---
+
+## Security posture
+
+| Area | What's enforced |
+|------|-----------------|
+| Password storage | bcrypt cost 12 |
+| Refresh tokens | httpOnly Secure SameSite=Lax cookie, SHA-256 hashed in DB, reuse detection revokes session |
+| Access tokens | JWT HS256, in memory only — never in storage or cookies |
+| 2FA | TOTP + 10 single-use recovery codes |
+| Login | 5/min per IP, 10 failed attempts → 15-min lock |
+| Integration secrets | AES-256-GCM encrypted at rest, decrypt key in env only |
+| Money math | Decimal only. `NUMERIC(20,8)` on every monetary column. No JS float anywhere in pricing/invoicing/inventory |
+| Oversell | `SELECT ... FOR UPDATE` on inventory row inside the status-change transaction |
+| Invoice history | Every line item snapshots every calculation input; invoices reprint identically after product hard-delete |
+| Audit trail | `audit_logs` for every status change, override, portal enable/disable, password reset, integration change; `inventory_movements` for every on_hand / reserved change |
+| Pre-commit | `.githooks/pre-commit` greps staged diffs for credential shapes (AWS, GitHub, Slack, Stripe, Twilio, JWT, PEM) |
 
 ---
 
 ## Deployment
 
-Recommended stack:
+`render.yaml` provisions the full stack in one blueprint: API (Docker), Postgres 16, Redis 7. `apps/web/vercel.json` deploys the Next.js frontend and rewrites `/api/*` to the Render host.
 
-| Layer    | Provider                   |
-|----------|----------------------------|
-| Frontend | Vercel                     |
-| Backend  | Render (Docker)            |
-| DB       | Render Postgres            |
-| Cache    | Render Redis               |
-| Edge     | Cloudflare (optional WAF + TLS)     |
+One-time:
+1. Push this repo to GitHub.
+2. Render → New → Blueprint → point at the repo → fill the `sync: false` env prompts (`API_BASE_URL`, `WEB_ORIGIN`, `METALS_API_KEY`, `APP_ENCRYPTION_KEY`, `SMTP_*`, `TWILIO_*`).
+3. Vercel → Import → set root to `apps/web` → deploy.
+4. Edit `WEB_ORIGIN` in Render to match your real Vercel URL (CORS depends on this).
+5. Run migrations in the Render shell: `pnpm --filter @agc/api db:migrate`.
 
-Everything the pipeline needs ships in the repo:
-- `apps/api/Dockerfile` — multi-stage build (~120 MB final image, runs as non-root, tini as PID 1)
-- `render.yaml` — one-command Render blueprint; provisions the web service + Postgres + Redis with pre-wired env var links
-- `apps/web/vercel.json` — Next.js config with `/api/*` rewrite to the Render URL
-- `.github/workflows/ci.yml` — lint + typecheck + migrations + build on every PR
-
-### First deploy (≈10 minutes)
-
-**1. Backend on Render**
-
-Edit `render.yaml`, replace `CHANGE_ME/agc-crm` with your GitHub repo slug, then:
-
-```bash
-git push origin main
-# In Render dashboard: New → Blueprint → point at your repo
-```
-
-Render will prompt for the `sync: false` secrets:
-- `API_BASE_URL` → `https://agc-api.onrender.com` (Render fills this after creation)
-- `WEB_ORIGIN` → `https://<your-vercel-app>.vercel.app`
-- `METALS_API_KEY` → your metals.dev key
-- `SMTP_*` → optional; if blank the API uses a dev log transport
-- `TWILIO_*` → optional; same pattern
-
-`JWT_ACCESS_SECRET` and `JWT_REFRESH_SECRET` are auto-generated by Render.
-`DATABASE_URL` and `REDIS_URL` are wired automatically to the managed services.
-
-After the service comes up:
-
-```bash
-# In the Render shell for agc-api:
-pnpm --filter @agc/api db:migrate
-pnpm --filter @agc/api db:seed          # creates initial admin
-pnpm --filter @agc/api db:seed:trading  # seeds the product catalog + pricing rules
-```
-
-(Or set these as a "pre-deploy command" in Render so future pushes run migrations automatically.)
-
-**2. Frontend on Vercel**
-
-Edit `apps/web/vercel.json`, replace the `CHANGE_ME.onrender.com` host with your Render URL. Then in Vercel:
-
-```
-Import GitHub repo → Root directory: apps/web → Deploy
-```
-
-No env vars required on Vercel — the `/api/*` rewrite talks to Render directly. If you prefer direct API calls from the browser (no rewrite), set `NEXT_PUBLIC_API_URL` and remove the rewrite.
-
-**3. Point WEB_ORIGIN at the real Vercel URL**
-
-Back in Render, update `WEB_ORIGIN` to your Vercel production URL. This is what CORS checks against — if you skip this, the browser will block the web → API requests.
-
-### CI (GitHub Actions)
-
-`.github/workflows/ci.yml` runs on every push/PR:
-- `pnpm install` (cached via pnpm-setup action)
-- typecheck API + web (`tsc --noEmit`)
-- Apply all migrations against a throwaway Postgres 16 service container
-- Build API + web
-
-If any step fails, the PR is blocked.
-
-### Running migrations on deploy
-
-The Render blueprint does NOT run migrations automatically on every deploy. Two recommended options:
-
-- **Manual (safe default):** SSH into the Render shell, `pnpm db:migrate`
-- **Auto:** add `pnpm --filter @agc/api db:migrate` as the "pre-deploy command" on the web service in the Render UI. Make sure your CI has already validated the migration.
-
-### Production security checklist
-
-- [ ] `NODE_ENV=production` set — this flips the refresh cookie to `Secure` (HTTPS-only)
-- [ ] `WEB_ORIGIN` matches your real frontend URL (CORS enforcement)
-- [ ] `JWT_ACCESS_SECRET` and `JWT_REFRESH_SECRET` are unique to this environment (do not reuse dev secrets)
-- [ ] Postgres behind the Render private network (default)
-- [ ] Redis behind the Render private network (`ipAllowList: []` in `render.yaml`)
-- [ ] Cloudflare (or equivalent) in front for TLS + WAF + DDoS
-- [ ] Cycle the seed admin password: log in, visit Settings, reset
-- [ ] Enable 2FA on the admin account (Dashboard → Security)
-- [ ] SMTP credentials set so notification emails actually send
-- [ ] Consider separate domains for API and web (CORS tightens, cookies get a stricter `Domain`)
-
----
-
-## Roadmap
-
-- **Phase 1 — Core trading** ✅
-  Products, pricing engine, invoices, PDFs, metals.dev live feed.
-- **Phase 2 — Client portal** ✅
-  Transaction history, what-we-pay, deal requests, shipments, SSE price stream.
-- **Phase 3 — Integrations & hardening** ✅
-  TOTP 2FA, price lock-in quotes, photo uploads, email via SMTP, full client CRM, fuzzy search, inventory tied to invoices, in-stock dashboards.
-- **Phase 4 — Production-ready** ✅
-  httpOnly refresh cookies, staff↔client messaging, SMS via Twilio, Dockerfile, CI, Render + Vercel deploy configs.
-- **Phase 5 — External integrations (needs keys)**
-  UPS/FedEx/USPS tracking API polling (webhook + pull), DocuSign for sell-side contracts, bank ACH rails via Plaid/Dwolla, recurring buyer programs, mobile app (React Native over `@agc/shared`).
+Post-deploy:
+- Rotate the seeded admin password at `/admin/settings`, or delete the seed user.
+- Enable 2FA on the admin account at `/dashboard/security`.
+- Configure each integration at `/admin/integrations`.
 
 ---
 
