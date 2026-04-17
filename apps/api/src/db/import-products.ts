@@ -100,6 +100,10 @@ async function main() {
         skippedSkus.push(r.sku);
         continue;
       }
+      // Content = gross weight × purity. The invoice snapshot + pricing
+      // service both compute buy/sell against this number, so we have to
+      // store it explicitly on the product row.
+      const content = (Number(r.weight_troy_oz) * Number(r.purity)).toFixed(8);
       await db
         .insertInto('products')
         .values({
@@ -109,6 +113,7 @@ async function main() {
           category: r.category,
           weight_troy_oz: r.weight_troy_oz,
           purity: r.purity,
+          metal_content_troy_oz: content,
           is_active: true,
           show_on_website: true,
         })
@@ -155,13 +160,27 @@ function parseAgcCsv(text: string): Row[] {
     rows.push({
       sku: sku.toUpperCase(),
       metal: metal.toLowerCase() as Metal,
-      category: category as ProductCategory,
+      // CSV categories are domain-level (gold_coin / foreign_silver /
+      // junk_silver / …). The schema's CHECK constraint enforces a smaller
+      // surface (coin / bar / round / numismatic / jewelry / other). Map
+      // on the way in so inserts don't violate the constraint.
+      category: mapCategory(item_name, category),
       item_name,
       weight_troy_oz: weight,
       purity: inferPurity(metal.toLowerCase() as Metal, item_name, category),
     });
   }
   return rows;
+}
+
+function mapCategory(name: string, raw: string): ProductCategory {
+  const n = name.toLowerCase();
+  const r = raw.toLowerCase();
+  if (n.includes(' bar ') || n.endsWith(' bar') || r.includes('bar')) return 'bar';
+  if (n.includes(' round') || r.includes('round')) return 'round';
+  if (n.includes('jewel') || r.includes('jewel')) return 'jewelry';
+  if (r.includes('numismatic')) return 'numismatic';
+  return 'coin';
 }
 
 main().catch((err) => {
