@@ -1,0 +1,40 @@
+node_modules/
+dist/
+build/
+.next/
+out/
+.turbo/
+coverage/
+
+# env
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# db dumps
+*.sql.gz
+/pgdata/
+/redisdata/
+
+# generated pdfs, uploads
+/uploads/
+apps/api/uploads/
+/tmp/
+
+# source data dropped at repo root — excluded until reviewed
+/agc products.xlsx
+/agc products.xlsx.csv
+

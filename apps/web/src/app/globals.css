@@ -1,0 +1,20 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  .input {
+    @apply block w-full rounded-md border border-ink-200 bg-white px-3 py-2 text-ink-900 outline-none ring-gold-500/30 focus:ring-2;
+  }
+}
+
+:root {
+  color-scheme: light;
+}
+
+html, body {
+  height: 100%;
+  background: #f7f7f8;
+  color: #17171a;
+  font-feature-settings: "cv11", "ss01";
+}

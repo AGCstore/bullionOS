@@ -1,0 +1,3 @@
+* text=auto eol=lf
+*.{png,jpg,jpeg,gif,webp,pdf,ico} binary
+pnpm-lock.yaml linguist-generated=true

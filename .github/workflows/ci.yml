@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: lint + typecheck + migrations
+    runs-on: ubuntu-latest
+
+    # Stand up a real Postgres + Redis so we can run migrations against it.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: agc
+          POSTGRES_PASSWORD: agc_dev_password
+          POSTGRES_DB: agc_crm
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agc"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      # Real-ish env for the API boot path; secrets are dummy values here.
+      NODE_ENV: test
+      PORT: 4000
+      API_BASE_URL: http://localhost:4000
+      WEB_ORIGIN: http://localhost:3001
+      DATABASE_URL: postgres://agc:agc_dev_password@localhost:5432/agc_crm
+      REDIS_URL: redis://localhost:6379
+      JWT_ACCESS_SECRET: ci-dummy-access-secret-must-be-at-least-32-chars
+      JWT_REFRESH_SECRET: ci-dummy-refresh-secret-must-be-at-least-32-chars
+      METALS_API_KEY: ci-dummy
+      METALS_API_URL: https://api.metals.dev/v1/latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build shared
+        run: pnpm --filter @agc/shared run lint
+
+      - name: API typecheck
+        working-directory: apps/api
+        run: pnpm exec tsc --noEmit
+
+      - name: Web typecheck
+        working-directory: apps/web
+        run: pnpm exec tsc --noEmit
+
+      - name: DB migrations apply cleanly
+        working-directory: apps/api
+        run: pnpm run db:migrate
+
+      - name: API build
+        run: pnpm --filter @agc/api run build
+
+      - name: Web build
+        run: pnpm --filter @agc/web run build
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:4000
