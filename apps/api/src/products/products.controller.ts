@@ -164,6 +164,9 @@ export class AdminProductsController {
         category: p.category,
         show_on_website: p.show_on_website,
         weight_troy_oz: p.weight_troy_oz,
+        // Pass through the operator's pinning choice so the frontend's
+        // grouping logic uses it instead of the heuristic.
+        display_category_override: p.display_category_override,
         buy_price: q ? q.buy_unit_price : null,
         sell_price: q ? q.sell_unit_price : null,
         quantity_on_hand: on_hand,

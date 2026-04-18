@@ -4,6 +4,8 @@ import { use, useState } from 'react';
 import Link from 'next/link';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, ApiError } from '@/lib/api-client';
+import { useDisplayCategories } from '@/lib/use-display-categories';
+import { deriveDisplayCategory } from '@/lib/product-category';
 
 interface Product {
   id: string;
@@ -18,6 +20,7 @@ interface Product {
   image_url: string | null;
   is_active: boolean;
   show_on_website: boolean;
+  display_category_override: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -110,7 +113,77 @@ export default function ProductDetailPage({
 
       {/* Pricing rule editor */}
       <PricingRuleEditor productId={id} rule={rule} />
+
+      {/* Display category override */}
+      <DisplayCategoryPicker product={product} />
     </div>
+  );
+}
+
+function DisplayCategoryPicker({ product }: { product: Product }) {
+  const qc = useQueryClient();
+  const { sections } = useDisplayCategories();
+  const [pending, setPending] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [ok, setOk] = useState<string | null>(null);
+
+  const auto = deriveDisplayCategory(product);
+  const current = product.display_category_override ?? '';
+
+  async function save(next: string) {
+    setPending(next);
+    setError(null);
+    setOk(null);
+    try {
+      await apiFetch(`/admin/products/${product.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          display_category_override: next, // '' signals clear
+        }),
+      });
+      await qc.invalidateQueries({ queryKey: ['admin', 'product', product.id] });
+      await qc.invalidateQueries({ queryKey: ['admin', 'products', 'sheet'] });
+      await qc.invalidateQueries({ queryKey: ['admin', 'inventory'] });
+      setOk(next ? 'Pinned.' : 'Override cleared — using automatic routing.');
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Save failed');
+    } finally {
+      setPending(null);
+    }
+  }
+
+  return (
+    <section className="mt-6 rounded-xl border border-ink-200 bg-white p-5">
+      <h2 className="text-base font-semibold">Display category</h2>
+      <p className="mt-1 text-xs text-ink-400">
+        Which section this product appears under on the Products page,
+        In-stock sheet, What we pay, and Catalog. Leave on{' '}
+        <span className="font-semibold">Automatic</span> to use name-based
+        routing (<span className="font-mono">{auto}</span> for this product).
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <select
+          value={current}
+          onChange={(e) => save(e.target.value)}
+          disabled={pending !== null}
+          className="input md:w-80"
+        >
+          <option value="">Automatic ({auto})</option>
+          {sections.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.label}
+            </option>
+          ))}
+        </select>
+        {pending !== null && <span className="text-xs text-ink-400">Saving…</span>}
+      </div>
+      {ok && (
+        <p className="mt-2 rounded-md bg-green-50 px-3 py-1 text-xs text-green-700">{ok}</p>
+      )}
+      {error && (
+        <p className="mt-2 rounded-md bg-red-50 px-3 py-1 text-xs text-red-700">{error}</p>
+      )}
+    </section>
   );
 }
 

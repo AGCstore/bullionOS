@@ -68,12 +68,13 @@ export const METAL_GROUPS: Record<
 
 /**
  * Partition a list of sections into metal groups, preserving order.
- * Used by every view that renders the metal → section → items structure.
+ * Generic over the section's id type so admin-added slugs (plain string)
+ * flow through alongside the builtin DisplayCategory union.
  */
-export function groupSectionsByMetal(
-  sections: DisplaySection[],
-): Array<{ metal: MetalGroup; sections: DisplaySection[] }> {
-  const out: Array<{ metal: MetalGroup; sections: DisplaySection[] }> = [];
+export function groupSectionsByMetal<
+  S extends { id: string; label: string; metal: MetalGroup },
+>(sections: S[]): Array<{ metal: MetalGroup; sections: S[] }> {
+  const out: Array<{ metal: MetalGroup; sections: S[] }> = [];
   for (const s of sections) {
     const tail = out[out.length - 1];
     if (tail && tail.metal === s.metal) {
@@ -83,6 +84,32 @@ export function groupSectionsByMetal(
     }
   }
   return out;
+}
+
+/**
+ * If the caller passes a pinned slug via display_category_override, trust
+ * it wholesale — operators set it explicitly on /admin/products/:id or
+ * when they add a custom category. Falls back to the heuristic when the
+ * override is unset or unknown (builtins + admin-added slugs are both
+ * accepted; a nonexistent slug lands in 'other' at render time).
+ */
+export function resolveDisplayCategory(
+  p: {
+    metal: string;
+    category: string;
+    name: string;
+    display_category_override?: string | null;
+  },
+  knownSlugs?: Set<string>,
+): string {
+  if (p.display_category_override) {
+    if (!knownSlugs || knownSlugs.has(p.display_category_override)) {
+      return p.display_category_override;
+    }
+    // Slug was valid once, but the custom category has since been deleted.
+    // Fall through to the heuristic so the row still renders somewhere.
+  }
+  return deriveDisplayCategory(p);
 }
 
 export function deriveDisplayCategory(p: {

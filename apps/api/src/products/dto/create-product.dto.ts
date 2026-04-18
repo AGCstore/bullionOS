@@ -56,4 +56,18 @@ export class CreateProductDto {
   @IsOptional()
   @IsBoolean()
   show_on_website?: boolean;
+
+  /**
+   * Optional slug that pins this product into a specific display
+   * category on the counter-facing views (builtins or admin-added).
+   * Empty string / null = use the heuristic from product-category.ts.
+   * Stored as-is; unknown slugs gracefully fall back to 'other'.
+   */
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-z][a-z0-9_]*$|^$/, {
+    message: 'display_category_override must be lowercase snake_case or empty',
+  })
+  @MaxLength(40)
+  display_category_override?: string | null;
 }

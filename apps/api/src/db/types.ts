@@ -193,6 +193,12 @@ export interface ProductsTable {
   is_active: ColumnType<boolean, boolean | undefined, boolean>;
   show_on_website: ColumnType<boolean, boolean | undefined, boolean>;
   sort_order: ColumnType<number, number | undefined, number>;
+  /**
+   * Optional slug that overrides the frontend heuristic for which
+   * display category this product appears under (builtin or admin-added).
+   * Null = fall back to deriveDisplayCategory(name, metal, category).
+   */
+  display_category_override: string | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
   // Postgres GENERATED column (migration 006) — read-only.

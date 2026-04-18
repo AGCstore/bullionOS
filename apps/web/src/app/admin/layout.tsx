@@ -34,6 +34,7 @@ const NAV_ITEMS: Array<{ href: string; label: string }> = [
   { href: '/admin/in-stock-sheet', label: 'In stock sheet' },
   { href: '/admin/buy-sheet', label: 'What we pay' },
   { href: '/admin/products', label: 'Catalog' },
+  { href: '/admin/categories', label: 'Categories' },
   { href: '/admin/integrations', label: 'Integrations' },
   { href: '/admin/backups', label: 'Backups' },
   { href: '/admin/settings', label: 'Settings' },

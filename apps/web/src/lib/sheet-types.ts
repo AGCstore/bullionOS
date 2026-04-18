@@ -11,6 +11,8 @@ export interface SheetRow {
   category: string;
   show_on_website: boolean;
   weight_troy_oz: string;
+  /** Operator-set pin; empty/null means use the heuristic. */
+  display_category_override: string | null;
   buy_price: string | null;
   sell_price: string | null;
   quantity_on_hand: number;

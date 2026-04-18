@@ -112,6 +112,12 @@ export class ProductsService {
         ...(dto.image_url !== undefined && { image_url: dto.image_url }),
         ...(dto.is_active !== undefined && { is_active: dto.is_active }),
         ...(dto.show_on_website !== undefined && { show_on_website: dto.show_on_website }),
+        // Empty string coming from the form means "clear the override";
+        // persist as NULL so the heuristic takes over again.
+        ...(dto.display_category_override !== undefined && {
+          display_category_override:
+            dto.display_category_override === '' ? null : dto.display_category_override,
+        }),
       })
       .where('id', '=', id)
       .returningAll()

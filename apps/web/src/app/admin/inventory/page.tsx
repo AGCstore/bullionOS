@@ -6,13 +6,12 @@ import { apiFetch, ApiError } from '@/lib/api-client';
 import { PageTint } from '@/components/page-tint';
 import type { SheetRow } from '@/lib/sheet-types';
 import {
-  SECTIONS,
   METAL_GROUPS,
-  deriveDisplayCategory,
+  resolveDisplayCategory,
   compareByFamily,
   groupSectionsByMetal,
-  type DisplayCategory,
 } from '@/lib/product-category';
+import { useDisplayCategories } from '@/lib/use-display-categories';
 import { rankProducts } from '@/lib/product-search';
 
 interface InventoryRow {
@@ -31,7 +30,8 @@ interface InventoryRow {
 }
 
 interface EnrichedRow extends InventoryRow {
-  displayCategory: DisplayCategory;
+  /** Resolved slug — builtin DisplayCategory id or a custom slug. */
+  displayCategory: string;
   // Set by the product sheet query — live sell price from the current
   // pricing rule + spot.
   sellPrice: string | null;
@@ -40,6 +40,7 @@ interface EnrichedRow extends InventoryRow {
 
 export default function AdminInventoryPage() {
   const [search, setSearch] = useState('');
+  const { sections, knownSlugs } = useDisplayCategories();
   const { data, isLoading } = useQuery({
     queryKey: ['admin', 'inventory'],
     queryFn: () => apiFetch<InventoryRow[]>('/admin/inventory'),
@@ -51,8 +52,8 @@ export default function AdminInventoryPage() {
     refetchInterval: 60_000,
   });
 
-  // Join the inventory rows with the sheet so each row carries sell price
-  // + product weight (needed for family sort within a section).
+  // Join the inventory rows with the sheet so each row carries sell price,
+  // product weight, and the operator's override (for resolveDisplayCategory).
   const sheetByProduct = useMemo(() => {
     const m = new Map<string, SheetRow>();
     for (const s of sheet ?? []) m.set(s.product_id, s);
@@ -64,11 +65,15 @@ export default function AdminInventoryPage() {
       const s = sheetByProduct.get(r.product_id);
       return {
         ...r,
-        displayCategory: deriveDisplayCategory({
-          metal: r.metal,
-          category: r.category,
-          name: r.name,
-        }),
+        displayCategory: resolveDisplayCategory(
+          {
+            metal: r.metal,
+            category: r.category,
+            name: r.name,
+            display_category_override: s?.display_category_override ?? null,
+          },
+          knownSlugs,
+        ),
         sellPrice: s?.sell_price ?? null,
         weight_troy_oz: '0', // not in InventoryRow; family sort will fall
         // back to name parsing which is sufficient for the counter use-case.
@@ -86,22 +91,25 @@ export default function AdminInventoryPage() {
   // in-stock and out-of-stock buckets per section so the counter can see
   // everything in one place.
   const sectionRows = useMemo(() => {
-    const out = new Map<DisplayCategory, { inStock: EnrichedRow[]; outOfStock: EnrichedRow[] }>();
-    for (const section of SECTIONS) {
+    const out = new Map<string, { inStock: EnrichedRow[]; outOfStock: EnrichedRow[] }>();
+    for (const section of sections) {
       out.set(section.id, { inStock: [], outOfStock: [] });
     }
+    // Ensure 'other' always exists so rows pinned to deleted slugs still
+    // render somewhere. knownSlugs excludes deleted customs already, so
+    // their displayCategory has been coerced to the heuristic default.
+    if (!out.has('other')) out.set('other', { inStock: [], outOfStock: [] });
     for (const row of enriched) {
       const b = out.get(row.displayCategory) ?? out.get('other')!;
       if (row.available > 0) b.inStock.push(row);
       else b.outOfStock.push(row);
     }
-    // Sort each bucket by product family (keeps Eagles together etc.).
     for (const bucket of out.values()) {
       bucket.inStock.sort(compareByFamily);
       bucket.outOfStock.sort(compareByFamily);
     }
     return out;
-  }, [enriched]);
+  }, [enriched, sections]);
 
   const totalUnits = useMemo(
     () => enriched.filter((r) => r.available > 0).reduce((n, r) => n + r.available, 0),
@@ -111,7 +119,7 @@ export default function AdminInventoryPage() {
 
   // Visibility-hide empty sections so the jump bar stays tight on small
   // catalogues. Expose both in-stock and out-of-stock counts for badges.
-  const sectionsToRender = SECTIONS.filter((s) => {
+  const sectionsToRender = sections.filter((s) => {
     const b = sectionRows.get(s.id);
     return b && (b.inStock.length + b.outOfStock.length) > 0;
   });
