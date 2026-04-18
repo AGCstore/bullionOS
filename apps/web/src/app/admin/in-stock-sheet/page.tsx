@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api-client';
 import { PageTint } from '@/components/page-tint';
@@ -15,6 +15,7 @@ import {
   groupSectionsByMetal,
   type DisplayCategory,
 } from '@/lib/product-category';
+import { rankProducts } from '@/lib/product-search';
 
 interface EnrichedSheet extends SheetRow {
   displayCategory: DisplayCategory;
@@ -23,17 +24,28 @@ interface EnrichedSheet extends SheetRow {
 export default function InStockSheetPage() {
   const qc = useQueryClient();
   const { spot } = useLiveSpot();
+  const [search, setSearch] = useState('');
   const { data, isLoading } = useQuery({
     queryKey: ['admin', 'products', 'sheet'],
     queryFn: () => apiFetch<SheetRow[]>('/admin/products/sheet'),
     refetchInterval: 60_000,
   });
 
+  // Drop non-stocked rows before the ranker runs so the match count
+  // reflects what the operator actually sees.
+  const inStockRows = useMemo(
+    () => (data ?? []).filter((r) => r.available > 0),
+    [data],
+  );
+  const filtered = useMemo(
+    () => rankProducts(inStockRows, search),
+    [inStockRows, search],
+  );
+
   const bySection = useMemo(() => {
     const out = new Map<DisplayCategory, EnrichedSheet[]>();
     for (const s of SECTIONS) out.set(s.id, []);
-    for (const row of data ?? []) {
-      if (row.available <= 0) continue; // in-stock only
+    for (const row of filtered) {
       const enriched: EnrichedSheet = {
         ...row,
         displayCategory: deriveDisplayCategory(row),
@@ -42,7 +54,7 @@ export default function InStockSheetPage() {
     }
     for (const list of out.values()) list.sort(compareByFamily);
     return out;
-  }, [data]);
+  }, [filtered]);
 
   const sectionsToRender = SECTIONS.filter((s) => (bySection.get(s.id)?.length ?? 0) > 0);
 
@@ -61,6 +73,27 @@ export default function InStockSheetPage() {
           <div className="text-right text-xs text-ink-400">
             {spot?.asOf ? `Spot updated ${timeSince(spot.asOf)}` : '—'}
           </div>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by SKU, name, or metal…"
+            className="input w-full md:w-96"
+            aria-label="Search in-stock products"
+          />
+          {search.trim() && (
+            <span className="text-xs text-ink-400">
+              {filtered.length} match{filtered.length === 1 ? '' : 'es'}
+              <button
+                onClick={() => setSearch('')}
+                className="ml-2 underline-offset-2 hover:underline"
+              >
+                clear
+              </button>
+            </span>
+          )}
         </div>
 
         {sectionsToRender.length > 0 && (

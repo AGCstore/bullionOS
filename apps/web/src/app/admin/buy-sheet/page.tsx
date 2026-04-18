@@ -15,6 +15,7 @@ import {
   groupSectionsByMetal,
   type DisplayCategory,
 } from '@/lib/product-category';
+import { rankProducts } from '@/lib/product-search';
 
 interface EnrichedSheet extends SheetRow {
   displayCategory: DisplayCategory;
@@ -38,10 +39,10 @@ export default function BuySheetPage() {
 
   // Filter before grouping so categories show only matching rows and
   // empty sections disappear from the jump-nav automatically.
-  const filtered = useMemo(() => {
-    if (!search.trim()) return data ?? [];
-    return rankAndFilter(data ?? [], search);
-  }, [data, search]);
+  const filtered = useMemo(
+    () => rankProducts(data ?? [], search),
+    [data, search],
+  );
 
   const bySection = useMemo(() => {
     const out = new Map<DisplayCategory, EnrichedSheet[]>();
@@ -242,39 +243,3 @@ function timeSince(iso: string): string {
   return new Date(iso).toLocaleTimeString();
 }
 
-/**
- * Filter + rank SheetRow[] by a free-form query. Mirrors the invoice
- * wizard's scorer so operators get consistent behavior:
- *   +100 SKU substring, +15 SKU prefix, +60 name word-boundary,
- *   +30 name substring, +5 metal substring, +20 per matched token.
- * Every token must hit somewhere or the row is dropped.
- */
-function rankAndFilter(rows: SheetRow[], rawQuery: string): SheetRow[] {
-  const q = rawQuery.trim().toLowerCase();
-  if (!q) return rows;
-  const tokens = q.split(/\s+/).filter(Boolean);
-  const scored: Array<{ r: SheetRow; s: number }> = [];
-  for (const r of rows) {
-    const sku = r.sku.toLowerCase();
-    const name = r.name.toLowerCase();
-    const metal = r.metal.toLowerCase();
-    let ok = true;
-    for (const t of tokens) {
-      if (!sku.includes(t) && !name.includes(t) && !metal.includes(t)) {
-        ok = false;
-        break;
-      }
-    }
-    if (!ok) continue;
-    let score = 0;
-    if (sku.includes(q)) score += 100;
-    if (sku.startsWith(q)) score += 15;
-    if (name.includes(q)) score += 30;
-    if (new RegExp(`\\b${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(name)) score += 60;
-    if (metal.includes(q)) score += 5;
-    score += tokens.length * 20;
-    scored.push({ r, s: score });
-  }
-  scored.sort((a, b) => b.s - a.s || a.r.name.localeCompare(b.r.name));
-  return scored.map((x) => x.r);
-}

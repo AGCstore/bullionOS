@@ -13,6 +13,7 @@ import {
   groupSectionsByMetal,
   type DisplayCategory,
 } from '@/lib/product-category';
+import { rankProducts } from '@/lib/product-search';
 
 interface InventoryRow {
   product_id: string;
@@ -38,6 +39,7 @@ interface EnrichedRow extends InventoryRow {
 }
 
 export default function AdminInventoryPage() {
+  const [search, setSearch] = useState('');
   const { data, isLoading } = useQuery({
     queryKey: ['admin', 'inventory'],
     queryFn: () => apiFetch<InventoryRow[]>('/admin/inventory'),
@@ -57,7 +59,7 @@ export default function AdminInventoryPage() {
     return m;
   }, [sheet]);
 
-  const enriched = useMemo<EnrichedRow[]>(() => {
+  const enrichedAll = useMemo<EnrichedRow[]>(() => {
     return (data ?? []).map((r) => {
       const s = sheetByProduct.get(r.product_id);
       return {
@@ -73,6 +75,12 @@ export default function AdminInventoryPage() {
       };
     });
   }, [data, sheetByProduct]);
+
+  // Rank + filter against the search query. Empty query returns every row.
+  const enriched = useMemo(
+    () => rankProducts(enrichedAll, search),
+    [enrichedAll, search],
+  );
 
   // Group the enriched rows into the user-facing sections. Keep both
   // in-stock and out-of-stock buckets per section so the counter can see
@@ -119,6 +127,27 @@ export default function AdminInventoryPage() {
               section; out-of-stock rows collapse below them.
             </p>
           </div>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by SKU, name, or metal…"
+            className="input w-full md:w-96"
+            aria-label="Search products"
+          />
+          {search.trim() && (
+            <span className="text-xs text-ink-400">
+              {enriched.length} match{enriched.length === 1 ? '' : 'es'}
+              <button
+                onClick={() => setSearch('')}
+                className="ml-2 underline-offset-2 hover:underline"
+              >
+                clear
+              </button>
+            </span>
+          )}
         </div>
 
         <section className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">

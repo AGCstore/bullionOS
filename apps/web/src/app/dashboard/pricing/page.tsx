@@ -1,11 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, ApiError } from '@/lib/api-client';
 import { useLiveSpot, type ChangePoint } from '@/lib/use-live-spot';
 import { PageTint } from '@/components/page-tint';
+import { rankProducts } from '@/lib/product-search';
 
 interface PriceRow {
   product_id: string;
@@ -24,12 +25,18 @@ const METALS = ['gold', 'silver', 'platinum', 'palladium'] as const;
 
 export default function ClientPricing() {
   const qc = useQueryClient();
+  const [search, setSearch] = useState('');
   const { data, isLoading } = useQuery({
     queryKey: ['client', 'prices'],
     queryFn: () => apiFetch<PricesResponse>('/client/prices'),
     refetchInterval: 60_000,
   });
   const { spot } = useLiveSpot();
+
+  const filteredRows = useMemo(
+    () => rankProducts(data?.items ?? [], search),
+    [data, search],
+  );
 
   return (
     <PageTint side="buy">
@@ -60,7 +67,28 @@ export default function ClientPricing() {
         ))}
       </section>
 
-      <section className="mt-8 overflow-hidden rounded-xl border border-ink-200 bg-white">
+      <div className="mt-6 flex flex-wrap items-center gap-3">
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search by SKU, name, or metal…"
+          className="input w-full md:w-96"
+          aria-label="Search what we pay"
+        />
+        {search.trim() && (
+          <span className="text-xs text-ink-400">
+            {filteredRows.length} match{filteredRows.length === 1 ? '' : 'es'}
+            <button
+              onClick={() => setSearch('')}
+              className="ml-2 underline-offset-2 hover:underline"
+            >
+              clear
+            </button>
+          </span>
+        )}
+      </div>
+
+      <section className="mt-4 overflow-hidden rounded-xl border border-ink-200 bg-white">
         {isLoading ? (
           <div className="p-8 text-center text-sm text-ink-400">Loading…</div>
         ) : (
@@ -74,7 +102,7 @@ export default function ClientPricing() {
               </tr>
             </thead>
             <tbody>
-              {(data?.items ?? []).map((p) => (
+              {filteredRows.map((p) => (
                 <PriceRowView
                   key={p.product_id}
                   row={p}

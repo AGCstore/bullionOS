@@ -1,7 +1,9 @@
 'use client';
 
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api-client';
+import { rankProducts } from '@/lib/product-search';
 
 interface InStockItem {
   product_id: string;
@@ -13,11 +15,17 @@ interface InStockItem {
 }
 
 export default function ClientInStockPage() {
+  const [search, setSearch] = useState('');
   const { data, isLoading } = useQuery({
     queryKey: ['client', 'in-stock'],
     queryFn: () => apiFetch<InStockItem[]>('/client/in-stock'),
     refetchInterval: 60_000,
   });
+
+  const filtered = useMemo(
+    () => rankProducts(data ?? [], search),
+    [data, search],
+  );
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -26,7 +34,28 @@ export default function ClientInStockPage() {
         Items currently available from AGC. Contact us to purchase.
       </p>
 
-      <div className="mt-6 overflow-hidden rounded-xl border border-ink-200 bg-white">
+      <div className="mt-6 flex flex-wrap items-center gap-3">
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search by SKU, name, or metal…"
+          className="input w-full md:w-96"
+          aria-label="Search in-stock items"
+        />
+        {search.trim() && (
+          <span className="text-xs text-ink-400">
+            {filtered.length} match{filtered.length === 1 ? '' : 'es'}
+            <button
+              onClick={() => setSearch('')}
+              className="ml-2 underline-offset-2 hover:underline"
+            >
+              clear
+            </button>
+          </span>
+        )}
+      </div>
+
+      <div className="mt-4 overflow-hidden rounded-xl border border-ink-200 bg-white">
         {isLoading ? (
           <div className="p-8 text-center text-sm text-ink-400">Loading…</div>
         ) : (
@@ -40,7 +69,7 @@ export default function ClientInStockPage() {
               </tr>
             </thead>
             <tbody>
-              {(data ?? []).map((r) => (
+              {filtered.map((r) => (
                 <tr key={r.product_id} className="border-t border-ink-200">
                   <td className="px-4 py-3">
                     <div className="font-medium">{r.name}</div>
@@ -53,10 +82,12 @@ export default function ClientInStockPage() {
                   </td>
                 </tr>
               ))}
-              {(!data || data.length === 0) && (
+              {filtered.length === 0 && (
                 <tr>
                   <td colSpan={4} className="px-4 py-12 text-center text-ink-400">
-                    No items in stock right now.
+                    {search.trim()
+                      ? `No matches for "${search}".`
+                      : 'No items in stock right now.'}
                   </td>
                 </tr>
               )}

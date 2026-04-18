@@ -27,6 +27,7 @@ import {
   groupSectionsByMetal,
   type DisplayCategory,
 } from '@/lib/product-category';
+import { rankProducts } from '@/lib/product-search';
 
 interface Product {
   id: string;
@@ -61,6 +62,7 @@ export default function ProductsPage() {
   // Local mirror of the server order. We split by section for the DnD
   // contexts; on drop we persist the flattened order back to the server.
   const [items, setItems] = useState<Product[]>([]);
+  const [search, setSearch] = useState('');
   useEffect(() => {
     if (!data) return;
     // Default order within each category: family sort (keeps Eagles, etc.
@@ -87,15 +89,26 @@ export default function ProductsPage() {
     }),
   );
 
+  // When a search query is active we hide non-matching rows but keep
+  // the grouped layout so operators see which section a hit lives in.
+  // Drag-reorder is disabled in that mode — shuffling a filtered subset
+  // would reorder against sparse indices and land rows in the wrong
+  // place inside the full catalog. Clear the search to reorder.
+  const searchActive = search.trim().length > 0;
+  const visibleItems = useMemo(
+    () => (searchActive ? rankProducts(items, search) : items),
+    [items, search, searchActive],
+  );
+
   const sectionRows = useMemo(() => {
     const out = new Map<DisplayCategory, Product[]>();
     for (const s of SECTIONS) out.set(s.id, []);
-    for (const p of items) {
+    for (const p of visibleItems) {
       const c = deriveDisplayCategory(p);
       out.get(c)?.push(p);
     }
     return out;
-  }, [items]);
+  }, [visibleItems]);
 
   const sectionsToRender = SECTIONS.filter(
     (s) => (sectionRows.get(s.id)?.length ?? 0) > 0,
@@ -173,6 +186,28 @@ export default function ProductsPage() {
         </div>
       </div>
 
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search by SKU, name, or metal…"
+          className="input w-full md:w-96"
+          aria-label="Search catalog"
+        />
+        {searchActive && (
+          <span className="text-xs text-ink-400">
+            {visibleItems.length} match{visibleItems.length === 1 ? '' : 'es'} ·
+            drag disabled while searching
+            <button
+              onClick={() => setSearch('')}
+              className="ml-2 underline-offset-2 hover:underline"
+            >
+              clear
+            </button>
+          </span>
+        )}
+      </div>
+
       {sectionsToRender.length > 0 && (
         <nav className="sticky top-0 z-10 -mx-2 mt-6 overflow-x-auto rounded-xl border border-ink-200 bg-white/95 px-2 py-2 backdrop-blur">
           <div className="flex min-w-max items-center gap-4 text-xs">
@@ -224,6 +259,7 @@ export default function ProductsPage() {
                   id={s.id}
                   label={s.label}
                   rows={sectionRows.get(s.id)!}
+                  dragDisabled={searchActive}
                 />
               ))}
             </div>
@@ -238,10 +274,12 @@ function CatalogSection({
   id,
   label,
   rows,
+  dragDisabled,
 }: {
   id: string;
   label: string;
   rows: Product[];
+  dragDisabled: boolean;
 }) {
   return (
     <section id={id} className="mt-4 scroll-mt-24">
@@ -266,7 +304,7 @@ function CatalogSection({
           >
             <tbody>
               {rows.map((p) => (
-                <SortableRow key={p.id} product={p} />
+                <SortableRow key={p.id} product={p} dragDisabled={dragDisabled} />
               ))}
             </tbody>
           </SortableContext>
@@ -276,14 +314,20 @@ function CatalogSection({
   );
 }
 
-function SortableRow({ product }: { product: Product }) {
+function SortableRow({
+  product,
+  dragDisabled,
+}: {
+  product: Product;
+  dragDisabled: boolean;
+}) {
   const qc = useQueryClient();
   const [checked, setChecked] = useState(product.show_on_website);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id: product.id });
+    useSortable({ id: product.id, disabled: dragDisabled });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -326,7 +370,12 @@ function SortableRow({ product }: { product: Product }) {
           {...attributes}
           {...listeners}
           aria-label="Drag to reorder"
-          className="cursor-grab px-1 text-ink-400 hover:text-ink-900 active:cursor-grabbing"
+          disabled={dragDisabled}
+          className={`px-1 ${
+            dragDisabled
+              ? 'cursor-not-allowed text-ink-200'
+              : 'cursor-grab text-ink-400 hover:text-ink-900 active:cursor-grabbing'
+          }`}
         >
           ⋮⋮
         </button>
