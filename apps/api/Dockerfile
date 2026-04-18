@@ -40,33 +40,21 @@ COPY packages/shared/package.json ./packages/shared/
 RUN pnpm install --frozen-lockfile --prod --filter @agc/api...
 
 # ---------- Stage 3: runtime ----------
+FROM node:20-alpine AS runtime
+# tini → pid1 zombie reaping.
+# postgresql-client (unversioned) → provides pg_dump for the daily backup
+# cron. Note: Alpine's repos track a specific major version per release;
+# if the managed Postgres server is newer than this client, the backup
+# cron will throw "aborting because of server version mismatch". The
+# BackupsService catches that as a normal failure and marks the row
+# status=failed; the API itself keeps running.
 #
-# Debian (bookworm-slim) instead of Alpine so we can pull pg_dump v18+
-# from PGDG's apt repo. Railway's managed Postgres upgraded to 18.3;
-# pg_dump refuses to dump a newer server ("aborting because of server
-# version mismatch"), so we need a client whose major version ≥ the
-# server. Alpine's repos still ship pg16/17-client, which is why the
-# backup cron was erroring.
-#
-# Cost: ~60 MB bigger image than Alpine. Worth it for deterministic
-# backup success.
-FROM node:20-bookworm-slim AS runtime
-
-# tini for pid1 zombie reaping. postgresql-client-18 for pg_dump.
-# Keys + sources.list dance follows the official PGDG apt instructions.
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-      ca-certificates curl gnupg tini && \
-    install -d /usr/share/postgresql-common/pgdg && \
-    curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
-      -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc && \
-    echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
-      > /etc/apt/sources.list.d/pgdg.list && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends postgresql-client-18 && \
-    apt-get purge -y --auto-remove curl gnupg && \
-    rm -rf /var/lib/apt/lists/* && \
-    groupadd --system agc && useradd --system --gid agc agc
+# Known at time of writing: Alpine 3.20 ships postgresql16-client; the
+# Railway-managed Postgres is on 18.x. The next-pass fix is to pull
+# pg_dump v18 from PGDG in a Debian runtime — that was tried and broke
+# the build, so this file is back on Alpine/pg16 for now.
+RUN apk add --no-cache tini postgresql16-client \
+  && addgroup -S agc && adduser -S agc -G agc
 USER agc
 WORKDIR /app
 
@@ -95,6 +83,5 @@ RUN mkdir -p /app/uploads
 
 WORKDIR /app/apps/api
 EXPOSE 4000
-# Debian places tini at /usr/bin/tini, not /sbin/tini (Alpine).
-ENTRYPOINT ["/usr/bin/tini", "--"]
+ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node", "dist/main.js"]
