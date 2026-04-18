@@ -2,6 +2,7 @@
 
 import { use, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, ApiError, getAccessToken } from '@/lib/api-client';
 import { StatusPill } from '@/components/status-pill';
@@ -10,6 +11,8 @@ import { PageTint } from '@/components/page-tint';
 interface LineItem {
   id: string;
   position: number;
+  /** Null when the original line was ad-hoc or the product has been deleted. */
+  product_id: string | null;
   quantity: number;
   product_name_snapshot: string;
   spot_price_per_oz: string;
@@ -25,6 +28,7 @@ interface InvoiceDetail {
   invoice_number: string;
   type: 'buy' | 'sell';
   status: string;
+  client_id: string;
   client_name: string;
   client_email: string | null;
   subtotal: string;
@@ -32,6 +36,11 @@ interface InvoiceDetail {
   shipping: string;
   total: string;
   payment_method: string | null;
+  payment_methods: Array<{
+    method: string;
+    reference: string | null;
+    amount: string;
+  }>;
   payment_status: string;
   created_at: string;
   finalized_at: string | null;
@@ -58,6 +67,7 @@ const NEXT_STATUSES: Record<string, Array<{ value: string; label: string }>> = {
 export default function InvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const qc = useQueryClient();
+  const router = useRouter();
   const { data, isLoading } = useQuery({
     queryKey: ['admin', 'invoice', id],
     queryFn: () => apiFetch<InvoiceDetail>(`/admin/invoices/${id}`),
@@ -73,6 +83,33 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
       await qc.invalidateQueries({ queryKey: ['admin', 'invoices'] });
     } catch (err) {
       alert(err instanceof ApiError ? err.message : 'Failed to update status');
+    }
+  }
+
+  /**
+   * Void & recreate flow. Cancels the current invoice (which reverses
+   * any inventory movements the old lines caused — see
+   * classifyInventoryAction) and then kicks the operator over to the
+   * new-invoice wizard with ?from=<id> so every field pre-fills from
+   * this ticket as a starting point.
+   */
+  async function voidAndRecreate() {
+    const msg =
+      data?.status === 'draft'
+        ? 'Cancel this draft and open a new blank invoice with the same fields pre-filled?'
+        : 'Void this invoice and open a new editable copy?\n\nInventory tied to the old ticket will be released (reservations) or returned to stock (paid sales). The old invoice stays in the history as CANCELED — totals on any past reports won\u2019t change.';
+    if (!confirm(msg)) return;
+    try {
+      if (data?.status !== 'canceled') {
+        await apiFetch(`/admin/invoices/${id}/status`, {
+          method: 'PATCH',
+          body: JSON.stringify({ status: 'canceled' }),
+        });
+      }
+      await qc.invalidateQueries({ queryKey: ['admin', 'invoices'] });
+      router.push(`/admin/invoices/new?from=${id}`);
+    } catch (err) {
+      alert(err instanceof ApiError ? err.message : 'Void failed');
     }
   }
 
@@ -121,6 +158,17 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
             className="rounded-md border border-ink-200 px-3 py-1.5 text-sm hover:bg-ink-50"
           >
             Download PDF
+          </button>
+          {/* Void & recreate — surfaced on every status so an operator
+              can correct a line item by opening a fresh copy. Cancels the
+              current invoice (which reverses any inventory it caused) and
+              opens the wizard pre-filled. */}
+          <button
+            onClick={voidAndRecreate}
+            className="rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-100"
+            title="Void this invoice and start a new one with the same fields pre-filled"
+          >
+            Void &amp; recreate
           </button>
           {options.map((o) => (
             <button
@@ -500,29 +548,48 @@ function EditHeaderSection({ invoice }: { invoice: InvoiceDetail }) {
           </label>
         </div>
 
-        <label className="block">
-          <span className="text-xs font-semibold uppercase tracking-wide text-ink-400">
-            Transaction date
-          </span>
-          <input
-            type="date"
-            value={txDate}
-            onChange={(e) => setTxDate(e.target.value)}
-            className="input mt-1 font-mono"
-          />
-        </label>
-        <label className="block">
-          <span className="text-xs font-semibold uppercase tracking-wide text-ink-400">
-            Transaction time
-          </span>
-          <input
-            type="time"
-            value={txTime}
-            onChange={(e) => setTxTime(e.target.value)}
-            className="input mt-1 font-mono"
-            step={60}
-          />
-        </label>
+        <div>
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold uppercase tracking-wide text-ink-400">
+              Transaction date &amp; time
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                const now = new Date();
+                setTxDate(
+                  `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(
+                    now.getDate(),
+                  ).padStart(2, '0')}`,
+                );
+                setTxTime(
+                  `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
+                );
+              }}
+              className="rounded-md bg-ink-900 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-ink-800"
+            >
+              Now
+            </button>
+          </div>
+          <div className="mt-1 flex gap-2">
+            <input
+              type="date"
+              value={txDate}
+              onChange={(e) => setTxDate(e.target.value)}
+              className="input font-mono md:w-44"
+              aria-label="Transaction date"
+            />
+            <input
+              type="time"
+              value={txTime}
+              onChange={(e) => setTxTime(e.target.value)}
+              className="input font-mono md:w-32"
+              aria-label="Transaction time"
+              step={60}
+            />
+          </div>
+        </div>
+        <div className="hidden md:block" />
       </div>
 
       <label className="mt-4 block">

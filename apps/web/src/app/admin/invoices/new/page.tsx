@@ -1,11 +1,41 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, ApiError } from '@/lib/api-client';
 import { PageTint } from '@/components/page-tint';
 import { ProductCombobox } from '@/components/product-combobox';
+
+/**
+ * Shape of a source invoice we prefill from when ?from=<id> is in the URL.
+ * Used by the Void & Recreate flow on /admin/invoices/[id]. Just the
+ * fields we need; the full admin detail response has more.
+ */
+interface SourceInvoice {
+  id: string;
+  invoice_number: string;
+  type: 'buy' | 'sell';
+  status: string;
+  client_id: string;
+  notes: string | null;
+  payment_method: string | null;
+  payment_methods: Array<{
+    method: string;
+    reference: string | null;
+    amount: string;
+  }>;
+  tax: string;
+  shipping: string;
+  created_at: string;
+  line_items: Array<{
+    product_id: string | null;
+    quantity: number;
+    unit_price: string;
+    product_name_snapshot: string;
+    is_overridden: boolean;
+  }>;
+}
 
 interface Client {
   id: string;
@@ -97,6 +127,8 @@ function buildTransactedAt(date: string, time: string): string | undefined {
 export default function NewInvoicePage() {
   const router = useRouter();
   const qc = useQueryClient();
+  const searchParams = useSearchParams();
+  const fromId = searchParams.get('from');
 
   const [clientId, setClientId] = useState<string>('');
   const [clientSearch, setClientSearch] = useState('');
@@ -111,6 +143,67 @@ export default function NewInvoicePage() {
   const [txTime, setTxTime] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [prefilled, setPrefilled] = useState(false);
+
+  // Void & recreate lands here with ?from=<old_invoice_id>. Fetch the
+  // old invoice once and seed the wizard state as a starting point.
+  // The original has already been canceled on the detail page before
+  // the redirect ran.
+  const { data: source } = useQuery({
+    queryKey: ['admin', 'invoice', fromId],
+    queryFn: () => apiFetch<SourceInvoice>(`/admin/invoices/${fromId}`),
+    enabled: Boolean(fromId),
+  });
+
+  useEffect(() => {
+    if (!source || prefilled) return;
+    setClientId(source.client_id);
+    setType(source.type);
+    setNotes(source.notes ?? '');
+    // Preserve the original transaction time so the restated ticket
+    // lines up with the actual moment of sale. Operator can click Now
+    // to override.
+    if (source.created_at) {
+      const d = new Date(source.created_at);
+      if (!Number.isNaN(d.getTime())) {
+        setTxDate(
+          `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+            d.getDate(),
+          ).padStart(2, '0')}`,
+        );
+        setTxTime(
+          `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`,
+        );
+      }
+    }
+    // Map each old line to a draft line. Unit price becomes the override
+    // so the restated ticket honors the previous manual edits without
+    // needing to re-quote from current spot. Product-less (ad-hoc) lines
+    // round-trip via custom_name with no product binding.
+    const seededLines: DraftLine[] = source.line_items.map((l) => ({
+      product_id: l.product_id ?? '',
+      quantity: l.quantity,
+      custom_name: l.product_id ? '' : l.product_name_snapshot,
+      override_unit_price: String(Number(l.unit_price).toFixed(2)),
+    }));
+    if (seededLines.length > 0) setLines(seededLines);
+    // Prefill payment legs from the multi-payment array first; fall
+    // back to the legacy single-method column if it's empty.
+    if (source.payment_methods && source.payment_methods.length > 0) {
+      setPayments(
+        source.payment_methods.map((m) => ({
+          method: (m.method || '') as PaymentMethod | '',
+          reference: m.reference ?? '',
+          amount: String(Number(m.amount)),
+        })),
+      );
+    } else if (source.payment_method) {
+      setPayments([
+        { method: source.payment_method as PaymentMethod, reference: '', amount: '' },
+      ]);
+    }
+    setPrefilled(true);
+  }, [source, prefilled]);
 
   const { data: clients } = useQuery({
     queryKey: ['admin', 'clients', clientSearch],
@@ -232,11 +325,20 @@ export default function NewInvoicePage() {
   return (
     <PageTint side={type === 'buy' ? 'buy' : 'sell'}>
       <div className="mx-auto max-w-4xl">
-        <h1 className="text-2xl font-semibold">New invoice</h1>
+        <h1 className="text-2xl font-semibold">
+          {source ? 'Recreate invoice' : 'New invoice'}
+        </h1>
         <p className="mt-1 text-sm text-ink-400">
-          Prices computed against live spot at submission time. Override any unit
-          price inline if needed.
+          {source
+            ? `Fields pre-filled from ${source.invoice_number} (now canceled). Make your edits, then submit to create a new ticket. The old invoice stays in history as CANCELED.`
+            : 'Prices computed against live spot at submission time. Override any unit price inline if needed.'}
         </p>
+        {source && source.status !== 'canceled' && (
+          <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            The source invoice isn&rsquo;t canceled yet — submitting will leave two open tickets.
+            Go back to the original and void it first.
+          </div>
+        )}
 
         <section className="mt-6 rounded-xl border border-ink-200 bg-white p-5">
           <h2 className="text-xs font-semibold uppercase tracking-wide text-ink-400">
@@ -366,6 +468,23 @@ export default function NewInvoicePage() {
               aria-label="Transaction time"
               step={60}
             />
+            <button
+              type="button"
+              onClick={() => {
+                const now = new Date();
+                setTxDate(
+                  `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(
+                    now.getDate(),
+                  ).padStart(2, '0')}`,
+                );
+                setTxTime(
+                  `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
+                );
+              }}
+              className="rounded-md bg-ink-900 px-3 py-1 text-xs font-medium text-white hover:bg-ink-800"
+            >
+              Now
+            </button>
             {(txDate || txTime) && (
               <button
                 type="button"
