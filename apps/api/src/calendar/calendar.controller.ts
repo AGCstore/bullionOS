@@ -174,6 +174,11 @@ export class CalendarController {
     const normalized = cfg.services.find(
       (s) => s.toLowerCase() === dto.service.toLowerCase(),
     )!;
+    // Appraisal bookings need a 60-minute block (vs the 30-min default
+    // for buy/sell consults). Detected by the normalized service label
+    // containing "appraisal" — case-insensitive match so "Appraisal",
+    // "Appraisal Only", and "Appraisal with Intent to Sell" all qualify.
+    const isAppraisal = /appraisal/i.test(normalized);
     const r = await this.calendar.createBooking({
       serviceLabel: normalized,
       startIso: dto.start,
@@ -181,6 +186,7 @@ export class CalendarController {
       email: dto.email.trim().toLowerCase(),
       phone: dto.phone?.trim(),
       notes: dto.notes?.trim(),
+      durationMinutes: isAppraisal ? 60 : undefined,
     });
     return { ok: true, eventId: r.eventId, htmlLink: r.htmlLink };
   }

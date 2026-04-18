@@ -86,7 +86,9 @@ const googleCalendarCreds = z.object({
   services: z
     .string()
     .max(500)
-    .default('Buy consultation;Sell consultation;Appraisal'),
+    .default(
+      'Buy Appointment;Sell Appointment;Appraisal Only;Appraisal with Intent to Sell',
+    ),
 });
 
 const docusignCreds = z.object({

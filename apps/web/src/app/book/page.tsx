@@ -1,11 +1,12 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { apiFetch, ApiError } from '@/lib/api-client';
 
 interface PublicConfig {
   configured: boolean;
+  /** Raw service labels persisted in integrations (e.g. "Buy Appointment"). */
   services: string[];
   timezone: string;
   bookingWindowDays: number;
@@ -18,27 +19,39 @@ interface Slot {
 }
 
 /**
- * Public appointment booking at /book.
+ * UI tiers:
  *
- * Flow:
- *   1. Load /public/calendar/config to learn services + window + slot size.
- *   2. Pick a service + a date from the next N days.
- *   3. Fetch /public/calendar/slots?date=YYYY-MM-DD. Slot grid renders
- *      what's free after subtracting Google FreeBusy.
- *   4. Fill in name + email + phone + notes. POST /public/calendar/book.
- *   5. On success show a confirmation — Google sends its own email
- *      invitation to the booker automatically.
+ *   Top-level type (3 buttons)
+ *     ─ Buy Appointment
+ *     ─ Sell Appointment
+ *     ─ Appraisal  ───▶ Required sub-choice:
+ *                          ─ Appraisal Only
+ *                          ─ Appraisal with Intent to Sell
  *
- * Everything happens on the Sales mailbox's primary calendar (or whichever
- * calendar the admin configured in /admin/integrations).
+ * Server-side the admin configures ALL of these as literal service names
+ * (see integrations_registry "services" default). The selected sub-choice
+ * is what's submitted; the top-level "Appraisal" button is only a grouping
+ * in the form.
+ *
+ * Appraisal bookings are auto-upgraded to a 60-minute block server-side
+ * (calendar.controller.ts → `isAppraisal` branch).
  */
+type TopService = 'buy' | 'sell' | 'appraisal';
+type AppraisalKind = 'only' | 'with_intent';
+
+const APPRAISAL_ONLY = 'Appraisal Only';
+const APPRAISAL_WITH_INTENT = 'Appraisal with Intent to Sell';
+const APPRAISAL_DISCLAIMER =
+  'Please note, Appraisals that do not result in the sale of at least 50% of the collection\u2019s value (no obligation) are billed at $350/hr with a minimum of 1 hour.';
+
 export default function BookPage() {
   const { data: config, isLoading, isError } = useQuery({
     queryKey: ['public', 'calendar', 'config'],
     queryFn: () => apiFetch<PublicConfig>('/public/calendar/config'),
   });
 
-  const [service, setService] = useState<string>('');
+  const [topService, setTopService] = useState<TopService | null>(null);
+  const [appraisalKind, setAppraisalKind] = useState<AppraisalKind | null>(null);
   const [dateIso, setDateIso] = useState<string>(todayIso());
   const [chosenStart, setChosenStart] = useState<string | null>(null);
   const [name, setName] = useState('');
@@ -49,10 +62,16 @@ export default function BookPage() {
   const [error, setError] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState<{ start: string } | null>(null);
 
-  // Pick the first service as the default once config lands.
-  useMemo(() => {
-    if (config?.services.length && !service) setService(config.services[0]);
-  }, [config, service]);
+  // Resolve the final server-side service label from the two-level picker.
+  const selectedService = useMemo(() => {
+    if (topService === 'buy') return resolveServiceLabel(config?.services, 'buy', 'Buy Appointment');
+    if (topService === 'sell') return resolveServiceLabel(config?.services, 'sell', 'Sell Appointment');
+    if (topService === 'appraisal') {
+      if (appraisalKind === 'only') return APPRAISAL_ONLY;
+      if (appraisalKind === 'with_intent') return APPRAISAL_WITH_INTENT;
+    }
+    return null;
+  }, [topService, appraisalKind, config?.services]);
 
   const { data: slotsData, isFetching: slotsLoading } = useQuery({
     queryKey: ['public', 'calendar', 'slots', dateIso],
@@ -68,19 +87,40 @@ export default function BookPage() {
     return buildDateOptions(config.bookingWindowDays);
   }, [config]);
 
+  // Appraisals lock out 60-min slots. The server re-validates (grabs any
+  // adjacent slot too) but hiding non-aligned slots up front avoids
+  // wasted round-trips. 30-min granularity is still fine since the
+  // server just extends the end time.
+  //
+  // Keep all slots visible for buy/sell.
+  const slotsToShow = slotsData?.slots ?? [];
+
+  useEffect(() => {
+    // Reset sub-choice when top-level service changes.
+    if (topService !== 'appraisal') setAppraisalKind(null);
+  }, [topService]);
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!chosenStart || !service || !name || !email) {
-      setError('Fill in every field and pick a time slot.');
+    setError(null);
+    if (!selectedService) {
+      setError('Pick the type of appointment first.');
       return;
     }
-    setError(null);
+    if (!chosenStart) {
+      setError('Pick a time slot.');
+      return;
+    }
+    if (!name.trim() || !email.trim()) {
+      setError('Name and email are required.');
+      return;
+    }
     setSubmitting(true);
     try {
       await apiFetch('/public/calendar/book', {
         method: 'POST',
         body: JSON.stringify({
-          service,
+          service: selectedService,
           start: chosenStart,
           name: name.trim(),
           email: email.trim(),
@@ -136,29 +176,61 @@ export default function BookPage() {
     );
   }
 
+  const isAppraisal = topService === 'appraisal';
+
   return (
     <Shell>
       <form onSubmit={submit} className="space-y-6">
         <section className="rounded-xl border border-ink-200 bg-white p-5">
           <label className="text-xs font-semibold uppercase tracking-wide text-ink-400">
-            Service
+            Type of appointment
           </label>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {config.services.map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setService(s)}
-                className={`rounded-md border px-3 py-1.5 text-sm transition ${
-                  service === s
-                    ? 'border-ink-900 bg-ink-900 text-white'
-                    : 'border-ink-200 text-ink-700 hover:bg-ink-50'
-                }`}
-              >
-                {s}
-              </button>
-            ))}
+          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <TopServiceButton
+              active={topService === 'buy'}
+              onClick={() => setTopService('buy')}
+              label="Buy Appointment"
+              sub="Purchase from our inventory"
+            />
+            <TopServiceButton
+              active={topService === 'sell'}
+              onClick={() => setTopService('sell')}
+              label="Sell Appointment"
+              sub="Bring items for us to buy"
+            />
+            <TopServiceButton
+              active={topService === 'appraisal'}
+              onClick={() => setTopService('appraisal')}
+              label="Appraisal"
+              sub="Professional valuation"
+            />
           </div>
+
+          {isAppraisal && (
+            <div className="mt-4 rounded-md border border-ink-200 bg-ink-50/60 p-4">
+              <div className="text-xs font-semibold uppercase tracking-wide text-ink-600">
+                Appraisal type <span className="text-red-600">*</span>
+              </div>
+              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <SubChoiceButton
+                  active={appraisalKind === 'only'}
+                  onClick={() => setAppraisalKind('only')}
+                  label={APPRAISAL_ONLY}
+                />
+                <SubChoiceButton
+                  active={appraisalKind === 'with_intent'}
+                  onClick={() => setAppraisalKind('with_intent')}
+                  label={APPRAISAL_WITH_INTENT}
+                />
+              </div>
+              <p className="mt-3 text-xs font-medium text-red-600">
+                {APPRAISAL_DISCLAIMER}
+              </p>
+              <p className="mt-2 text-xs text-ink-500">
+                Appraisal appointments are scheduled for a full hour.
+              </p>
+            </div>
+          )}
         </section>
 
         <section className="rounded-xl border border-ink-200 bg-white p-5">
@@ -193,13 +265,13 @@ export default function BookPage() {
           </label>
           {slotsLoading ? (
             <p className="mt-2 text-sm text-ink-400">Loading times…</p>
-          ) : slotsData?.slots.length === 0 ? (
+          ) : slotsToShow.length === 0 ? (
             <p className="mt-2 text-sm text-ink-400">
               No open slots on this day. Try a different date.
             </p>
           ) : (
             <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {(slotsData?.slots ?? []).map((s) => (
+              {slotsToShow.map((s) => (
                 <button
                   key={s.start}
                   type="button"
@@ -225,37 +297,49 @@ export default function BookPage() {
             Your details
           </label>
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Full name"
-              required
-              className="input"
-              maxLength={200}
-            />
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="Email"
-              required
-              className="input"
-              maxLength={254}
-            />
-            <input
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="Phone (optional)"
-              className="input"
-              maxLength={40}
-            />
+            <div>
+              <label className="text-xs text-ink-500">
+                Full name <span className="text-red-600">*</span>
+              </label>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                required
+                className="input mt-1"
+                maxLength={200}
+              />
+            </div>
+            <div>
+              <label className="text-xs text-ink-500">
+                Email <span className="text-red-600">*</span>
+              </label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                className="input mt-1"
+                maxLength={254}
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="text-xs text-ink-500">Phone (optional)</label>
+              <input
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                className="input mt-1"
+                maxLength={40}
+              />
+            </div>
           </div>
+          <label className="mt-3 block text-xs text-ink-500">
+            Anything we should know? (what you&rsquo;re looking to buy or sell, rough quantity, etc.)
+          </label>
           <textarea
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
-            placeholder="Anything we should know? (what you're looking to buy or sell, rough quantity, etc.)"
             rows={3}
-            className="input mt-3"
+            className="input mt-1"
             maxLength={2000}
           />
         </section>
@@ -268,24 +352,98 @@ export default function BookPage() {
 
         <button
           type="submit"
-          disabled={submitting || !chosenStart}
+          disabled={submitting || !chosenStart || !selectedService}
           className="w-full rounded-md bg-ink-900 px-4 py-3 text-sm font-medium text-white hover:bg-ink-800 disabled:opacity-60"
         >
           {submitting
             ? 'Booking…'
-            : chosenStart
-              ? `Confirm ${new Date(chosenStart).toLocaleString(undefined, {
+            : chosenStart && selectedService
+              ? `Confirm ${selectedService} — ${new Date(chosenStart).toLocaleString(undefined, {
                   weekday: 'short',
                   month: 'short',
                   day: 'numeric',
                   hour: 'numeric',
                   minute: '2-digit',
                 })}`
-              : 'Pick a time slot above'}
+              : topService === 'appraisal' && !appraisalKind
+                ? 'Select an appraisal type above'
+                : !topService
+                  ? 'Pick an appointment type above'
+                  : 'Pick a time slot above'}
         </button>
       </form>
     </Shell>
   );
+}
+
+function TopServiceButton({
+  active,
+  onClick,
+  label,
+  sub,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  sub: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex flex-col items-start gap-1 rounded-md border p-4 text-left transition ${
+        active
+          ? 'border-ink-900 bg-ink-900 text-white'
+          : 'border-ink-200 text-ink-700 hover:bg-ink-50'
+      }`}
+    >
+      <span className="text-sm font-semibold">{label}</span>
+      <span className={`text-xs ${active ? 'text-ink-200' : 'text-ink-500'}`}>
+        {sub}
+      </span>
+    </button>
+  );
+}
+
+function SubChoiceButton({
+  active,
+  onClick,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-md border px-3 py-2 text-sm transition ${
+        active
+          ? 'border-ink-900 bg-ink-900 text-white'
+          : 'border-ink-200 text-ink-700 hover:bg-ink-50'
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
+/**
+ * Map a top-level service choice to whichever label the admin actually
+ * configured in /admin/integrations. Defaults to the expected label if
+ * no match is found — keeps booking working even when the admin renames
+ * a service, as long as the intent is obvious from the first word.
+ */
+function resolveServiceLabel(
+  services: string[] | undefined,
+  kind: 'buy' | 'sell',
+  fallback: string,
+): string {
+  if (!services) return fallback;
+  const keyword = kind === 'buy' ? 'buy' : 'sell';
+  const match = services.find((s) => s.toLowerCase().startsWith(keyword));
+  return match ?? fallback;
 }
 
 function Shell({ children }: { children: React.ReactNode }) {

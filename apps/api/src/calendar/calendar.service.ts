@@ -18,6 +18,12 @@ export interface BookingRequest {
   email: string;
   phone?: string;
   notes?: string;
+  /**
+   * Override the credentials-default slot duration for this one booking.
+   * Used for appraisals (60 min instead of the 30 min default) so the
+   * Sales calendar blocks the correct window.
+   */
+  durationMinutes?: number;
 }
 
 type Creds = CredentialsFor<'google_calendar'>;
@@ -307,7 +313,13 @@ export class CalendarService {
   async createBooking(req: BookingRequest): Promise<{ eventId: string; htmlLink: string | null }> {
     const creds = await this.requireReadyCreds();
     const calendar = this.calendar(creds);
-    const slotMs = creds.slot_minutes * 60 * 1000;
+    // Appraisals need a longer block than walk-in buy/sell consults.
+    // Clamp caller-supplied overrides to [10, 240] min so a bad payload
+    // can't consume the whole day.
+    const requestedMinutes = req.durationMinutes
+      ? Math.min(Math.max(req.durationMinutes, 10), 240)
+      : creds.slot_minutes;
+    const slotMs = requestedMinutes * 60 * 1000;
     const start = new Date(req.startIso);
     if (Number.isNaN(start.getTime())) throw new BadRequestException('Invalid start time');
     const end = new Date(start.getTime() + slotMs);

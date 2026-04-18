@@ -17,7 +17,14 @@ import { RespondDealRequestDto } from './dto/respond-deal-request.dto';
 import { DealRequestsService } from './deal-requests.service';
 
 @Controller('client/deal-requests')
-@Roles('client')
+// Admins + staff can submit too — useful for test flows and for an
+// employee quoting something for a walk-in customer who doesn't yet
+// have portal access. The service resolves the client record via
+// clients.user_id = current_user.id, which every seeded employee
+// has (see seed-team.ts), so the row lands on the employee's own
+// client record. Admins review all deal requests via
+// /admin/deal-requests regardless of who submitted.
+@Roles('client', 'admin', 'staff')
 export class ClientDealRequestsController {
   constructor(private readonly service: DealRequestsService) {}
 
