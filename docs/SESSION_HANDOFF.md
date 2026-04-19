@@ -4,8 +4,12 @@
 > this project, read this document end-to-end once and you'll have what you
 > need to make changes safely.
 >
-> **Last updated:** 2026-04-17
-> **Latest commit at time of writing:** `e48d4c1`
+> **Last updated:** 2026-04-18
+> **Latest commit at time of writing:** `31b67e7`
+>
+> Read the **Changelog Addendum** (bottom of this file) first if you already
+> read the main doc at commit `e48d4c1` — it covers everything that's
+> shifted since.
 
 ---
 
@@ -1187,3 +1191,148 @@ canonical list; this narrates the "why" of each.
 significant changes. If a new Claude session is picking this up, this doc
 + the commit timeline + the file reference tree should be enough to
 operate safely without re-discovering everything.*
+
+---
+
+## 24. Changelog Addendum (2026-04-17 → 2026-04-18)
+
+Everything below shipped after the original doc was written. Read this
+section before acting on anything from the main doc above — some of
+the behavior described earlier has been extended, replaced, or fixed.
+
+### What's new
+
+| Commit | What |
+|---|---|
+| `2b0e173` | **Mobile hamburger drawer** on admin + dashboard layouts. Slide-in panel, closes on route change / Esc / backdrop click. Desktop (≥md) unchanged. Also added fuzzy search to `/admin/buy-sheet`. |
+| `b835156` | Fixed 403 on `POST /client/deal-requests` for admin/staff (was gated on `client` role only) — admins can now submit test requests. `/book` page redesigned: 3 top-level buttons (Buy / Sell / Appraisal) + required sub-choice for Appraisal (Only / With Intent to Sell) + red disclaimer text + email field explicitly required. Appraisal bookings auto-block 60 min server-side (was 30). |
+| `d9b4339` | **Fuzzy search on every product-listing page.** Shared scorer at `apps/web/src/lib/product-search.ts` (`rankProducts<T>(rows, query)`). Same weights as the invoice wizard's combobox (+100 SKU substring, +15 SKU prefix, +60 name word-boundary, +30 name substring, +5 metal, +20/token). Applied to `/admin/buy-sheet`, `/admin/in-stock-sheet`, `/admin/inventory`, `/admin/products` (with drag disabled while searching), `/dashboard/pricing`, `/dashboard/in-stock`. |
+| `c879fcc` | **Custom display categories** — rearrange + add. Migration 019 adds `products.display_category_override TEXT NULL`. New admin-only CRUD endpoints under `/admin/display-categories` (list / order / custom / delete). State stored in `app_settings` JSONB under keys `display_categories.custom` and `display_categories.order`. Public read at `/public/display-categories`. Frontend hook `useDisplayCategories()` merges builtins with custom + applies order. `/admin/categories` page (drag via @dnd-kit + add form + delete customs). Product detail page gets a "Display category" dropdown to pin any product. **Currently wired through on `/admin/inventory` only** — other 3 listing pages still use compiled-in SECTIONS order; they'll pick up dynamic order in a follow-up. Override is honored universally since the sheet endpoint passes it through. |
+| `4f26c20` | Split admin dashboard volume cards into in-office vs wholesale. Added "Edit" button on closed invoices — opens an inline editor for quantity/unit price without going through void-and-recreate. (This is orthogonal to void-and-recreate — inline edit preserves the invoice number; void-and-recreate spawns a new one.) |
+| `ee35085` | **Void-and-recreate invoice flow.** Button on invoice detail page cancels the invoice (reverses inventory via existing `classifyInventoryAction`) and redirects to `/admin/invoices/new?from=<id>`. Wizard reads the `from` param, fetches the source invoice, prefills client/type/notes/transaction date/line items (with unit prices preserved as overrides)/payment legs. **Same commit also added the pg18 Docker attempt that had to be reverted** — see `d8b2bd2`. And a "Now" button next to the transaction date/time inputs in the wizard. |
+| `2aa3265` | **Inline product name editor** on `/admin/products/[id]`. Click "Edit" next to the h1 → input appears → Save/Enter commits via PATCH and invalidates every React Query cache that shows a product name (catalog / products / sheet / inventory / client prices / client in-stock). Historical invoices keep their original name (snapshot column unchanged — audit-correct). |
+| `d8b2bd2` | **Rolled back the pg18 Docker attempt** from `ee35085`. The Debian `bookworm-slim` + PGDG apt runtime built cleanly but the healthcheck failed because `bcrypt` / native modules had been compiled against Alpine's musl libc in the prod-deps stage and wouldn't load against Debian's glibc. Went back to node:20-alpine + postgresql16-client. Site came back up. |
+| `812686f` | Aligned `package.json:packageManager` to `pnpm@9.15.9` so it matches the GitHub Actions workflow + Dockerfile corepack invocation. Also served as a cache-busting push to force Railway to rebuild after the revert. |
+| `31b67e7` | **Pure-JS SQL backup dumper** — `pg_dump` dependency removed entirely. `BackupsService.buildSqlDump()` walks `pg_tables` + `information_schema.columns`, emits `BEGIN / TRUNCATE / INSERT row-by-row / ALTER SEQUENCE / COMMIT` inside `session_replication_role='replica'` so FKs don't trip during restore. Output gzipped + stored in `backup_runs.dump_bytes` same as before. Download extension changed `.dump.gz → .sql.gz`. **Restore path now:** migrate a fresh DB, then `gunzip -c file.sql.gz \| psql $DATABASE_URL`. Portable across every Postgres major version forever. Dockerfile dropped `postgresql16-client` — ~40 MB smaller image. |
+
+### New schema
+
+Migration **019** (applied to dev + prod):
+```
+ALTER TABLE products ADD COLUMN display_category_override TEXT;
+```
+
+Plus two new `app_settings` JSONB keys (no schema change — these live
+in the existing flexible blob):
+
+- `display_categories.custom` — array of `{id, label, metal}` for admin-
+  added categories
+- `display_categories.order` — array of slugs in the operator's preferred
+  rendering order
+
+### New dependencies
+
+- `@dnd-kit/core`, `@dnd-kit/sortable`, `@dnd-kit/utilities` — used by the
+  Catalog drag-reorder (already installed in the earlier session) and now
+  also by `/admin/categories`. No new peer deps added since the doc.
+
+### Sidebar rearrangement
+
+Final admin sidebar order (see `apps/web/src/app/admin/layout.tsx` →
+`NAV_ITEMS`):
+
+```
+Dashboard        → /admin
+KPI              → /admin/kpi
+Calendar         → /admin/calendar
+Invoices         → /admin/invoices
+New invoice      → /admin/invoices/new
+Clients          → /admin/clients
+Requests         → /admin/requests
+Shipments        → /admin/shipments
+Quotes           → /admin/quotes
+Products         → /admin/inventory          (stock-centric, 12+custom sections)
+In stock sheet   → /admin/in-stock-sheet
+What we pay      → /admin/buy-sheet
+Catalog          → /admin/products           (drag-reorder, CRUD)
+Categories       → /admin/categories         (NEW — rearrange + add)
+Integrations     → /admin/integrations
+Backups          → /admin/backups
+Settings         → /admin/settings
+```
+
+### New files added since the doc
+
+| File | Role |
+|---|---|
+| `apps/api/src/db/migrations/019_product_display_override.ts` | Schema for the override column |
+| `apps/api/src/settings/display-categories.controller.ts` | CRUD for categories (admin + public read) |
+| `apps/web/src/app/admin/categories/page.tsx` | Drag-reorder + add/delete UI |
+| `apps/web/src/lib/product-search.ts` | Shared fuzzy scorer |
+| `apps/web/src/lib/use-display-categories.ts` | Hook that merges builtins + custom + order |
+
+### Changed behavior to know about
+
+1. **Backups are now plain SQL.** Not `pg_dump --format=custom` anymore.
+   Restore path is `psql < file.sql` against a freshly-migrated DB, not
+   `pg_restore`. The admin page already documents this.
+
+2. **`deriveDisplayCategory` is no longer the only routing path.** Always
+   prefer `resolveDisplayCategory(product, knownSlugs)` — it checks the
+   override first and falls back to the heuristic. Passing the
+   `knownSlugs` set (from `useDisplayCategories()`) is what makes
+   deleted custom slugs fall back gracefully instead of orphaning.
+
+3. **Native module mismatch caveat.** If you ever switch the runtime base
+   image away from Alpine, you MUST also switch the `prod-deps` build
+   stage to a matching base. Native deps (`bcrypt`, sharp, etc.) compile
+   against the libc of whatever image installs them. Mismatching Alpine
+   (musl) and Debian (glibc) crashes the container at startup with an
+   obscure "invalid ELF header" — which is exactly what killed the pg18
+   attempt in `ee35085`.
+
+4. **Pinned-product routing.** A product with `display_category_override`
+   set goes to that slug regardless of name. The 3 listing pages that
+   haven't been converted to `useDisplayCategories()` yet (In-stock
+   sheet, Buy sheet, Catalog) still honor the override because they
+   read it through the sheet endpoint — but they render sections in
+   compiled-in order, not admin-customized order. Rolling them over to
+   the hook is a small change (same pattern as `/admin/inventory`).
+
+5. **Void-and-recreate is a two-step user flow, not a single server
+   endpoint.** The detail page POSTs `status=canceled`, then the web
+   router.push() navigates to `/admin/invoices/new?from=<id>`. The
+   wizard does the prefill. There's no single atomic "void and
+   recreate" backend call.
+
+### Still pending
+
+- **Backup cron hasn't been exercised on prod yet with the new JS
+  dumper.** Next 8 PM ET run will be the first test. The `/admin/backups
+  → Run backup now` button lets you trigger one immediately — recommended
+  as a smoke test.
+
+- **Google Calendar OAuth consent.** Still needs the one-time "Authorize
+  with Google" click on `/admin/integrations` → Google Calendar card.
+  Until then, `/book` slots don't load.
+
+- **DocuSign.** Creds saved; RSA PEM still needs to be the full block
+  (operator originally pasted the key's GUID instead of the key
+  content); base_path needs `/restapi` appended; consent URL needs to
+  be hit once.
+
+- **Logo re-upload.** The branding_assets migration moved storage to
+  Postgres bytea so it survives deploys — but the pre-migration logo
+  was wiped. Operator should upload a fresh one via `/admin/settings`.
+
+- **Three listing pages still using static SECTIONS order.** In-stock
+  sheet, Buy sheet, Catalog. Conversion pattern is:
+  ```tsx
+  const { sections, knownSlugs } = useDisplayCategories();
+  // replace `SECTIONS` with `sections` in the render loop
+  // replace `deriveDisplayCategory(p)` with `resolveDisplayCategory(p, knownSlugs)`
+  ```
+  Products sheet already passes `display_category_override` through.
+
+- **WordPress plugin not yet installed** on atlantagoldandcoin.com. Code
+  is at `wordpress-plugin/agc-inventory/` ready to zip + upload.
