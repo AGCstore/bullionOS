@@ -294,9 +294,8 @@ function CategorySection({
           {inStock.length} in stock · {outOfStock.length} out of stock
         </span>
       </div>
-      {/* MOB-002: horizontal scroll on narrow viewports. */}
-      <div className="overflow-x-auto rounded-xl border border-ink-200 bg-white">
-        <table className="w-full min-w-[720px] text-sm">
+      <div className="overflow-hidden rounded-xl border border-ink-200 bg-white">
+        <table className="w-full text-sm">
           <thead className="bg-ink-50 text-left text-xs uppercase tracking-wide text-ink-400">
             <tr>
               <th className="px-4 py-3">Product</th>

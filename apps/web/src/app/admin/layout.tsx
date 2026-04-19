@@ -26,7 +26,6 @@ const NAV_ITEMS: Array<{ href: string; label: string }> = [
   { href: '/admin/calendar', label: 'Calendar' },
   { href: '/admin/invoices', label: 'Invoices' },
   { href: '/admin/invoices/new', label: 'New invoice' },
-  { href: '/admin/wholesale/reconciliation', label: 'Wholesale AR' },
   { href: '/admin/clients', label: 'Clients' },
   { href: '/admin/requests', label: 'Requests' },
   { href: '/admin/shipments', label: 'Shipments' },

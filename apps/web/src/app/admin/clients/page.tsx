@@ -196,12 +196,11 @@ export default function ClientsListPage() {
         </div>
       )}
 
-      {/* MOB-002: horizontal scroll on narrow viewports. */}
-      <div className="mt-4 overflow-x-auto rounded-xl border border-ink-200 bg-white">
+      <div className="mt-4 overflow-hidden rounded-xl border border-ink-200 bg-white">
         {isLoading ? (
           <div className="p-8 text-center text-sm text-ink-400">Loading…</div>
         ) : (
-          <table className="w-full min-w-[720px] text-sm">
+          <table className="w-full text-sm">
             <thead className="bg-ink-50 text-left text-xs uppercase tracking-wide text-ink-400">
               <tr>
                 <th className="w-10 px-4 py-3">
