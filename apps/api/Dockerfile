@@ -42,18 +42,12 @@ RUN pnpm install --frozen-lockfile --prod --filter @agc/api...
 # ---------- Stage 3: runtime ----------
 FROM node:20-alpine AS runtime
 # tini → pid1 zombie reaping.
-# postgresql-client (unversioned) → provides pg_dump for the daily backup
-# cron. Note: Alpine's repos track a specific major version per release;
-# if the managed Postgres server is newer than this client, the backup
-# cron will throw "aborting because of server version mismatch". The
-# BackupsService catches that as a normal failure and marks the row
-# status=failed; the API itself keeps running.
 #
-# Known at time of writing: Alpine 3.20 ships postgresql16-client; the
-# Railway-managed Postgres is on 18.x. The next-pass fix is to pull
-# pg_dump v18 from PGDG in a Debian runtime — that was tried and broke
-# the build, so this file is back on Alpine/pg16 for now.
-RUN apk add --no-cache tini postgresql16-client \
+# Note: postgresql-client used to live here for the daily pg_dump backup,
+# but BackupsService is now a pure-JS SQL dumper (see
+# apps/api/src/backups/backups.service.ts). No external binary needed;
+# no version-mismatch fire drills every time the managed server upgrades.
+RUN apk add --no-cache tini \
   && addgroup -S agc && adduser -S agc -G agc
 USER agc
 WORKDIR /app

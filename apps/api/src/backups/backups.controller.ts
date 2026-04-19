@@ -35,10 +35,11 @@ export class BackupsController {
   }
 
   /**
-   * Stream a completed backup's gzipped pg_dump to the client. Served as
-   * application/octet-stream so the browser saves it directly. Filename
-   * encodes the ISO start timestamp so downloaded backups self-sort on
-   * disk. `.dump.gz` signals: custom format, gzip-compressed.
+   * Stream a completed backup's gzipped SQL script to the client.
+   * Served as application/octet-stream so the browser saves directly.
+   * Filename encodes the ISO start timestamp so downloaded backups
+   * self-sort on disk. `.sql.gz` signals plain-SQL, gzip-compressed —
+   * restorable via `gunzip -c file.sql.gz | psql $URL`.
    */
   @Get(':id/download')
   async download(
@@ -51,7 +52,7 @@ export class BackupsController {
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="agc-${stamp}.dump.gz"`,
+      `attachment; filename="agc-${stamp}.sql.gz"`,
     );
     res.setHeader('Content-Length', row.bytes.length);
     res.end(row.bytes);

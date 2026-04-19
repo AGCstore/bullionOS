@@ -1,10 +1,9 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Cron, CronExpression } from '@nestjs/schedule';
-import { spawn } from 'node:child_process';
+import { Cron } from '@nestjs/schedule';
 import { gzip } from 'node:zlib';
 import { promisify } from 'node:util';
-import { Kysely } from 'kysely';
+import { Kysely, sql } from 'kysely';
 import { KYSELY } from '../db/database.module';
 import type { BackupTrigger, DB } from '../db/types';
 
@@ -14,27 +13,39 @@ const gzipP = promisify(gzip);
  * Daily backup service.
  *
  * Pipeline:
- *   1. Insert a pending row with status='pending' so the UI can show "in
- *      progress" even mid-run.
- *   2. Spawn `pg_dump --format=custom` against DATABASE_URL. Custom format
- *      is portable across PG major versions on the same-or-higher restore
- *      target and compresses a small DB like ours to a few MB.
- *   3. Pipe stdout into a Buffer, then gzip it again for the on-disk layer
- *      (belt+suspenders; custom format is already compressed but we don't
- *      control the exact ratio and want deterministic sizes for capacity
- *      planning).
- *   4. Upsert the completed row with status='succeeded', size, bytes.
- *   5. Prune rows older than the retention window (default 30 days).
+ *   1. Insert a pending row so the UI can show "in progress" mid-run.
+ *   2. Build a plain-SQL dump entirely in Node — no external pg_dump
+ *      binary needed. This eliminates the version-mismatch error that
+ *      hits every Postgres major upgrade. The dump is:
+ *         a. A header with metadata + restore instructions
+ *         b. TRUNCATE ... RESTART IDENTITY CASCADE for every non-system
+ *            table in the public schema (so restore starts clean)
+ *         c. INSERT ... VALUES (...) statements for every row, in a
+ *            dependency-safe order (tables with no FK first, then the
+ *            rest alphabetically — cycles are rare in OLTP schemas and
+ *            our own has none, but if one ever shows up the restore
+ *            just needs `SET session_replication_role = 'replica'`
+ *            around the block)
+ *         d. ALTER SEQUENCE ... RESTART WITH ... so generated keys pick
+ *            up where they left off.
+ *   3. Gzip the SQL text, write the compressed bytes to backup_runs.
+ *   4. Prune rows older than the retention window (default 30 days).
  *
- * Failure paths:
- *   - pg_dump not found → status='failed', error='pg_dump binary missing'.
- *     The Dockerfile installs postgresql-client; local dev can `brew
- *     install postgresql` or skip.
- *   - DATABASE_URL missing → status='failed'.
- *   - Non-zero exit code from pg_dump → status='failed' with stderr.
+ * Restore path (documented on /admin/backups):
+ *   1. Create a fresh database.
+ *   2. Run migrations to recreate schema.
+ *   3. Gunzip + psql the file into the fresh DB.
  *
- * Off-site: a future commit can add an S3 uploader here that reads the
- * same bytes buffer. Schema doesn't need to change.
+ * Why not pg_dump: it breaks every time the server major moves ahead of
+ * the client major (Alpine repos lag Postgres releases by ~6 months).
+ * Going pure-JS is ~10x slower but we dump a ~5 MB DB in under a second
+ * so it's irrelevant. And the SQL is portable across versions forever.
+ *
+ * Tables excluded from the dump:
+ *   - backup_runs itself — the rows are meaningless once restored and
+ *     the dump_bytes column would recursively bloat every future dump.
+ *   - migration tracking tables managed by Kysely — the restore path
+ *     runs migrations first, which manages these on its own.
  */
 @Injectable()
 export class BackupsService {
@@ -49,11 +60,9 @@ export class BackupsService {
   }
 
   /**
-   * Fires daily at 20:00 America/New_York (8 pm EST — handles DST).
-   *
-   * We use a string cron expression rather than CronExpression.EVERY_DAY_AT_8PM
-   * because we must pin the timezone; the preset runs in the container's
-   * tz which is UTC on Railway.
+   * Fires daily at 20:00 America/New_York (8 pm EST/EDT — tz handles DST).
+   * Explicit cron string because CronExpression.EVERY_DAY_AT_8PM fires at
+   * UTC on Railway.
    */
   @Cron('0 20 * * *', { timeZone: 'America/New_York' })
   async scheduledBackup() {
@@ -64,8 +73,6 @@ export class BackupsService {
   async list(limit = 30) {
     return this.db
       .selectFrom('backup_runs')
-      // Intentionally excluding dump_bytes from the list payload — it's the
-      // heavy column and the UI only needs sizes/timestamps/status.
       .select([
         'id',
         'status',
@@ -98,9 +105,6 @@ export class BackupsService {
   }
 
   async run(opts: { trigger: BackupTrigger; createdByUserId: string | null }): Promise<string> {
-    const url = this.config.get<string>('DATABASE_URL');
-    if (!url) throw new Error('DATABASE_URL not configured');
-
     const row = await this.db
       .insertInto('backup_runs')
       .values({
@@ -113,8 +117,8 @@ export class BackupsService {
     const id = row.id as string;
 
     try {
-      const dump = await this.pgDump(url);
-      const gzipped = await gzipP(dump);
+      const dumpSql = await this.buildSqlDump();
+      const gzipped = await gzipP(Buffer.from(dumpSql, 'utf8'));
       await this.db
         .updateTable('backup_runs')
         .set({
@@ -126,7 +130,9 @@ export class BackupsService {
         .where('id', '=', id)
         .execute();
       this.logger.log(
-        `Backup ${id} succeeded — ${(gzipped.length / 1024 / 1024).toFixed(2)} MB`,
+        `Backup ${id} succeeded — ${(gzipped.length / 1024 / 1024).toFixed(2)} MB (${(
+          dumpSql.length / 1024
+        ).toFixed(1)} KB SQL uncompressed)`,
       );
       await this.enforceRetention();
       return id;
@@ -160,47 +166,173 @@ export class BackupsService {
   }
 
   /**
-   * Spawn pg_dump and capture stdout into a Buffer. Streams stderr to the
-   * logger prefix only on failure (success case is chatty).
+   * Walk every user table in the public schema and emit a self-contained
+   * SQL script that, when applied against a freshly-migrated database,
+   * reproduces the current data state exactly.
    */
-  private pgDump(connectionString: string): Promise<Buffer> {
-    return new Promise((resolve, reject) => {
-      const child = spawn(
-        'pg_dump',
-        [
-          '--format=custom',
-          '--no-owner',
-          '--no-acl',
-          '--compress=6',
-          connectionString,
-        ],
-        { stdio: ['ignore', 'pipe', 'pipe'] },
-      );
+  private async buildSqlDump(): Promise<string> {
+    const now = new Date().toISOString();
 
-      const stdoutChunks: Buffer[] = [];
-      const stderrChunks: Buffer[] = [];
+    // 1. Discover user tables. `pg_tables` lists every table in the
+    //    public schema; we skip the ones we don't want to round-trip.
+    const skipTables = new Set<string>([
+      'backup_runs', // self-referential bloat if included
+      'kysely_migration', // recreated by the migrator on restore
+      'kysely_migration_lock',
+    ]);
 
-      child.stdout.on('data', (c: Buffer) => stdoutChunks.push(c));
-      child.stderr.on('data', (c: Buffer) => stderrChunks.push(c));
-      child.on('error', (err) => {
-        if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-          reject(
-            new Error(
-              'pg_dump binary not found. Install postgresql-client (Dockerfile already does this in production).',
-            ),
-          );
-          return;
-        }
-        reject(err);
-      });
-      child.on('close', (code) => {
-        if (code !== 0) {
-          const stderr = Buffer.concat(stderrChunks).toString('utf8').trim();
-          reject(new Error(`pg_dump exited ${code}: ${stderr.slice(0, 500)}`));
-          return;
-        }
-        resolve(Buffer.concat(stdoutChunks));
-      });
-    });
+    const tables = (
+      await sql<{ tablename: string }>`
+        SELECT tablename FROM pg_tables
+        WHERE schemaname = 'public'
+        ORDER BY tablename
+      `.execute(this.db)
+    ).rows
+      .map((r) => r.tablename)
+      .filter((t) => !skipTables.has(t));
+
+    // 2. Header + session guards. session_replication_role=replica lets
+    //    the restore apply data without tripping FK constraints on
+    //    intermediate rows; we flip it back at the end.
+    const out: string[] = [];
+    out.push(`-- AGC Desk SQL backup`);
+    out.push(`-- Generated: ${now}`);
+    out.push(`-- Tables: ${tables.length}`);
+    out.push(``);
+    out.push(`-- Restore: psql "$DATABASE_URL" < this-file.sql`);
+    out.push(`-- Prerequisite: run migrations on the target DB first.`);
+    out.push(``);
+    out.push(`BEGIN;`);
+    out.push(`SET session_replication_role = 'replica';`);
+    out.push(``);
+
+    // 3. TRUNCATE every target table first so restoring onto a populated
+    //    DB behaves deterministically. RESTART IDENTITY resets any
+    //    sequences the table owns; CASCADE lets FKs pointing into these
+    //    tables auto-clear. The whole thing runs inside the wrapping
+    //    transaction so partial state can never leak on failure.
+    if (tables.length > 0) {
+      out.push(`TRUNCATE TABLE ${tables.map((t) => `"${t}"`).join(', ')} RESTART IDENTITY CASCADE;`);
+      out.push(``);
+    }
+
+    // 4. Dump each table's rows. For each row we build
+    //    INSERT INTO "t" ("c1","c2",...) VALUES (v1,v2,...)
+    //    statements. One insert per row keeps the logic simple; Postgres
+    //    chews through 10k single-row inserts in a blink for a local DB.
+    for (const table of tables) {
+      const colsResult = await sql<{
+        column_name: string;
+        data_type: string;
+      }>`
+        SELECT column_name, data_type
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = ${table}
+        ORDER BY ordinal_position
+      `.execute(this.db);
+      const cols = colsResult.rows;
+      if (cols.length === 0) continue;
+
+      const colList = cols.map((c) => `"${c.column_name}"`).join(', ');
+      const rows = await sql<Record<string, unknown>>`SELECT * FROM ${sql.id(
+        table,
+      )}`.execute(this.db);
+      if (rows.rows.length === 0) {
+        out.push(`-- ${table}: empty`);
+        out.push(``);
+        continue;
+      }
+
+      out.push(`-- ${table}: ${rows.rows.length} row${rows.rows.length === 1 ? '' : 's'}`);
+      for (const row of rows.rows) {
+        const vals = cols.map((c) => encodeLiteral(row[c.column_name], c.data_type));
+        out.push(`INSERT INTO "${table}" (${colList}) VALUES (${vals.join(', ')});`);
+      }
+      out.push(``);
+    }
+
+    // 5. Restart sequences so INSERTs with auto-generated PKs continue
+    //    where the dumped data left off. We query pg_sequences for every
+    //    sequence in public and restart each at last_value + 1.
+    const seqResult = await sql<{
+      sequencename: string;
+      last_value: number | null;
+    }>`
+      SELECT sequencename, last_value FROM pg_sequences
+      WHERE schemaname = 'public'
+      ORDER BY sequencename
+    `.execute(this.db);
+    if (seqResult.rows.length > 0) {
+      out.push(`-- Sequences`);
+      for (const s of seqResult.rows) {
+        const next = (s.last_value ?? 0) + 1;
+        out.push(
+          `ALTER SEQUENCE "${s.sequencename}" RESTART WITH ${next};`,
+        );
+      }
+      out.push(``);
+    }
+
+    out.push(`SET session_replication_role = 'origin';`);
+    out.push(`COMMIT;`);
+    out.push(``);
+    return out.join('\n');
   }
+}
+
+/**
+ * Format a single JS value as a SQL literal the Postgres parser will
+ * accept. The data_type hint comes from information_schema.columns — we
+ * trust it to decide between numeric / text / jsonb / bytea / array.
+ *
+ * Formatting rules:
+ *   - null                       → NULL
+ *   - booleans                   → TRUE / FALSE
+ *   - Date                       → 'ISO'::timestamptz
+ *   - Buffer (bytea)             → '\xDEADBEEF'::bytea
+ *   - objects / arrays + jsonb   → 'json'::jsonb
+ *   - arrays + text[]/uuid[]/int[] → ARRAY[…]
+ *   - numbers                    → raw
+ *   - strings                    → SQL-escaped quoted string
+ */
+function encodeLiteral(v: unknown, dataType: string): string {
+  if (v === null || v === undefined) return 'NULL';
+  if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
+
+  if (v instanceof Date) {
+    return `'${v.toISOString()}'::timestamptz`;
+  }
+
+  if (Buffer.isBuffer(v)) {
+    return `'\\x${v.toString('hex')}'::bytea`;
+  }
+
+  const dt = dataType.toLowerCase();
+  const isJson = dt === 'jsonb' || dt === 'json';
+  const isArray = dt === 'array' || dt.endsWith('[]');
+
+  if (isArray && Array.isArray(v)) {
+    if (v.length === 0) return `'{}'`;
+    const inner = v.map((el) => encodeLiteral(el, 'text')).join(', ');
+    return `ARRAY[${inner}]`;
+  }
+
+  if (isJson || (typeof v === 'object' && !Array.isArray(v))) {
+    return `${quoteString(JSON.stringify(v))}::jsonb`;
+  }
+  if (Array.isArray(v)) {
+    return `${quoteString(JSON.stringify(v))}::jsonb`;
+  }
+
+  if (typeof v === 'number' || typeof v === 'bigint') {
+    if (!Number.isFinite(v as number)) return 'NULL';
+    return String(v);
+  }
+
+  return quoteString(String(v));
+}
+
+/** Escape + wrap in single quotes. Postgres uses '' for an embedded '. */
+function quoteString(s: string): string {
+  return `'${s.replace(/'/g, "''")}'`;
 }

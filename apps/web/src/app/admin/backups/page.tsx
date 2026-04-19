@@ -59,7 +59,7 @@ export default function BackupsPage() {
     a.href = url;
     const disposition = res.headers.get('content-disposition') ?? '';
     const m = /filename="([^"]+)"/.exec(disposition);
-    a.download = m ? m[1] : `agc-backup-${id}.dump.gz`;
+    a.download = m ? m[1] : `agc-backup-${id}.sql.gz`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -151,10 +151,13 @@ export default function BackupsPage() {
       </section>
 
       <p className="mt-4 text-xs text-ink-400">
-        Restore instructions: download a <code>.dump.gz</code>, then run{' '}
-        <code className="bg-ink-50 px-1">gunzip file.dump.gz</code> and{' '}
-        <code className="bg-ink-50 px-1">pg_restore -d $URL file.dump</code>{' '}
-        against a fresh database.
+        Restore: download the <code>.sql.gz</code>, run migrations against a
+        fresh database (<code className="bg-ink-50 px-1">pnpm --filter @agc/api db:migrate</code>),
+        then apply the dump with{' '}
+        <code className="bg-ink-50 px-1">gunzip -c file.sql.gz | psql $DATABASE_URL</code>.
+        Backups are plain-SQL INSERT statements wrapped in a transaction with
+        FK constraints deferred during the restore, so they&rsquo;re portable
+        across every Postgres major version.
       </p>
     </div>
   );
