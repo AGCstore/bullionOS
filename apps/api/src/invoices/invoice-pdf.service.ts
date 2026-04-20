@@ -33,6 +33,22 @@ export class InvoicePdfService {
       },
     });
 
+    // --- Top-of-page market disclaimer ---
+    // Moved here from the footer so the customer sees it before they
+    // scan line items / totals — "these prices are point-in-time" is
+    // context that matters most while someone is reading the numbers,
+    // not after they've closed the document.
+    doc
+      .font('Helvetica-Oblique')
+      .fontSize(8)
+      .fillColor('#6a6a72')
+      .text(
+        'Prices computed against live spot. This document is a record of a transaction at the time of creation.',
+        54,
+        30,
+        { width: 504, align: 'center' },
+      );
+
     // --- Header: logo (if set) OR wordmark ---
     let headerUsedLogo = false;
     if (logoAsset && logoAsset.mime !== 'image/svg+xml') {
@@ -288,16 +304,10 @@ export class InvoicePdfService {
       this.logger.warn(`QR generation failed: ${(err as Error).message}`);
     }
 
-    doc
-      .font('Helvetica')
-      .fontSize(8)
-      .fillColor('#8a8a92')
-      .text(
-        'Prices computed against live spot. This document is a record of a transaction at the time of creation.',
-        54,
-        770,
-        { width: 504, align: 'center' },
-      );
+    // The "Prices computed against live spot" disclaimer used to sit
+    // here in the footer. Moved to the top of page 1 (see the
+    // Helvetica-Oblique block at the start of render()) so it reads
+    // as context rather than a post-hoc footnote.
 
     doc.end();
     return doc as unknown as Readable;
@@ -428,6 +438,19 @@ function formatDatePartsForPdf(iso: string | Date): { date: string; time: string
   return { date, time };
 }
 
+/**
+ * Title-case a payment method for PDF display.
+ *
+ * Default behavior: uppercase first letter. Short all-caps acronyms
+ * (ACH, wire transfer reference terms) must stay fully uppercase —
+ * "Ach" reads as a typo on a financial document. Maintain a small
+ * allowlist here rather than trying to regex every two-or-three-letter
+ * method so we don't accidentally shout "CASH" or "WIRE".
+ */
 function capitalize(s: string): string {
-  return s.length === 0 ? s : s.charAt(0).toUpperCase() + s.slice(1);
+  if (s.length === 0) return s;
+  const upper = s.toUpperCase();
+  const allCapsAcronyms = new Set(['ACH']);
+  if (allCapsAcronyms.has(upper)) return upper;
+  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 }

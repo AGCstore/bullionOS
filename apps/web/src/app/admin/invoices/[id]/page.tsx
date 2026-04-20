@@ -65,7 +65,9 @@ const NEXT_STATUSES: Record<string, Array<{ value: string; label: string }>> = {
     { value: 'canceled', label: 'Cancel' },
   ],
   paid: [{ value: 'shipped', label: 'Mark shipped' }],
-  shipped: [],
+  // shipped → paid supports the wholesale "ship first, pay later"
+  // workflow. Invoice stays on Wholesale AR until this fires.
+  shipped: [{ value: 'paid', label: 'Mark paid' }],
   canceled: [],
 };
 
@@ -187,16 +189,21 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
           <StatusPill status={data.status} />
           {/* Wholesale-specific Mark Paid button (WH-002). More prominent
               than the generic "Mark paid" option in the status dropdown;
-              stamps paid_by_user_id automatically via the service. */}
-          {data.client_type === 'wholesaler' && data.status === 'finalized' && (
-            <button
-              onClick={() => setStatus('paid')}
-              className="rounded-md bg-green-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-700"
-              title="Record that this wholesaler has paid — removes from outstanding totals"
-            >
-              Mark paid
-            </button>
-          )}
+              stamps paid_by_user_id automatically via the service.
+              Shown on `finalized` AND `shipped` — wholesalers commonly
+              pay after the goods arrive, so AR must stay open through
+              the shipped state until this fires. */}
+          {data.client_type === 'wholesaler' &&
+            (data.status === 'finalized' || data.status === 'shipped') &&
+            !data.paid_at && (
+              <button
+                onClick={() => setStatus('paid')}
+                className="rounded-md bg-green-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-700"
+                title="Record that this wholesaler has paid — removes from outstanding totals"
+              >
+                Mark paid
+              </button>
+            )}
           <button
             onClick={openPdf}
             className="rounded-md border border-ink-200 px-3 py-1.5 text-sm hover:bg-ink-50"
@@ -559,8 +566,14 @@ function PaymentMethodsPanel({ invoice }: { invoice: InvoiceDetail }) {
             key={i}
             className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm"
           >
-            <span className="font-medium capitalize text-ink-800">
-              {leg.method || '(unspecified)'}
+            <span className="font-medium text-ink-800">
+              {/*
+                Format payment method for display. CSS `capitalize` would
+                render "ach" as "Ach" which reads like a typo on a
+                financial document; hard-case it via formatPaymentMethod
+                so ACH (and any future all-caps acronym) stays shouty.
+              */}
+              {formatPaymentMethod(leg.method) || '(unspecified)'}
             </span>
             {leg.reference && (
               <span className="truncate text-xs text-ink-500">{leg.reference}</span>
@@ -952,4 +965,19 @@ function localTimeInput(iso: string): string {
 
 function pad(n: number): string {
   return String(n).padStart(2, '0');
+}
+
+/**
+ * Format a payment-method slug for human display.
+ *
+ * Most slugs ("cash", "check", "zelle") want title-case. Short
+ * acronyms (ACH) must stay fully uppercase — "Ach" reads as a typo on
+ * a financial document. Mirror of the backend's PDF-side capitalize()
+ * so the web and the PDF read identically.
+ */
+function formatPaymentMethod(s: string): string {
+  if (!s) return '';
+  const upper = s.toUpperCase();
+  if (upper === 'ACH') return 'ACH';
+  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 }

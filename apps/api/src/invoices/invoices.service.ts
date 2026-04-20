@@ -819,7 +819,13 @@ export class InvoicesService {
         ),
       ])
       .where('c.client_type', '=', 'wholesaler')
-      .where('i.status', '=', 'finalized')
+      // Outstanding = finalized OR shipped, but not yet paid. Wholesale
+      // routinely ships before payment lands, so 'shipped' must stay on
+      // the receivables list until Mark Paid fires. Guarded by
+      // paid_at IS NULL so an invoice that was paid then shipped
+      // (rare retail mail-order path) doesn't reappear.
+      .where('i.status', 'in', ['finalized', 'shipped'])
+      .where('i.paid_at', 'is', null)
       .orderBy('c.last_name')
       .orderBy('i.created_at', 'asc')
       .execute();
@@ -880,18 +886,35 @@ export class InvoicesService {
    * trigger (or `null` if none). Pure function — fed to the transaction
    * handler in `updateStatus`.
    *
-   * Sell lifecycle (most transactions are in-person — deduct at paid, not ship):
-   *   draft ─reserve→ finalized ─consume→ paid ─no-op→ shipped
-   *                          ╲            ╲reverse-consume→ canceled
-   *                           ╲release→ canceled
-   *                   finalized ─consume→ shipped (skip-paid path)
+   * Sell lifecycle has two valid shapes depending on who's buying:
    *
-   * Buy lifecycle: draft ─no-op→ finalized ─purchase→ paid ─no-op→ shipped
+   *   Retail walk-in (consume at paid):
+   *     draft ─reserve→ finalized ─consume→ paid ─no-op→ shipped
    *
-   * The 'paid' state is treated as the real inventory event for sells because
-   * the shop's majority volume is walk-in. Shipped status is retained for
-   * mail-order completeness but no longer carries inventory weight on
-   * paid→shipped (already consumed at paid).
+   *   Retail mail-order (consume at ship, already paid):
+   *     draft ─reserve→ finalized ─consume→ paid ─no-op→ shipped
+   *     (same path; paid happens first, ship is bookkeeping)
+   *
+   *   Wholesale ship-first-pay-later (consume at ship, paid later):
+   *     draft ─reserve→ finalized ─consume→ shipped ─no-op→ paid
+   *     Goods physically leave when we mark shipped; AR stays open
+   *     until the wholesaler remits and Mark Paid fires. See
+   *     listOutstandingWholesale — it includes shipped invoices so
+   *     the receivable doesn't disappear at ship time.
+   *
+   *   Cancel:
+   *     finalized → canceled  release (reservation only, no stock moved)
+   *     paid      → canceled  reverse_consume (return flow — stock back)
+   *     shipped   → canceled  NOT allowed (goods physically gone; use
+   *                           an admin adjustment instead)
+   *
+   * Buy lifecycle: draft ─no-op→ finalized ─purchase→ paid ─no-op→ shipped.
+   *
+   * Consume is strictly idempotent — once it happens (at paid OR at
+   * shipped, whichever comes first after finalized), the other
+   * transition is a no-op. That's why both `finalized→shipped` and
+   * `finalized→paid` classify as consume, but `paid→shipped` and
+   * `shipped→paid` do not.
    */
   private classifyInventoryAction(
     type: InvoiceType,
@@ -904,13 +927,16 @@ export class InvoicesService {
     }
     // type === 'sell'
     if (to === 'finalized' && from === 'draft') return { kind: 'reserve' };
-    // Consume at paid OR at shipped (if skipping paid). Only consume once —
-    // paid→shipped is a no-op because the deduction already happened.
-    if (to === 'paid' && from !== 'paid') return { kind: 'consume' };
-    if (to === 'shipped' && from === 'finalized') return { kind: 'consume' };
+    // Consume only from finalized — either to paid (retail walk-in) or
+    // to shipped (wholesale ship-first). Any other to='paid'/'shipped'
+    // transition is between already-consumed states, so no-op.
+    if (from === 'finalized' && (to === 'paid' || to === 'shipped')) {
+      return { kind: 'consume' };
+    }
     // Cancel paths. Paid→canceled means we already deducted, so we must
     // restore stock (return flow). Finalized→canceled releases the reservation
-    // without any stock movement.
+    // without any stock movement. Shipped→canceled is disallowed at the
+    // transition layer; no entry here.
     if (to === 'canceled' && from === 'finalized') return { kind: 'release' };
     if (to === 'canceled' && from === 'paid') return { kind: 'reverse_consume' };
     return null;
@@ -922,7 +948,12 @@ export class InvoicesService {
       draft: ['finalized', 'canceled'],
       finalized: ['paid', 'shipped', 'canceled'],
       paid: ['shipped', 'canceled'], // canceling a paid sell releases reservation
-      shipped: [],
+      // shipped → paid enables the wholesale "ship first, get paid days
+      // later" workflow. Goods have physically left; the invoice stays
+      // on wholesale AR until this transition fires. shipped is
+      // otherwise terminal — no back-to-canceled, because reversing a
+      // physical shipment needs an explicit return flow we haven't built.
+      shipped: ['paid'],
       canceled: [],
     };
     return allowed[from].includes(to);

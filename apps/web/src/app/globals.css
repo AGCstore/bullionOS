@@ -12,6 +12,31 @@
   color-scheme: light;
 }
 
+/**
+ * Site-wide font bump.
+ *
+ * Tailwind's text-* utilities are rem-based; rem cascades from
+ * html { font-size }. Default browser root is 16px — bumping to 18px
+ * scales every rem-based tier by 12.5%:
+ *
+ *   text-xs   (0.75rem)  → 12→13.5px
+ *   text-sm   (0.875rem) → 14→15.75px
+ *   text-base (1rem)     → 16→18px     ← exact +2 at the base
+ *   text-lg   (1.125rem) → 18→20.25px
+ *   text-xl   (1.25rem)  → 20→22.5px
+ *
+ * Trade-off: arbitrary px values (e.g. `text-[10px]` on status pills)
+ * stay absolute and do NOT scale — they remain their authored size.
+ * For the AGC Desk use case this is actually desirable — the tiny
+ * all-caps badge labels ("Wholesale", "override") were tuned to read
+ * right at 10–11px and look awkward when bumped. Net effect for the
+ * operator: body copy + table cells + forms all get a step bigger,
+ * while typography details stay unchanged.
+ */
+html {
+  font-size: 18px;
+}
+
 html, body {
   height: 100%;
   background: #f7f7f8;
