@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import PDFDocument from 'pdfkit';
 import { Readable } from 'node:stream';
+import QRCode from 'qrcode';
 import type { InvoiceWithLines } from './invoices.service';
 import { d, toDisplay } from '../common/money';
 import { SettingsService, type BrandingSettings } from '../settings/settings.service';
@@ -48,16 +49,20 @@ export class InvoicePdfService {
       this.drawWordmark(doc, branding);
     }
 
-    // Company address block — sits below the logo/wordmark. Five lines max
-    // (name is included when logo crowds out the wordmark so it's still legible).
+    // Company address block — sits below the logo/wordmark.
+    //
+    // PDF-001 layout: website/email on one line, phone on the line
+    // directly below. Keeping phone on its own line makes it easier to
+    // read at a glance on a printed invoice and mirrors the expected
+    // customer-contact hierarchy (how you reach us > where we are).
     const addrY = 96;
     const addrLines: string[] = [];
     if (headerUsedLogo) addrLines.push(branding.company_name);
     if (branding.address_line1) addrLines.push(branding.address_line1);
     if (branding.address_line2) addrLines.push(branding.address_line2);
     if (branding.address_city_state_zip) addrLines.push(branding.address_city_state_zip);
-    const contactBits = [branding.website, branding.phone].filter(Boolean);
-    if (contactBits.length) addrLines.push(contactBits.join('  ·  '));
+    if (branding.website) addrLines.push(branding.website);
+    if (branding.phone) addrLines.push(branding.phone);
     if (addrLines.length) {
       doc.font('Helvetica').fontSize(9).fillColor('#55555c');
       let y = addrY;
@@ -78,15 +83,18 @@ export class InvoicePdfService {
         width: 200,
       });
 
+    // PDF-001: stack invoice number → date (MM-DD-YYYY) → time → status,
+    // with date and time on separate lines so operators can scan them
+    // independently. Previously date+time were combined on one line; the
+    // new layout matches the request exactly.
+    const { date: dateMDY, time: timeET } = formatDatePartsForPdf(invoice.created_at);
     doc
       .font('Helvetica')
       .fontSize(9)
       .fillColor('#55555c')
       .text(`#${invoice.invoice_number}`, rightX, 78, { align: 'right', width: 200 })
-      .text(`Date: ${formatDateTimeForPdf(invoice.created_at)}`, {
-        align: 'right',
-        width: 200,
-      })
+      .text(`Date: ${dateMDY}`, { align: 'right', width: 200 })
+      .text(`Time: ${timeET}`, { align: 'right', width: 200 })
       .text(`Status: ${invoice.status.toUpperCase()}`, { align: 'right', width: 200 });
 
     // --- Client / Bill-to ---
@@ -146,6 +154,51 @@ export class InvoicePdfService {
     this.drawTotalRow(doc, cursorY, 'Total', invoice.total, true);
     cursorY += 24;
 
+    // --- Payment record (PDF-001) ---
+    // Show each payment leg + amount. Source of truth is the JSONB
+    // payment_methods array; fall back to the legacy single-method
+    // column for pre-INV-010 rows. Hidden entirely for drafts with
+    // no payment captured yet so we don't render an empty section.
+    const paymentLegs = this.resolvePaymentLegs(invoice);
+    if (paymentLegs.length > 0) {
+      if (cursorY > 660) {
+        doc.addPage();
+        cursorY = 54;
+      }
+      doc
+        .font('Helvetica-Bold')
+        .fontSize(9)
+        .fillColor('#8a8a92')
+        .text('PAYMENT', 54, cursorY);
+      cursorY += 14;
+      for (const leg of paymentLegs) {
+        doc
+          .font('Helvetica')
+          .fontSize(10)
+          .fillColor('#17171a')
+          .text(capitalize(leg.method || '(unspecified)'), 54, cursorY, {
+            width: 200,
+          });
+        if (leg.reference) {
+          doc
+            .font('Helvetica')
+            .fontSize(9)
+            .fillColor('#8a8a92')
+            .text(leg.reference, 200, cursorY, { width: 200 });
+        }
+        doc
+          .font('Courier')
+          .fontSize(10)
+          .fillColor('#17171a')
+          .text(`$${toDisplay(leg.amount)}`, 400, cursorY, {
+            width: 158,
+            align: 'right',
+          });
+        cursorY += 14;
+      }
+      cursorY += 10;
+    }
+
     // --- Notes (operator-entered) ---
     if (invoice.notes && invoice.notes.trim().length > 0) {
       if (cursorY > 640) {
@@ -192,7 +245,49 @@ export class InvoicePdfService {
       .fillColor('#17171a')
       .text(disclosureBody, 54, cursorY, { width: 504, align: 'justify' });
 
-    // --- Footer ---
+    // --- QR code + footer (PDF-001) ---
+    // QR deep-links to the client-portal registration page. Clients can
+    // snap it with their phone and land straight on signup without
+    // typing a URL — drives retention on in-person walk-ins.
+    //
+    // WEB_ORIGIN is the canonical app URL (e.g. https://agcdesk.com).
+    // Falls back to a literal /register path if the env is empty so a
+    // mis-configured dev box still produces a parseable QR.
+    const webOrigin = (process.env.WEB_ORIGIN ?? '').replace(/\/$/, '');
+    const registerUrl = webOrigin ? `${webOrigin}/register` : '/register';
+    // Use the current page's bottom as the anchor for the QR block so
+    // multi-page invoices get the QR on the final page rather than
+    // floating under the line-items table. Fixed Y placement is fine
+    // because we've sized the block to sit comfortably above the 792pt
+    // page edge with a 10pt bottom gutter.
+    const qrTop = 690;
+    try {
+      const qrBuffer = await QRCode.toBuffer(registerUrl, {
+        errorCorrectionLevel: 'M',
+        margin: 1,
+        width: 180,
+      });
+      doc.image(qrBuffer, 54, qrTop, { width: 64, height: 64 });
+      doc
+        .font('Helvetica-Bold')
+        .fontSize(9)
+        .fillColor('#17171a')
+        .text('Create an account', 128, qrTop + 6, { width: 260 });
+      doc
+        .font('Helvetica')
+        .fontSize(8)
+        .fillColor('#55555c')
+        .text(
+          'Scan to open your client portal — view invoices, submit buy/sell requests, book appointments.',
+          128,
+          qrTop + 20,
+          { width: 360 },
+        );
+    } catch (err) {
+      // QR rendering failures must not block the PDF. Log + continue.
+      this.logger.warn(`QR generation failed: ${(err as Error).message}`);
+    }
+
     doc
       .font('Helvetica')
       .fontSize(8)
@@ -200,12 +295,40 @@ export class InvoicePdfService {
       .text(
         'Prices computed against live spot. This document is a record of a transaction at the time of creation.',
         54,
-        760,
+        770,
         { width: 504, align: 'center' },
       );
 
     doc.end();
     return doc as unknown as Readable;
+  }
+
+  /**
+   * PDF-001: normalize payment_methods + legacy payment_method into a
+   * single array the renderer can iterate. Drafts with no payment
+   * captured yet return []. Legacy single-method rows synthesize one
+   * leg covering the full total so the PDF still shows something
+   * useful on invoices created before INV-010.
+   */
+  private resolvePaymentLegs(
+    invoice: InvoiceWithLines,
+  ): Array<{ method: string; reference: string | null; amount: string }> {
+    const legs = (invoice.payment_methods as unknown as Array<{
+      method: string;
+      reference: string | null;
+      amount: string;
+    }> | null) ?? [];
+    if (legs.length > 0) return legs;
+    if (invoice.payment_method) {
+      return [
+        {
+          method: String(invoice.payment_method),
+          reference: null,
+          amount: invoice.total,
+        },
+      ];
+    }
+    return [];
   }
 
   private drawWordmark(doc: PDFKit.PDFDocument, branding: BrandingSettings) {
@@ -272,28 +395,39 @@ export class InvoicePdfService {
 }
 
 /**
- * Render the invoice date + time in US/Eastern (shop's home timezone) so
- * two invoices logged five minutes apart are distinguishable on printed
- * PDFs. Format: "Apr 17, 2026 · 3:42 PM EDT" — short enough to fit the
- * 200-pt header column.
+ * PDF-001: split date/time so the header can stack them on separate
+ * lines.
+ *
+ *   date → "04-17-2026"              (MM-DD-YYYY, dashes)
+ *   time → "3:42 PM EDT"             (US/Eastern, shop tz)
+ *
+ * Always US/Eastern so two invoices logged minutes apart are
+ * distinguishable on the printed ticket regardless of the operator's
+ * laptop timezone.
  */
-function formatDateTimeForPdf(iso: string | Date): string {
+function formatDatePartsForPdf(iso: string | Date): { date: string; time: string } {
   const d = typeof iso === 'string' ? new Date(iso) : iso;
-  if (Number.isNaN(d.getTime())) return '';
-  // Intl bakes in DST handling via timeZone; safer than manual offsets.
-  const fmt = new Intl.DateTimeFormat('en-US', {
+  if (Number.isNaN(d.getTime())) return { date: '', time: '' };
+  const dateParts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York',
-    month: 'short',
-    day: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
     year: 'numeric',
+  }).formatToParts(d);
+  const lookup = (type: Intl.DateTimeFormatPartTypes) =>
+    dateParts.find((p) => p.type === type)?.value ?? '';
+  const date = `${lookup('month')}-${lookup('day')}-${lookup('year')}`;
+
+  const time = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
     hour: 'numeric',
     minute: '2-digit',
     timeZoneName: 'short',
-  });
-  const parts = fmt.formatToParts(d);
-  // The default format is "Apr 17, 2026, 3:42 PM EDT" — swap the middle
-  // comma for a middle dot so it reads as a single line without inviting
-  // a Date/Time column split when scanned.
-  const joined = parts.map((p) => p.value).join('');
-  return joined.replace(/,\s*(?=\d)/, ' · ');
+  }).format(d);
+
+  return { date, time };
+}
+
+function capitalize(s: string): string {
+  return s.length === 0 ? s : s.charAt(0).toUpperCase() + s.slice(1);
 }

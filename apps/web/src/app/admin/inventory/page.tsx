@@ -13,6 +13,7 @@ import {
 } from '@/lib/product-category';
 import { useDisplayCategories } from '@/lib/use-display-categories';
 import { rankProducts } from '@/lib/product-search';
+import { InlineField } from '@/components/inline-field';
 
 interface InventoryRow {
   product_id: string;
@@ -23,6 +24,7 @@ interface InventoryRow {
   quantity_on_hand: number;
   quantity_reserved: number;
   available: number;
+  location: string;
   weighted_avg_cost: string;
   last_purchase_price: string | null;
   updated_at: string;
@@ -295,6 +297,7 @@ function CategorySection({
           <thead className="bg-ink-50 text-left text-xs uppercase tracking-wide text-ink-400">
             <tr>
               <th className="px-4 py-3">Product</th>
+              <th className="px-4 py-3">Location</th>
               <th className="px-4 py-3 text-right">Qty</th>
               <th className="px-4 py-3 text-right">We sell for</th>
               <th className="px-4 py-3 text-right">Adjust</th>
@@ -306,7 +309,7 @@ function CategorySection({
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-4 py-6 text-center text-sm text-ink-400">
+                <td colSpan={5} className="px-4 py-6 text-center text-sm text-ink-400">
                   Nothing in stock in this category.
                 </td>
               </tr>
@@ -361,6 +364,29 @@ function InventoryRowView({ row, dimmed }: { row: EnrichedRow; dimmed?: boolean 
           <div className="font-medium">{row.name}</div>
           <div className="font-mono text-xs text-ink-400">{row.sku}</div>
         </td>
+        {/*
+          PROD-002: inline-editable storage location. PATCHes
+          /admin/inventory/:productId/location. On save we only
+          invalidate the inventory list — no pricing-side query
+          depends on this column so we don't fan out like savePatch
+          does. Kept deliberately narrow to avoid thrashing the
+          already-subscribed queries.
+        */}
+        <td className="px-4 py-3 text-xs">
+          <InlineField
+            value={row.location}
+            onSave={async (next) => {
+              await apiFetch(`/admin/inventory/${row.product_id}/location`, {
+                method: 'PATCH',
+                body: JSON.stringify({ location: next.trim() || 'main' }),
+              });
+              await qc.invalidateQueries({ queryKey: ['admin', 'inventory'] });
+            }}
+            maxLength={64}
+            ariaLabel="storage location"
+            displayClassName="font-mono text-ink-700"
+          />
+        </td>
         <td className="px-4 py-3 text-right font-mono font-semibold">
           {row.available}
           {row.quantity_reserved > 0 && (
@@ -383,7 +409,7 @@ function InventoryRowView({ row, dimmed }: { row: EnrichedRow; dimmed?: boolean 
       </tr>
       {open && (
         <tr className="border-t border-ink-100 bg-ink-50/40">
-          <td colSpan={4} className="px-4 py-3">
+          <td colSpan={5} className="px-4 py-3">
             <div className="flex flex-col gap-2 md:flex-row md:items-center">
               <label className="text-xs font-medium text-ink-600">
                 Delta

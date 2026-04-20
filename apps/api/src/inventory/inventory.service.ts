@@ -13,6 +13,13 @@ export interface InventoryRow {
   quantity_on_hand: number;
   quantity_reserved: number;
   available: number;
+  /**
+   * Physical storage label — 'main' by default, configurable to 'safe',
+   * 'vault-2', etc. via PATCH /admin/inventory/:productId/location
+   * (PROD-002). Always present at the API boundary because the list
+   * query COALESCEs to 'main' for products with no inventory row yet.
+   */
+  location: string;
   weighted_avg_cost: string;
   last_purchase_price: string | null;
   updated_at: Date;
@@ -38,6 +45,7 @@ export class InventoryService {
         sql<number>`coalesce(inv.quantity_on_hand, 0)`.as('quantity_on_hand'),
         sql<number>`coalesce(inv.quantity_reserved, 0)`.as('quantity_reserved'),
         sql<number>`coalesce(inv.quantity_on_hand, 0) - coalesce(inv.quantity_reserved, 0)`.as('available'),
+        sql<string>`coalesce(inv.location, 'main')`.as('location'),
         sql<string>`coalesce(inv.weighted_avg_cost, '0')::text`.as('weighted_avg_cost'),
         sql<string | null>`inv.last_purchase_price::text`.as('last_purchase_price'),
         sql<Date>`coalesce(inv.updated_at, p.updated_at)`.as('updated_at'),
@@ -297,6 +305,75 @@ export class InventoryService {
       actor_user_id: params.actor_user_id,
       force: params.force,
     });
+  }
+
+  /**
+   * PROD-002: edit the storage location for a product's inventory row.
+   * Creates the row if this is the first time we've touched inventory
+   * for the product (same upsert pattern as applyMovement).
+   *
+   * Location is an operator-visible label — 'main', 'safe', 'vault-2',
+   * etc. — used to organize physical placement in the shop. Short,
+   * uppercase, trimmed; empty collapses to 'main'.
+   */
+  async setLocation(
+    productId: string,
+    rawLocation: string,
+    actorUserId: string,
+  ): Promise<InventoryRow> {
+    const location = rawLocation.trim().slice(0, 64) || 'main';
+    const product = await this.db
+      .selectFrom('products')
+      .select('id')
+      .where('id', '=', productId)
+      .executeTakeFirst();
+    if (!product) throw new NotFoundException('Product not found');
+
+    await this.db.transaction().execute(async (trx) => {
+      const existing = await trx
+        .selectFrom('inventory')
+        .select(['location'])
+        .where('product_id', '=', productId)
+        .executeTakeFirst();
+      if (existing) {
+        if (existing.location === location) return;
+        await trx
+          .updateTable('inventory')
+          .set({ location })
+          .where('product_id', '=', productId)
+          .execute();
+      } else {
+        await trx
+          .insertInto('inventory')
+          .values({
+            product_id: productId,
+            quantity_on_hand: 0,
+            quantity_reserved: 0,
+            location,
+            weighted_avg_cost: '0',
+          })
+          .execute();
+      }
+      // Movement row so the change is auditable alongside stock edits.
+      // delta=0 + reserved_delta=0 means no-op on counters — the movement
+      // exists purely for its metadata (actor + note).
+      await trx
+        .insertInto('inventory_movements')
+        .values({
+          product_id: productId,
+          delta: 0,
+          reserved_delta: 0,
+          reason: 'adjustment',
+          actor_user_id: actorUserId,
+          notes: `Location → ${location}`,
+        })
+        .execute();
+    });
+
+    const rows = await this.list();
+    const row = rows.find((r) => r.product_id === productId);
+    if (!row) throw new NotFoundException();
+    return row;
   }
 
   // ─── Admin-initiated adjustment (unrelated to invoices) ───────────────

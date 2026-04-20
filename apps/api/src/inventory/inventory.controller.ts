@@ -3,6 +3,7 @@ import { CurrentUser, type RequestUser } from '../common/decorators/current-user
 import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { AdjustInventoryDto } from './dto/adjust-inventory.dto';
+import { SetInventoryLocationDto } from './dto/set-location.dto';
 import { InventoryService } from './inventory.service';
 
 @Controller()
@@ -23,6 +24,22 @@ export class InventoryController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.service.adjust(productId, dto.delta, user.id, dto.notes);
+  }
+
+  /**
+   * PROD-002 — edit the storage-location label for a product. Separate
+   * endpoint from the quantity-delta adjust so the two concerns stay
+   * cleanly auditable (one movement row per request, no combined
+   * "moved + relocated" ambiguity).
+   */
+  @Patch('admin/inventory/:productId/location')
+  @Roles('admin', 'staff')
+  setLocation(
+    @Param('productId', new ParseUUIDPipe()) productId: string,
+    @Body() dto: SetInventoryLocationDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.service.setLocation(productId, dto.location, user.id);
   }
 
   /** Client-portal view (requires auth, role=client). */

@@ -96,32 +96,43 @@ export class ProductsService {
     const purity = dto.purity ?? Number(existing.purity);
     const content = d(weight).times(d(purity));
 
-    const row = await this.db
-      .updateTable('products')
-      .set({
-        ...(dto.sku !== undefined && { sku: dto.sku }),
-        ...(dto.name !== undefined && { name: dto.name }),
-        ...(dto.metal !== undefined && { metal: dto.metal }),
-        ...(dto.category !== undefined && { category: dto.category }),
-        ...(dto.weight_troy_oz !== undefined && { weight_troy_oz: toDbString(dto.weight_troy_oz) }),
-        ...(dto.purity !== undefined && { purity: toDbString(dto.purity) }),
-        ...((dto.weight_troy_oz !== undefined || dto.purity !== undefined) && {
-          metal_content_troy_oz: toDbString(content),
-        }),
-        ...(dto.description !== undefined && { description: dto.description }),
-        ...(dto.image_url !== undefined && { image_url: dto.image_url }),
-        ...(dto.is_active !== undefined && { is_active: dto.is_active }),
-        ...(dto.show_on_website !== undefined && { show_on_website: dto.show_on_website }),
-        // Empty string coming from the form means "clear the override";
-        // persist as NULL so the heuristic takes over again.
-        ...(dto.display_category_override !== undefined && {
-          display_category_override:
-            dto.display_category_override === '' ? null : dto.display_category_override,
-        }),
-      })
-      .where('id', '=', id)
-      .returningAll()
-      .executeTakeFirst();
+    let row: Product | undefined;
+    try {
+      row = await this.db
+        .updateTable('products')
+        .set({
+          ...(dto.sku !== undefined && { sku: dto.sku }),
+          ...(dto.name !== undefined && { name: dto.name }),
+          ...(dto.metal !== undefined && { metal: dto.metal }),
+          ...(dto.category !== undefined && { category: dto.category }),
+          ...(dto.weight_troy_oz !== undefined && { weight_troy_oz: toDbString(dto.weight_troy_oz) }),
+          ...(dto.purity !== undefined && { purity: toDbString(dto.purity) }),
+          ...((dto.weight_troy_oz !== undefined || dto.purity !== undefined) && {
+            metal_content_troy_oz: toDbString(content),
+          }),
+          ...(dto.description !== undefined && { description: dto.description }),
+          ...(dto.image_url !== undefined && { image_url: dto.image_url }),
+          ...(dto.is_active !== undefined && { is_active: dto.is_active }),
+          ...(dto.show_on_website !== undefined && { show_on_website: dto.show_on_website }),
+          // Empty string coming from the form means "clear the override";
+          // persist as NULL so the heuristic takes over again.
+          ...(dto.display_category_override !== undefined && {
+            display_category_override:
+              dto.display_category_override === '' ? null : dto.display_category_override,
+          }),
+        })
+        .where('id', '=', id)
+        .returningAll()
+        .executeTakeFirst();
+    } catch (err) {
+      // SKU has a UNIQUE index; surface a friendly 400 instead of a 500
+      // when an inline edit collides with another product. Mirrors the
+      // create() handler so the UI gets a consistent shape.
+      if ((err as { code?: string }).code === '23505') {
+        throw new BadRequestException('SKU already exists');
+      }
+      throw err;
+    }
 
     if (!row) throw new NotFoundException('Product not found');
     await this.cache.invalidatePricingDependent();

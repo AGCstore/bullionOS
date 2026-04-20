@@ -408,9 +408,41 @@ function SortableRow({
         </button>
       </td>
       <td className="px-4 py-3 font-mono text-xs">
-        <Link href={`/admin/products/${product.id}`} className="hover:underline">
-          {product.sku}
-        </Link>
+        {/*
+          PROD-003: editable SKU. InlineField PATCHes /admin/products/:id
+          with the new sku (service normalizes + rejects duplicates with a
+          400). The detail link is relocated to a small arrow icon so the
+          cell is still keyboard-clickable for edits without capturing
+          stray clicks meant for navigation.
+        */}
+        <div className="flex items-center gap-1">
+          <InlineField
+            value={product.sku}
+            onSave={(next) => savePatch(product.id, qc, { sku: next.toUpperCase() })}
+            maxLength={64}
+            ariaLabel="product sku"
+            displayClassName="font-mono"
+            // Mirror the server-side regex so the UI rejects invalid input
+            // before the round-trip. Empty string would bypass that regex,
+            // so we also explicitly require at least one char.
+            validate={(v) => {
+              const trimmed = v.trim();
+              if (trimmed.length === 0) return 'SKU required';
+              if (!/^[A-Z0-9_-]+$/i.test(trimmed)) {
+                return 'A–Z, 0–9, _ or -';
+              }
+              return null;
+            }}
+          />
+          <Link
+            href={`/admin/products/${product.id}`}
+            className="text-ink-400 hover:text-ink-900"
+            aria-label="Open product detail"
+            title="Open product detail"
+          >
+            ↗
+          </Link>
+        </div>
       </td>
       <td className="px-4 py-3">
         <InlineField
