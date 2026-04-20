@@ -43,7 +43,7 @@ export default function ClientPricing() {
     <div className="mx-auto max-w-5xl">
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">What we pay</h1>
+          <h1 className="text-2xl font-semibold">What We Pay</h1>
           <p className="mt-1 text-sm text-ink-400">
             Live buy prices. Lock in a quote to hold the price for 15 minutes.
           </p>

@@ -20,25 +20,70 @@ import { NotificationsBell } from '@/components/notifications-bell';
  * what lives in the admin console.
  */
 
-const NAV_ITEMS: Array<{ href: string; label: string }> = [
+/**
+ * Nav structure.
+ *
+ * Top-level items are either a flat link OR a group with a header link
+ * plus nested children. Groups expand when the active route matches the
+ * group root or any of its children, so operators always see where they
+ * are within a section.
+ *
+ * Consolidations (Apr 2026):
+ *   - Removed the old "Products" (/admin/inventory) top-level link.
+ *     That surface was a subset of Catalog with three extras
+ *     (reservation badges, sell price column, adjustment notes) —
+ *     all three are now folded into Catalog. The route itself still
+ *     resolves for any lingering bookmarks.
+ *   - Clients group: "Clients" list + nested "Requests" and "Quotes"
+ *     (previously their own top-level entries). Both are client-scoped
+ *     anyway; surfacing them as siblings of the client list reduces
+ *     top-level clutter.
+ *   - Settings group: "Settings" + nested "Categories", "Integrations",
+ *     "Backups" — operator-facing site config moves under one header.
+ */
+interface NavChild {
+  href: string;
+  label: string;
+}
+interface NavGroup {
+  href: string;
+  label: string;
+  children: NavChild[];
+}
+type NavEntry = NavChild | NavGroup;
+
+function isGroup(e: NavEntry): e is NavGroup {
+  return 'children' in e;
+}
+
+const NAV_ITEMS: NavEntry[] = [
   { href: '/admin', label: 'Dashboard' },
   { href: '/admin/kpi', label: 'KPI' },
   { href: '/admin/calendar', label: 'Calendar' },
   { href: '/admin/invoices', label: 'Invoices' },
   { href: '/admin/invoices/new', label: 'New invoice' },
   { href: '/admin/wholesale/reconciliation', label: 'Wholesale AR' },
-  { href: '/admin/clients', label: 'Clients' },
-  { href: '/admin/requests', label: 'Requests' },
+  {
+    href: '/admin/clients',
+    label: 'Clients',
+    children: [
+      { href: '/admin/requests', label: 'Deal requests' },
+      { href: '/admin/quotes', label: 'Quotes' },
+    ],
+  },
   { href: '/admin/shipments', label: 'Shipments' },
-  { href: '/admin/quotes', label: 'Quotes' },
-  { href: '/admin/inventory', label: 'Products' },
   { href: '/admin/in-stock-sheet', label: 'In stock sheet' },
-  { href: '/admin/buy-sheet', label: 'What we pay' },
+  { href: '/admin/buy-sheet', label: 'What We Pay' },
   { href: '/admin/products', label: 'Catalog' },
-  { href: '/admin/categories', label: 'Categories' },
-  { href: '/admin/integrations', label: 'Integrations' },
-  { href: '/admin/backups', label: 'Backups' },
-  { href: '/admin/settings', label: 'Settings' },
+  {
+    href: '/admin/settings',
+    label: 'Settings',
+    children: [
+      { href: '/admin/categories', label: 'Categories' },
+      { href: '/admin/integrations', label: 'Integrations' },
+      { href: '/admin/backups', label: 'Backups' },
+    ],
+  },
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -84,7 +129,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     <div className="flex min-h-screen bg-ink-50 text-ink-900">
       {/* Desktop sidebar */}
       <aside className="sticky top-0 hidden h-screen w-60 flex-col overflow-y-auto border-r border-ink-200 bg-white px-4 py-6 md:flex">
-        <SidebarBody user={user} onLogout={logout} />
+        <SidebarBody user={user} onLogout={logout} pathname={pathname} />
       </aside>
 
       {/* Mobile drawer — backdrop + sliding panel. */}
@@ -96,7 +141,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             aria-hidden
           />
           <aside className="absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col overflow-y-auto border-r border-ink-200 bg-white px-4 py-6 shadow-xl">
-            <SidebarBody user={user} onLogout={logout} />
+            <SidebarBody user={user} onLogout={logout} pathname={pathname} />
           </aside>
         </div>
       )}
@@ -133,9 +178,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 function SidebarBody({
   user,
   onLogout,
+  pathname,
 }: {
   user: { email: string; role: string };
   onLogout: () => void;
+  /** Active route — used to auto-expand the matching nav group. */
+  pathname: string;
 }) {
   return (
     <>
@@ -156,11 +204,15 @@ function SidebarBody({
       </div>
 
       <nav className="mt-8 flex flex-col gap-1 text-sm">
-        {NAV_ITEMS.map((item) => (
-          <NavLink key={item.href} href={item.href}>
-            {item.label}
-          </NavLink>
-        ))}
+        {NAV_ITEMS.map((item) =>
+          isGroup(item) ? (
+            <NavGroupLinks key={item.href} group={item} pathname={pathname} />
+          ) : (
+            <NavLink key={item.href} href={item.href}>
+              {item.label}
+            </NavLink>
+          ),
+        )}
       </nav>
 
       <div className="mt-auto space-y-2 text-sm">
@@ -193,5 +245,78 @@ function NavLink({ href, children }: { href: string; children: React.ReactNode }
     >
       {children}
     </Link>
+  );
+}
+
+/**
+ * Collapsible nav group — header link + chevron that reveals children.
+ *
+ * Auto-expands whenever the active route matches the group root or any
+ * of its children, so operators who deep-link into (e.g.)
+ * /admin/categories land with the Settings group already open and
+ * highlighting "Categories". Clicking the chevron toggles the manual
+ * override for the current session; navigating back resets to the
+ * auto-expand rule.
+ */
+function NavGroupLinks({
+  group,
+  pathname,
+}: {
+  group: { href: string; label: string; children: Array<{ href: string; label: string }> };
+  pathname: string;
+}) {
+  const active =
+    pathname === group.href ||
+    pathname.startsWith(group.href + '/') ||
+    group.children.some(
+      (c) => pathname === c.href || pathname.startsWith(c.href + '/'),
+    );
+  const [open, setOpen] = useState(active);
+
+  // Re-sync on path change — when an operator navigates into a child
+  // via a deep-link elsewhere, we want the group to open automatically.
+  useEffect(() => {
+    if (active) setOpen(true);
+  }, [active]);
+
+  return (
+    <div className="flex flex-col">
+      <div className="flex items-center gap-0.5">
+        <Link
+          href={group.href}
+          className="flex-1 rounded-md px-3 py-1.5 text-ink-600 transition hover:bg-ink-50 hover:text-ink-900"
+        >
+          {group.label}
+        </Link>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-label={open ? `Collapse ${group.label}` : `Expand ${group.label}`}
+          aria-expanded={open}
+          className="rounded-md p-1 text-ink-400 transition hover:bg-ink-50 hover:text-ink-900"
+        >
+          <span
+            className={`inline-block transition-transform ${
+              open ? 'rotate-90' : ''
+            }`}
+          >
+            ›
+          </span>
+        </button>
+      </div>
+      {open && (
+        <div className="ml-3 mt-0.5 flex flex-col gap-0.5 border-l border-ink-100 pl-2">
+          {group.children.map((c) => (
+            <Link
+              key={c.href}
+              href={c.href}
+              className="rounded-md px-3 py-1 text-xs text-ink-600 transition hover:bg-ink-50 hover:text-ink-900"
+            >
+              {c.label}
+            </Link>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

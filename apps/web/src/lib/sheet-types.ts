@@ -21,4 +21,6 @@ export interface SheetRow {
   quantity_on_hand: number;
   quantity_reserved: number;
   available: number;
+  /** Physical storage label — 'main' by default. Editable on Catalog. */
+  location: string;
 }

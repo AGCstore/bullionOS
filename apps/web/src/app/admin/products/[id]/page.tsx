@@ -156,8 +156,8 @@ function DisplayCategoryPicker({ product }: { product: Product }) {
     <section className="mt-6 rounded-xl border border-ink-200 bg-white p-5">
       <h2 className="text-base font-semibold">Display category</h2>
       <p className="mt-1 text-xs text-ink-400">
-        Which section this product appears under on the Products page,
-        In-stock sheet, What we pay, and Catalog. Leave on{' '}
+        Which section this product appears under on the
+        In-stock sheet, What We Pay, and Catalog. Leave on{' '}
         <span className="font-semibold">Automatic</span> to use name-based
         routing (<span className="font-mono">{auto}</span> for this product).
       </p>
@@ -292,7 +292,7 @@ function PricingRuleEditor({
 
       <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2">
         <PremiumInput
-          label="What we pay (buy)"
+          label="What We Pay (buy)"
           hint="Negative = discount below spot. Use flat for $/oz of metal content."
           type={buyType}
           value={buyValue}

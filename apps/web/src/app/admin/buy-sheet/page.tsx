@@ -114,7 +114,7 @@ export default function BuySheetPage() {
       <div className="mx-auto max-w-6xl">
         <div className="flex items-start justify-between">
           <div>
-            <h1 className="text-2xl font-semibold">What we pay</h1>
+            <h1 className="text-2xl font-semibold">What We Pay</h1>
             <p className="mt-1 text-sm text-ink-400">
               Every active product, grouped by metal and family. Prices refresh
               every minute. Click Edit on any row to adjust the buy/sell
@@ -244,9 +244,13 @@ function BuySection({
             <tr>
               <th className="w-8 px-2 py-3" />
               <th className="px-4 py-3">Item</th>
-              <th className="px-4 py-3 text-right">On hand</th>
+              {/* "On hand" + "We sell" columns intentionally hidden
+                  on the buy-sheet surface. We Pay is about "what will
+                  we pay the walk-in for this item, right now" — stock
+                  levels and sell prices don't help the quoting
+                  workflow and were causing operator confusion. Both
+                  stay visible on Catalog and the In-stock sheet. */}
               <th className="px-4 py-3 text-right">We pay</th>
-              <th className="px-4 py-3 text-right">We sell</th>
               <th className="px-4 py-3 text-right w-32">Edit</th>
             </tr>
           </thead>
@@ -351,14 +355,8 @@ function BuyRowView({
           </span>
         </div>
       </td>
-      <td className="px-4 py-3 text-right font-mono text-ink-600">
-        {row.quantity_on_hand}
-      </td>
       <td className="px-4 py-3 text-right font-mono text-ink-900">
         {row.buy_price !== null ? `$${Number(row.buy_price).toFixed(2)}` : '—'}
-      </td>
-      <td className="px-4 py-3 text-right font-mono text-ink-600">
-        {row.sell_price !== null ? `$${Number(row.sell_price).toFixed(2)}` : '—'}
       </td>
       <td className="px-4 py-3">
         {rule ? (

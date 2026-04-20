@@ -47,6 +47,25 @@ interface Product {
 }
 
 /**
+ * Per-product inventory + pricing snapshot the Catalog row renders
+ * alongside its name/sku cells. Single source of truth so every
+ * stock-related column (on-hand, reserved badge, sell price, location)
+ * reads from the same /admin/products/sheet response — one round-trip
+ * per page load, not one per column.
+ *
+ * This page absorbed the old /admin/inventory ("Products" tab) that
+ * used to be a separate surface. Hoisting the shape to module scope so
+ * SortableRow + StockCell can both type their props against it
+ * without a circular/nested definition.
+ */
+interface StockSnapshot {
+  on_hand: number;
+  reserved: number;
+  sell_price: string | null;
+  location: string;
+}
+
+/**
  * Catalog page. Products are grouped by metal → category (Gold Coins, Gold
  * Bars, Pre-1933 Gold, Silver Coins, Generic Silver, Platinum Coins / Bars,
  * Palladium Coins / Bars, Other) with a family sort inside each.
@@ -71,8 +90,15 @@ export default function ProductsPage() {
     refetchInterval: 60_000,
   });
   const stockByProduct = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const s of sheet ?? []) m.set(s.product_id, s.quantity_on_hand);
+    const m = new Map<string, StockSnapshot>();
+    for (const s of sheet ?? []) {
+      m.set(s.product_id, {
+        on_hand: s.quantity_on_hand,
+        reserved: s.quantity_reserved,
+        sell_price: s.sell_price,
+        location: s.location,
+      });
+    }
     return m;
   }, [sheet]);
 
@@ -296,14 +322,17 @@ function CatalogSection({
   label: string;
   rows: Product[];
   dragDisabled: boolean;
-  stockByProduct: Map<string, number>;
+  stockByProduct: Map<string, StockSnapshot>;
 }) {
   return (
     <section id={id} className="mt-4 scroll-mt-24">
       <h3 className="mb-2 text-sm font-semibold text-ink-700">{label}</h3>
-      {/* MOB-002: horizontal scroll on narrow viewports. */}
+      {/* MOB-002: horizontal scroll on narrow viewports. Min-width
+          widened from 900 → 1060 to accommodate the two additional
+          columns (Sell price, Location) folded in from the old
+          Products tab. */}
       <div className="overflow-x-auto rounded-xl border border-ink-200 bg-white">
-        <table className="w-full min-w-[900px] text-sm">
+        <table className="w-full min-w-[1060px] text-sm">
           <thead className="bg-ink-50 text-left text-xs uppercase tracking-wide text-ink-400">
             <tr>
               <th className="w-8 px-2 py-3" />
@@ -314,6 +343,11 @@ function CatalogSection({
               <th className="px-4 py-3 text-right">Purity</th>
               <th className="px-4 py-3 text-right">Content (oz)</th>
               <th className="px-4 py-3 text-right">On hand</th>
+              {/* New columns: live sell price + storage location.
+                  Both moved in from the old /admin/inventory page so
+                  Catalog is a complete single surface. */}
+              <th className="px-4 py-3 text-right">Sell</th>
+              <th className="px-4 py-3">Location</th>
               <th className="px-4 py-3 text-center">On website</th>
               <th className="px-4 py-3"></th>
             </tr>
@@ -328,7 +362,14 @@ function CatalogSection({
                   key={p.id}
                   product={p}
                   dragDisabled={dragDisabled}
-                  onHand={stockByProduct.get(p.id) ?? 0}
+                  stock={
+                    stockByProduct.get(p.id) ?? {
+                      on_hand: 0,
+                      reserved: 0,
+                      sell_price: null,
+                      location: 'main',
+                    }
+                  }
                 />
               ))}
             </tbody>
@@ -342,11 +383,11 @@ function CatalogSection({
 function SortableRow({
   product,
   dragDisabled,
-  onHand,
+  stock,
 }: {
   product: Product;
   dragDisabled: boolean;
-  onHand: number;
+  stock: StockSnapshot;
 }) {
   const qc = useQueryClient();
   const [checked, setChecked] = useState(product.show_on_website);
@@ -517,7 +558,40 @@ function SortableRow({
         {Number(product.metal_content_troy_oz).toFixed(4)}
       </td>
       <td className="px-4 py-3 text-right">
-        <StockCell productId={product.id} onHand={onHand} />
+        <StockCell
+          productId={product.id}
+          onHand={stock.on_hand}
+          reserved={stock.reserved}
+        />
+      </td>
+      {/* Live sell price from /admin/products/sheet — snapshot at page
+          load, refreshes on the same 60-second cadence. Em dash when
+          pricing rules aren't set for this product yet. */}
+      <td className="px-4 py-3 text-right font-mono text-ink-700">
+        {stock.sell_price
+          ? `$${Number(stock.sell_price).toFixed(2)}`
+          : '—'}
+      </td>
+      {/* Storage location — inline editor that hits
+          PATCH /admin/inventory/:productId/location (PROD-002). Trimmed
+          server-side; empty collapses to 'main'. No fan-out to pricing
+          queries since only the inventory listing consumes it. */}
+      <td className="px-4 py-3 text-xs">
+        <InlineField
+          value={stock.location}
+          onSave={async (next) => {
+            await apiFetch(`/admin/inventory/${product.id}/location`, {
+              method: 'PATCH',
+              body: JSON.stringify({ location: next.trim() || 'main' }),
+            });
+            await qc.invalidateQueries({
+              queryKey: ['admin', 'products', 'sheet'],
+            });
+          }}
+          maxLength={64}
+          ariaLabel="storage location"
+          displayClassName="font-mono text-ink-700"
+        />
       </td>
       <td className="px-4 py-3 text-center">
         <label className="inline-flex cursor-pointer items-center">
@@ -586,7 +660,7 @@ function DeleteButton({
   async function run() {
     if (
       !confirm(
-        `Delete "${productName}"?\n\nIt'll disappear from Products, In-stock, What we pay, the client portal, and the WordPress plugin feed. The row stays in the Catalog as "inactive" so you can restore it later.`,
+        `Delete "${productName}"?\n\nIt'll disappear from In-stock, What We Pay, the client portal, and the WordPress plugin feed. The row stays in the Catalog as "inactive" so you can restore it later.`,
       )
     )
       return;
@@ -667,13 +741,20 @@ function RestoreButton({
 function StockCell({
   productId,
   onHand,
+  reserved,
 }: {
   productId: string;
   onHand: number;
+  /** Open-invoice reservations; surfaced as a tiny "N reserved" badge. */
+  reserved: number;
 }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [delta, setDelta] = useState('');
+  // Optional audit note written onto the movement row. Folded in from
+  // the old /admin/inventory page (was a separate form field) so every
+  // adjustment keeps its "why" attached to the history.
+  const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -688,13 +769,20 @@ function StockCell({
     try {
       await apiFetch(`/admin/inventory/${productId}`, {
         method: 'PATCH',
-        body: JSON.stringify({ delta: n, notes: 'Catalog quick-adjust' }),
+        body: JSON.stringify({
+          delta: n,
+          // Prefer the operator's own note; fall back to a generic
+          // label so the movement history always has something
+          // recognizable in the 'notes' column.
+          notes: notes.trim() || 'Catalog quick-adjust',
+        }),
       });
       await Promise.all([
         qc.invalidateQueries({ queryKey: ['admin', 'products', 'sheet'] }),
         qc.invalidateQueries({ queryKey: ['admin', 'inventory'] }),
       ]);
       setDelta('');
+      setNotes('');
       setOpen(false);
     } catch (e) {
       setErr((e as Error).message ?? 'Failed');
@@ -723,10 +811,19 @@ function StockCell({
         title={
           onHand < 0
             ? 'Oversold (negative on-hand). Click to adjust.'
-            : 'Click to adjust'
+            : reserved > 0
+              ? `${reserved} reserved by open invoices. Click to adjust.`
+              : 'Click to adjust'
         }
       >
         <span className={tone}>{onHand}</span>
+        {/* Reservation badge — folded in from the old Products page.
+            Only renders when reserved > 0 so quiet rows stay quiet. */}
+        {reserved > 0 && (
+          <span className="rounded-full bg-amber-100 px-1.5 text-[9px] font-medium text-amber-700">
+            {reserved}r
+          </span>
+        )}
       </button>
     );
   }
@@ -781,6 +878,7 @@ function StockCell({
         type="button"
         onClick={() => {
           setDelta('');
+          setNotes('');
           setErr(null);
           setOpen(false);
         }}
@@ -790,6 +888,19 @@ function StockCell({
       >
         ✕
       </button>
+      {/* Optional audit note. Stays inline so the whole adjust stays in
+          one row — the expanded editor already flows onto its own line
+          via whitespace-wrap at narrower viewports. */}
+      <input
+        type="text"
+        value={notes}
+        onChange={(e) => setNotes(e.target.value)}
+        placeholder="why? (optional)"
+        maxLength={200}
+        disabled={busy}
+        className="input ml-1 h-7 w-40 py-0 text-xs"
+        aria-label="Adjustment note"
+      />
       {err && <span className="ml-1 text-[10px] text-red-700">{err}</span>}
     </div>
   );

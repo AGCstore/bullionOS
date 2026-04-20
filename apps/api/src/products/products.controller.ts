@@ -141,6 +141,7 @@ export class AdminProductsController {
         'product_id',
         'quantity_on_hand',
         'quantity_reserved',
+        'location',
         'weighted_avg_cost',
       ])
       .where(
@@ -175,6 +176,10 @@ export class AdminProductsController {
         quantity_on_hand: on_hand,
         quantity_reserved: reserved,
         available: on_hand - reserved,
+        // Storage label — 'main' by default, editable on Catalog.
+        // COALESCE at the service level also handles products with no
+        // inventory row yet, but belt-and-suspenders here too.
+        location: inv?.location ?? 'main',
       };
     });
   }
