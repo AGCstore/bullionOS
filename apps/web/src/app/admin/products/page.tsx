@@ -28,6 +28,7 @@ import {
   type DisplayCategory,
 } from '@/lib/product-category';
 import { rankProducts } from '@/lib/product-search';
+import { InlineField } from '@/components/inline-field';
 
 interface Product {
   id: string;
@@ -41,6 +42,33 @@ interface Product {
   is_active: boolean;
   show_on_website: boolean;
   sort_order: number;
+}
+
+/**
+ * Shared PATCH helper used by every inline editor on a catalog row.
+ * One place to own cache invalidation so a field edit on Catalog
+ * refreshes every other surface that renders product data.
+ */
+async function savePatch(
+  productId: string,
+  qc: ReturnType<typeof useQueryClient>,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  await apiFetch(`/admin/products/${productId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+  // The sheet endpoint (/admin/products/sheet) feeds 4 pages: inventory,
+  // in-stock sheet, buy sheet, the invoice wizard's product combobox.
+  // Invalidate all of them so the edited row propagates instantly.
+  await Promise.all([
+    qc.invalidateQueries({ queryKey: ['admin', 'products'] }),
+    qc.invalidateQueries({ queryKey: ['admin', 'products', 'sheet'] }),
+    qc.invalidateQueries({ queryKey: ['admin', 'inventory'] }),
+    qc.invalidateQueries({ queryKey: ['admin', 'product', productId] }),
+    qc.invalidateQueries({ queryKey: ['client', 'prices'] }),
+    qc.invalidateQueries({ queryKey: ['client', 'in-stock'] }),
+  ]);
 }
 
 /**
@@ -387,9 +415,14 @@ function SortableRow({
         </Link>
       </td>
       <td className="px-4 py-3">
-        <Link href={`/admin/products/${product.id}`} className="hover:underline">
-          {product.name}
-        </Link>
+        <InlineField
+          value={product.name}
+          onSave={(next) => savePatch(product.id, qc, { name: next })}
+          maxLength={200}
+          ariaLabel="product name"
+          displayClassName="font-medium"
+          validate={(v) => (v.trim().length === 0 ? 'Name required' : null)}
+        />
         {!product.is_active && (
           <span className="ml-2 rounded-full bg-ink-100 px-2 py-0.5 text-[10px] font-medium text-ink-500">
             inactive
@@ -397,12 +430,46 @@ function SortableRow({
         )}
       </td>
       <td className="px-4 py-3 text-right font-mono">
-        {Number(product.weight_troy_oz).toFixed(4)}
+        <InlineField
+          value={String(product.weight_troy_oz)}
+          onSave={(next) =>
+            savePatch(product.id, qc, { weight_troy_oz: Number(next) })
+          }
+          type="number"
+          step="0.0001"
+          min={0.00000001}
+          ariaLabel="weight"
+          format={(v) => Number(v).toFixed(4)}
+          validate={(v) => {
+            const n = Number(v);
+            if (!Number.isFinite(n) || n <= 0) return 'Must be > 0';
+            return null;
+          }}
+        />
       </td>
       <td className="px-4 py-3 text-right font-mono">
-        {Number(product.purity).toFixed(4)}
+        <InlineField
+          value={String(product.purity)}
+          onSave={(next) =>
+            savePatch(product.id, qc, { purity: Number(next) })
+          }
+          type="number"
+          step="0.0001"
+          min={0.0001}
+          max={1}
+          ariaLabel="purity"
+          format={(v) => Number(v).toFixed(4)}
+          validate={(v) => {
+            const n = Number(v);
+            if (!Number.isFinite(n) || n <= 0 || n > 1)
+              return 'Between 0 and 1';
+            return null;
+          }}
+        />
       </td>
-      <td className="px-4 py-3 text-right font-mono">
+      <td className="px-4 py-3 text-right font-mono text-ink-500">
+        {/* Content is derived (weight × purity) — read-only; auto-updates
+            when weight or purity saves. */}
         {Number(product.metal_content_troy_oz).toFixed(4)}
       </td>
       <td className="px-4 py-3 text-center">

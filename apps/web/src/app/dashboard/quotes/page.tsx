@@ -3,6 +3,12 @@
 import { useQuery } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api-client';
 
+/**
+ * Client-facing shape for a locked quote. Intentionally *does not*
+ * include premium_type / premium_value — those are the buy/sell formula
+ * inputs and stay on the backend. The unit_price + line_total fields
+ * are the derived numbers the customer actually cares about.
+ */
 interface Quote {
   id: string;
   product_id: string;
@@ -14,8 +20,6 @@ interface Quote {
   spot_price_per_oz: string;
   unit_price: string;
   line_total: string;
-  premium_type: 'percent' | 'flat';
-  premium_value: string;
   expires_at: string;
   converted_invoice_id: string | null;
   created_at: string;

@@ -61,12 +61,30 @@ export class PriceQuotesService {
   }
 
   listForClientUser(userId: string) {
+    // Deliberately list columns instead of selectAll('q') — the quote
+    // rows carry premium_type + premium_value (our buy/sell formula)
+    // which must never hit the client. Clients see the *result* (unit
+    // price, line total) but not the formula that produced it.
     return this.resolveClientForUser(userId).then((clientId) =>
       this.db
         .selectFrom('price_quotes as q')
         .innerJoin('products as p', 'p.id', 'q.product_id')
-        .selectAll('q')
-        .select(['p.name as product_name', 'p.sku as product_sku', 'p.metal as product_metal'])
+        .select([
+          'q.id',
+          'q.client_id',
+          'q.product_id',
+          'q.side',
+          'q.quantity',
+          'q.spot_price_per_oz',
+          'q.unit_price',
+          'q.line_total',
+          'q.expires_at',
+          'q.converted_invoice_id',
+          'q.created_at',
+          'p.name as product_name',
+          'p.sku as product_sku',
+          'p.metal as product_metal',
+        ])
         .where('q.client_id', '=', clientId)
         .orderBy('q.created_at', 'desc')
         .limit(100)

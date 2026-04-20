@@ -72,7 +72,26 @@ export class InvoicesService {
     if (row.client_id !== clientId) {
       throw new ForbiddenException('Not your invoice');
     }
-    return row;
+    // Strip premium_type + premium_value from line items — these snapshot
+    // our buy/sell formula at invoice-create time and must never hit the
+    // client (they'd reveal our margin math per product). Clients see the
+    // final unit_price + line_total; the derivation stays server-side.
+    return {
+      ...row,
+      line_items: row.line_items.map((l) => {
+        // Intentional rebuild without the two sensitive keys. Keeping
+        // it as a mapper (vs delete-on-object) avoids mutating the
+        // admin-cached copy if the service ever gets a request cache.
+        const {
+          premium_type: _pt,
+          premium_value: _pv,
+          ...rest
+        } = l;
+        void _pt;
+        void _pv;
+        return rest as typeof l;
+      }),
+    };
   }
 
   async list(
