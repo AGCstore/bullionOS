@@ -467,13 +467,112 @@ function SortableRow({
         {error && <div className="mt-1 text-[10px] text-red-700">{error}</div>}
       </td>
       <td className="px-4 py-3 text-right">
-        <Link
-          href={`/admin/products/${product.id}`}
-          className="text-xs text-ink-600 hover:text-ink-900"
-        >
-          Edit →
-        </Link>
+        <div className="flex items-center justify-end gap-2 text-xs">
+          <Link
+            href={`/admin/products/${product.id}`}
+            className="text-ink-600 hover:text-ink-900"
+          >
+            Edit →
+          </Link>
+          {product.is_active ? (
+            <DeleteButton productId={product.id} productName={product.name} />
+          ) : (
+            <RestoreButton productId={product.id} productName={product.name} />
+          )}
+        </div>
       </td>
     </tr>
+  );
+}
+
+/**
+ * Soft-delete the product. The backend flips is_active=false, which
+ * removes the row from every list query that passes `onlyActive: true`
+ * (the sheet endpoint, /public/what-we-pay, /public/in-stock, the
+ * invoice wizard combobox, the WordPress plugin feeds). The Catalog
+ * keeps the row visible with an "inactive" badge so admins can restore
+ * it without a DB round-trip.
+ *
+ * Hard-delete is not exposed in the UI — historical invoices are safe
+ * per migration 010 (product_id SET NULL), but accidental hard-delete
+ * is unrecoverable from the UI, so we gate it behind a direct API call
+ * or a future "Permanently delete" flow.
+ */
+function DeleteButton({
+  productId,
+  productName,
+}: {
+  productId: string;
+  productName: string;
+}) {
+  const qc = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  async function run() {
+    if (
+      !confirm(
+        `Delete "${productName}"?\n\nIt'll disappear from Products, In-stock, What we pay, the client portal, and the WordPress plugin feed. The row stays in the Catalog as "inactive" so you can restore it later.`,
+      )
+    )
+      return;
+    setBusy(true);
+    try {
+      await apiFetch(`/admin/products/${productId}`, { method: 'DELETE' });
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['admin', 'products'] }),
+        qc.invalidateQueries({ queryKey: ['admin', 'products', 'sheet'] }),
+        qc.invalidateQueries({ queryKey: ['admin', 'inventory'] }),
+        qc.invalidateQueries({ queryKey: ['client', 'prices'] }),
+        qc.invalidateQueries({ queryKey: ['client', 'in-stock'] }),
+      ]);
+    } catch (err) {
+      alert(err instanceof ApiError ? err.message : 'Delete failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <button
+      onClick={run}
+      disabled={busy}
+      className="rounded-md border border-red-200 px-2 py-0.5 text-red-700 hover:bg-red-50 disabled:opacity-60"
+    >
+      {busy ? '…' : 'Delete'}
+    </button>
+  );
+}
+
+/**
+ * Flip is_active back to true. Catalog rows with the "inactive" badge
+ * get this instead of the Delete button so a mistaken removal is a
+ * one-click undo.
+ */
+function RestoreButton({
+  productId,
+  productName,
+}: {
+  productId: string;
+  productName: string;
+}) {
+  const qc = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  async function run() {
+    setBusy(true);
+    try {
+      await savePatch(productId, qc, { is_active: true });
+    } catch (err) {
+      alert(err instanceof ApiError ? err.message : 'Restore failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <button
+      onClick={run}
+      disabled={busy}
+      title={`Restore "${productName}" — makes it visible everywhere again`}
+      className="rounded-md border border-green-300 px-2 py-0.5 text-green-800 hover:bg-green-50 disabled:opacity-60"
+    >
+      {busy ? '…' : 'Restore'}
+    </button>
   );
 }

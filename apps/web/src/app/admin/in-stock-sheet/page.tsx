@@ -331,7 +331,32 @@ function SheetRowView({
             validate={(v) => (v.trim().length === 0 ? 'Name required' : null)}
           />
         </div>
-        <div className="font-mono text-xs text-ink-400">{row.sku}</div>
+        <div className="font-mono text-xs text-ink-400">
+          {row.sku}
+          <span className="ml-2">
+            · purity{' '}
+            <InlineField
+              value={String(row.purity)}
+              onSave={async (next) => {
+                await savePatch(row.product_id, qc, { purity: Number(next) });
+                onEdited();
+              }}
+              type="number"
+              step="0.0001"
+              min={0.0001}
+              max={1}
+              ariaLabel="purity"
+              format={(v) => Number(v).toFixed(4)}
+              validate={(v) => {
+                const n = Number(v);
+                if (!Number.isFinite(n) || n <= 0 || n > 1)
+                  return '0 < x ≤ 1';
+                return null;
+              }}
+              inputClassName="w-20"
+            />
+          </span>
+        </div>
       </td>
       <td className="px-4 py-3 text-right font-mono font-semibold">{row.available}</td>
       <td className="px-4 py-3 text-right font-mono text-ink-900">
