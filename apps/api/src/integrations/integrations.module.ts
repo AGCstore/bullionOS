@@ -1,5 +1,4 @@
 import { forwardRef, Global, Module } from '@nestjs/common';
-import { ScheduleModule } from '@nestjs/schedule';
 import { EasyPostAdapter } from './adapters/easypost.adapter';
 import { FedexAdapter } from './adapters/fedex.adapter';
 import { UpsAdapter } from './adapters/ups.adapter';
@@ -25,12 +24,10 @@ import { CalendarModule } from '../calendar/calendar.module';
   // integration credentials, and this controller needs CalendarService for
   // the per-provider "Test connection" button.
   //
-  // ScheduleModule.forRoot() boots the cron scheduler so @Cron-decorated
-  // methods on ShipmentPollService (and any future scheduled services in
-  // this module) actually fire. Already called in BackupsModule, but
-  // @nestjs/schedule is safe to initialize once per module it's used in —
-  // internally it's a singleton registry.
-  imports: [ScheduleModule.forRoot(), MetalsModule, forwardRef(() => CalendarModule)],
+  // ScheduleModule.forRoot() lives in AppModule — calling it here would
+  // create a duplicate scheduler registry and the @Cron decorator on
+  // ShipmentPollService silently wouldn't fire.
+  imports: [MetalsModule, forwardRef(() => CalendarModule)],
   controllers: [IntegrationsController, CarrierWebhooksController],
   providers: [
     IntegrationsService,

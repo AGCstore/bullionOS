@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { LoggerModule } from 'nestjs-pino';
 import { loadEnv } from './config/env';
@@ -64,6 +65,12 @@ import { AllExceptionsFilter } from './common/filters/http-exception.filter';
     ThrottlerModule.forRoot([
       { name: 'default', ttl: 60_000, limit: 100 },
     ]),
+    // App-wide cron scheduler. Registered ONCE at the root — feature
+    // modules that use @Cron (BackupsService for nightly dumps,
+    // ShipmentPollService for 2-min carrier polls) rely on this.
+    // Calling ScheduleModule.forRoot() in multiple modules leads to
+    // the decorators failing to wire up to the active registry.
+    ScheduleModule.forRoot(),
     DatabaseModule,
     RedisModule,
     AuthModule,

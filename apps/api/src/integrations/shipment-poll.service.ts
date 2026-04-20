@@ -55,7 +55,13 @@ export class ShipmentPollService {
     @Inject(KYSELY) private readonly db: Kysely<DB>,
     private readonly carrier: CarrierService,
     private readonly ingest: ShipmentIngestService,
-  ) {}
+  ) {
+    // Boot-time marker so Railway logs show unambiguously whether the
+    // class was instantiated. If this doesn't appear, the module
+    // wiring is broken; if it appears but "Scheduled poll" never
+    // does, the @Cron decorator isn't wired to the scheduler.
+    this.logger.log('ShipmentPollService initialized — will poll every 2 minutes');
+  }
 
   /**
    * Fires every 2 minutes. UTC — the cron library's default TZ is
