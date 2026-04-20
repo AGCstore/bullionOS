@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -13,11 +14,15 @@ import { CreateShipmentDto } from './dto/create-shipment.dto';
 import { UpdateShipmentDto } from './dto/update-shipment.dto';
 import { ShipmentsService, trackingUrlFor } from './shipments.service';
 import { DELIVERY_SPEEDS } from './delivery-speeds';
+import { ShipmentPollService } from '../integrations/shipment-poll.service';
 
 @Controller('admin/shipments')
 @Roles('admin', 'staff')
 export class AdminShipmentsController {
-  constructor(private readonly service: ShipmentsService) {}
+  constructor(
+    private readonly service: ShipmentsService,
+    private readonly poll: ShipmentPollService,
+  ) {}
 
   /**
    * Expose the carrier→delivery-speed whitelist so the web UI can build
@@ -59,6 +64,18 @@ export class AdminShipmentsController {
     @Body() dto: UpdateShipmentDto,
   ) {
     return this.service.update(id, dto);
+  }
+
+  /**
+   * Force a carrier-poll of every open shipment right now, instead of
+   * waiting for the 2-min cron. Useful when the operator just entered
+   * a tracking number and wants to see the latest status without the
+   * lag. Returns counts so the UI can flash a "N updated" toast.
+   */
+  @Post('poll-now')
+  @HttpCode(200)
+  async pollNow() {
+    return this.poll.pollOnce();
   }
 }
 

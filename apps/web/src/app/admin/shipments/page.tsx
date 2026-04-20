@@ -33,6 +33,7 @@ const STATUS_OPTIONS = [
 ] as const;
 
 export default function AdminShipmentsPage() {
+  const qc = useQueryClient();
   const { data } = useQuery({
     queryKey: ['admin', 'shipments'],
     queryFn: () => apiFetch<AdminShipment[]>('/admin/shipments'),
@@ -47,12 +48,57 @@ export default function AdminShipmentsPage() {
     staleTime: Infinity,
   });
 
+  // Manual carrier-poll trigger. Background cron runs every 2 min; this
+  // button is for operators who just entered a tracking number and want
+  // immediate confirmation the carrier sees it.
+  const [polling, setPolling] = useState(false);
+  const [pollFlash, setPollFlash] = useState<string | null>(null);
+  async function pollNow() {
+    setPolling(true);
+    setPollFlash(null);
+    try {
+      const res = await apiFetch<{
+        scanned: number;
+        updated: number;
+        failed: number;
+        skipped: number;
+      }>('/admin/shipments/poll-now', { method: 'POST' });
+      setPollFlash(
+        `Scanned ${res.scanned} · updated ${res.updated}` +
+          (res.failed > 0 ? ` · ${res.failed} failed` : ''),
+      );
+      await qc.invalidateQueries({ queryKey: ['admin', 'shipments'] });
+    } catch (err) {
+      setPollFlash(err instanceof ApiError ? err.message : 'Poll failed');
+    } finally {
+      setPolling(false);
+    }
+  }
+
   return (
     <div className="mx-auto max-w-6xl">
-      <h1 className="text-2xl font-semibold">Shipments</h1>
-      <p className="mt-1 text-sm text-ink-400">
-        Shipments are created from the invoice detail page.
-      </p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold">Shipments</h1>
+          <p className="mt-1 text-sm text-ink-400">
+            Shipments are created from the invoice detail page. Status
+            auto-refreshes from the carrier every 2 minutes.
+          </p>
+        </div>
+        <div className="flex flex-col items-end gap-1">
+          <button
+            onClick={pollNow}
+            disabled={polling}
+            className="rounded-md border border-ink-200 px-3 py-1.5 text-xs font-medium hover:bg-ink-50 disabled:opacity-60"
+            title="Ask every carrier for the latest tracking now, instead of waiting for the 2-min cron."
+          >
+            {polling ? 'Polling…' : 'Refresh from carriers'}
+          </button>
+          {pollFlash && (
+            <span className="text-[11px] text-ink-500">{pollFlash}</span>
+          )}
+        </div>
+      </div>
 
       {/* MOB-002: wide table scrolls horizontally on narrow viewports
           instead of clipping. min-w keeps columns legible. */}
