@@ -6,7 +6,7 @@
  *                    renders them as Elementor widgets or shortcodes on
  *                    atlantagoldandcoin.com. Refreshes every 5 minutes
  *                    between 8 AM and 6 PM Eastern.
- * Version:           1.0.0
+ * Version:           1.1.0
  * Author:            Atlanta Gold and Coin
  * License:           Proprietary
  * Text Domain:       agc-inventory
@@ -20,7 +20,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-define( 'AGC_INV_VERSION', '1.0.0' );
+define( 'AGC_INV_VERSION', '1.1.0' );
 // Default AGC Desk API base. Operator can override on the settings page.
 define( 'AGC_INV_DEFAULT_BASE', 'https://agc-api-production.up.railway.app/api/v1' );
 // Server-side transient cache TTL.
