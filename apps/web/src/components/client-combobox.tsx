@@ -215,6 +215,50 @@ function score(
   const emailLocal = email.split('@')[0] ?? '';
   const phoneDigits = (c.phone ?? '').replace(/\D/g, '');
 
+  // Filter first, then score. Tightened Apr 2026 — was returning
+  // rows that only partially matched (e.g. "David Williams" not
+  // surfacing because of upstream list truncation, and in general
+  // multi-token queries were letting through weak matches).
+  //
+  // Rules:
+  //   - Multi-token query (e.g. "David Williams"): require the FULL
+  //     string to appear contiguously somewhere meaningful (personal
+  //     name, company, email local-part) OR require every token to
+  //     appear in the SAME field. The any-token-anywhere rule was
+  //     too loose.
+  //   - Single token: any field match counts.
+  //   - Phone digits match separately — numeric queries go through
+  //     the phoneDigits path regardless of token count.
+  const multiToken = tokens.length > 1;
+  if (multiToken) {
+    const fullInPersonal = personal.length > 0 && personal.includes(q);
+    const fullInCompany = company.length > 0 && company.includes(q);
+    const fullInEmailLocal = emailLocal.length > 0 && emailLocal.includes(q);
+    const allTokensInOneField = [personal, company, emailLocal].some((field) =>
+      field.length > 0 && tokens.every((t) => field.includes(t)),
+    );
+    const phoneHit = digitsQ.length > 0 && phoneDigits.includes(digitsQ);
+    if (
+      !fullInPersonal &&
+      !fullInCompany &&
+      !fullInEmailLocal &&
+      !allTokensInOneField &&
+      !phoneHit
+    ) {
+      return 0;
+    }
+  } else {
+    const phoneHit = digitsQ.length > 0 && phoneDigits.includes(digitsQ);
+    if (
+      !personal.includes(q) &&
+      !company.includes(q) &&
+      !email.includes(q) &&
+      !phoneHit
+    ) {
+      return 0;
+    }
+  }
+
   let s = 0;
   if (emailLocal && emailLocal.includes(q)) s += 100;
 

@@ -49,10 +49,18 @@ export class ClientsService {
     if (!search || !search.trim()) {
       let q = this.db.selectFrom('clients').selectAll();
       if (opts.client_type) q = q.where('client_type', '=', opts.client_type);
+      // Limit raised 500 → 2000. The invoice wizard's client combobox
+      // is a client-side fuzzy picker over this full payload; when AGC
+      // grew past 500 clients alphabetically, names past "V..." fell
+      // off the list and became invisible in the picker. 2000 gives
+      // years of headroom at typical growth (~540 → ~2000 would be
+      // roughly a 3–4× scale). When we outgrow 2000 we should switch
+      // the combobox to call the server on keystroke (the endpoint's
+      // ?q= path already exists and uses proper trigram ranking).
       clients = (await q
         .orderBy('last_name')
         .orderBy('first_name')
-        .limit(500)
+        .limit(2000)
         .execute()) as typeof clients;
     } else {
       const term = search.trim().toLowerCase();

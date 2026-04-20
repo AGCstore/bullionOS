@@ -209,10 +209,25 @@ export function ProductCombobox({
 }
 
 /**
- * Fuzzy scorer. Tokenizes the query on whitespace and requires every
- * token to match somewhere; otherwise the row is dropped. Score biases
- * toward SKU hits and prefix matches so typing "AU-E" promotes Eagles to
- * the top instantly.
+ * Fuzzy scorer. Tokenizes the query on whitespace.
+ *
+ * Matching rule (tightened Apr 2026):
+ *   - Single-token query: token must appear as a substring of
+ *     sku/name/metal (the old "match anywhere" behavior).
+ *   - Multi-token query: the FULL query string must appear as a
+ *     contiguous substring in the name OR the sku. The previous
+ *     "any token anywhere" rule was too loose — "1 oz" would
+ *     incorrectly match "American Gold Eagle - 1/10 oz" because the
+ *     SKU contained a "1" (in 010) and the name contained "oz",
+ *     without those two tokens ever appearing next to each other.
+ *
+ * This tradeoff: typing "eagle" finds every Eagle, typing "american
+ * eagle" specifically finds "American Eagle" (not American Gold
+ * Eagle). When the operator wants a broader sweep they can use a
+ * single distinguishing token.
+ *
+ * Score biases toward SKU hits and prefix matches so typing "AU-E"
+ * promotes Eagles to the top instantly.
  */
 function rank(
   products: ComboboxProduct[],
@@ -223,22 +238,27 @@ function rank(
     return [...products].sort((a, b) => a.name.localeCompare(b.name)).slice(0, 200);
   }
   const tokens = q.split(/\s+/).filter(Boolean);
+  const multiToken = tokens.length > 1;
   const scored: Array<{ p: ComboboxProduct; s: number }> = [];
   for (const p of products) {
     const sku = p.sku.toLowerCase();
     const name = p.name.toLowerCase();
     const metal = p.metal.toLowerCase();
     let score = 0;
-    let matchedAll = true;
 
-    // Every token must appear somewhere.
-    for (const t of tokens) {
-      if (!sku.includes(t) && !name.includes(t) && !metal.includes(t)) {
-        matchedAll = false;
-        break;
+    if (multiToken) {
+      // Contiguous-substring gate: the full query must appear
+      // unbroken in either the name or the sku. metal is excluded
+      // because metal fields are single words and any multi-token
+      // query using metal as one token will also contain another
+      // token that must sit right next to it in name/sku.
+      if (!name.includes(q) && !sku.includes(q)) continue;
+    } else {
+      // Single-token — accept anywhere.
+      if (!sku.includes(q) && !name.includes(q) && !metal.includes(q)) {
+        continue;
       }
     }
-    if (!matchedAll) continue;
 
     if (sku.includes(q)) score += 100;
     if (sku.startsWith(q)) score += 15;

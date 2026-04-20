@@ -125,8 +125,14 @@ export default function NewInvoicePage() {
   const searchParams = useSearchParams();
   const fromId = searchParams.get('from');
   const initialDraftId = searchParams.get('draftId');
+  // `?client_id=<uuid>` — deep-link from the client detail page's
+  // "New invoice" button. Pre-selects the client in the combobox so
+  // the operator doesn't have to re-pick them. Ignored when `from` or
+  // `draftId` is set because those flows already carry a client_id in
+  // the source invoice payload.
+  const initialClientId = searchParams.get('client_id') ?? '';
 
-  const [clientId, setClientId] = useState<string>('');
+  const [clientId, setClientId] = useState<string>(initialClientId);
   const [type, setType] = useState<'sell' | 'buy'>('sell');
   const [lines, setLines] = useState<DraftLine[]>([blankLine()]);
   const [payments, setPayments] = useState<PaymentLeg[]>([blankPayment()]);
