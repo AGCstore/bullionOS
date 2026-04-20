@@ -4,6 +4,33 @@ WordPress plugin that renders live AGC Desk inventory and buy prices on
 atlantagoldandcoin.com. Two Elementor widgets, two shortcodes, one HTTP
 round-trip per minute per WP instance (server-side transient cache).
 
+## Theme (v2)
+
+Dark-navy + gold palette. Locked to five brand colors so the output is
+consistent across every metal section.
+
+| Token | Hex | Role |
+|---|---|---|
+| `--agc-bg` | `#05060d` | Near-black navy, full-bleed background |
+| `--agc-ink` | `#ede8df` | Off-white headings + primary readable text |
+| `--agc-muted` | `#9e9585` | Muted warm gray, body text + table headers |
+| `--agc-gold` | `#d4a017` | Primary gold — buttons, borders, highlights, prices |
+| `--agc-gold-soft` | `#f0d58a` | Accent gold — hover states, soft highlights |
+
+Typography: **Instrument Sans** (Google Fonts, 400/500/600/700). Loaded
+from Google's CDN with `display=swap` so the LCP is never blank. Tabular
+numerals used for quantities + prices to keep the column aligned.
+
+To override any token without editing the plugin, drop a higher-specificity
+rule in your theme:
+
+```css
+.agc-inv-wrap {
+    --agc-gold: #c08e10;      /* darker brass, for example */
+    --agc-bg:   #000000;      /* absolute black */
+}
+```
+
 ## Install
 
 1. Zip this directory (`agc-inventory/`).

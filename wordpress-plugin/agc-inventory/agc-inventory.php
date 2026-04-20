@@ -184,10 +184,19 @@ function agc_inv_fetch( $path ) {
 // ─── Assets ────────────────────────────────────────────────────────────────
 
 add_action( 'wp_enqueue_scripts', function () {
+    // Instrument Sans from Google Fonts. Registered as a standalone style
+    // so our main stylesheet can depend on it and hoist the @font-face
+    // declarations into <head> before our selectors paint.
+    wp_register_style(
+        'agc-inv-font',
+        'https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&display=swap',
+        [],
+        AGC_INV_VERSION
+    );
     wp_register_style(
         'agc-inv',
         plugins_url( 'assets/agc-inventory.css', __FILE__ ),
-        [],
+        [ 'agc-inv-font' ],
         AGC_INV_VERSION
     );
     wp_register_script(
