@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiFetch } from '@/lib/api-client';
+import { apiFetch, ApiError } from '@/lib/api-client';
 import { PageTint } from '@/components/page-tint';
 import { InlinePriceEditor, type PricingRule } from '@/components/inline-price-editor';
 import { useLiveSpot } from '@/lib/use-live-spot';
@@ -41,21 +41,28 @@ export default function InStockSheetPage() {
   const qc = useQueryClient();
   const { spot } = useLiveSpot();
   const [search, setSearch] = useState('');
+  // Show-out-of-stock toggle. Default OFF because the "sheet" is
+  // primarily a picklist for what's on the shelf today; operators
+  // flip this on when doing physical-count / receive-new-stock work.
+  const [showOutOfStock, setShowOutOfStock] = useState(false);
   const { data, isLoading } = useQuery({
     queryKey: ['admin', 'products', 'sheet'],
     queryFn: () => apiFetch<SheetRow[]>('/admin/products/sheet'),
     refetchInterval: 60_000,
   });
 
-  // Drop non-stocked rows before the ranker runs so the match count
-  // reflects what the operator actually sees.
-  const inStockRows = useMemo(
-    () => (data ?? []).filter((r) => r.available > 0),
-    [data],
+  // Filter rows by the stock toggle before the ranker runs so the
+  // match count reflects what the operator actually sees.
+  const visibleRows = useMemo(
+    () =>
+      (data ?? []).filter((r) =>
+        showOutOfStock ? true : r.available > 0,
+      ),
+    [data, showOutOfStock],
   );
   const filtered = useMemo(
-    () => rankProducts(inStockRows, search),
-    [inStockRows, search],
+    () => rankProducts(visibleRows, search),
+    [visibleRows, search],
   );
 
   const bySection = useMemo(() => {
@@ -120,11 +127,11 @@ export default function InStockSheetPage() {
       <div className="mx-auto max-w-6xl">
         <div className="flex items-start justify-between">
           <div>
-            <h1 className="text-2xl font-semibold">In-stock sheet</h1>
+            <h1 className="text-2xl font-semibold">In Stock Sheet</h1>
             <p className="mt-1 text-sm text-ink-400">
               Grouped by product family. Click any price column header to jump
               sections. Edit premiums inline — saves to the product&rsquo;s pricing
-              rule.
+              rule. Use the +/- on the Qty column to adjust stock.
             </p>
           </div>
           <div className="text-right text-xs text-ink-400">
@@ -140,6 +147,19 @@ export default function InStockSheetPage() {
             className="input w-full md:w-96"
             aria-label="Search in-stock products"
           />
+          {/* Toggle: include out-of-stock SKUs in the sheet. Flips the
+              filter above; zero-stock rows render dimmed so the operator
+              can still adjust them without confusing them for stocked
+              items. */}
+          <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-ink-600">
+            <input
+              type="checkbox"
+              checked={showOutOfStock}
+              onChange={(e) => setShowOutOfStock(e.target.checked)}
+              className="h-4 w-4 rounded border-ink-300"
+            />
+            Show out-of-stock
+          </label>
           {search.trim() && (
             <span className="text-xs text-ink-400">
               {filtered.length} match{filtered.length === 1 ? '' : 'es'}
@@ -219,7 +239,9 @@ export default function InStockSheetPage() {
 
         {!isLoading && sectionsToRender.length === 0 && (
           <div className="mt-8 rounded-xl border border-ink-200 bg-white p-12 text-center text-sm text-ink-400">
-            Nothing in stock right now.
+            {showOutOfStock
+              ? 'No products match the current filter.'
+              : 'Nothing in stock right now. Toggle "Show out-of-stock" to see zero-stock SKUs.'}
           </div>
         )}
       </div>
@@ -301,8 +323,15 @@ function SheetRowView({
     background: isDragging ? '#f7f7f8' : undefined,
   };
 
+  // Dim out-of-stock rows so operators see them clearly as "not on the
+  // shelf" even though they're surfaced for bulk quantity edits.
+  const outOfStock = row.available <= 0;
   return (
-    <tr ref={setNodeRef} style={style} className="border-t border-ink-200 align-top">
+    <tr
+      ref={setNodeRef}
+      style={style}
+      className={`border-t border-ink-200 align-top ${outOfStock ? 'bg-ink-50/40 text-ink-500' : ''}`}
+    >
       <td className="px-2 py-3 text-center">
         <button
           {...attributes}
@@ -358,7 +387,13 @@ function SheetRowView({
           </span>
         </div>
       </td>
-      <td className="px-4 py-3 text-right font-mono font-semibold">{row.available}</td>
+      <td className="px-4 py-3 text-right font-mono font-semibold">
+        <QtyAdjuster
+          productId={row.product_id}
+          available={row.available}
+          onChanged={onEdited}
+        />
+      </td>
       <td className="px-4 py-3 text-right font-mono text-ink-900">
         {row.buy_price !== null ? `$${Number(row.buy_price).toFixed(2)}` : '—'}
       </td>
@@ -377,6 +412,165 @@ function SheetRowView({
         )}
       </td>
     </tr>
+  );
+}
+
+/**
+ * Inline stock adjuster for the In Stock Sheet row.
+ *
+ * Collapsed: shows the available count; −/+ icons on either side bump
+ * by one (optimistic-ish — invalidates the sheet query on success so
+ * the number re-flows from the server).
+ *
+ * Expanded: operator clicks the number → numeric input for arbitrary
+ * deltas + an optional note. Same PATCH /admin/inventory/:productId
+ * endpoint the Catalog page uses; the "why" note lands in the movement
+ * history for audit.
+ *
+ * Negative available renders red as a quiet "oversold" signal — only
+ * possible if the admin oversell override has been used on an invoice.
+ */
+function QtyAdjuster({
+  productId,
+  available,
+  onChanged,
+}: {
+  productId: string;
+  available: number;
+  onChanged: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [delta, setDelta] = useState('');
+  const [notes, setNotes] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function apply(raw: string) {
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n === 0 || !Number.isInteger(n)) {
+      setErr('non-zero integer');
+      return;
+    }
+    setErr(null);
+    setBusy(true);
+    try {
+      await apiFetch(`/admin/inventory/${productId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          delta: n,
+          notes: notes.trim() || 'In-stock sheet adjust',
+        }),
+      });
+      onChanged();
+      setDelta('');
+      setNotes('');
+      setOpen(false);
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : 'Failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!open) {
+    const tone =
+      available > 0
+        ? 'text-ink-900'
+        : available < 0
+          ? 'font-semibold text-red-700'
+          : 'text-ink-400';
+    return (
+      <span className="inline-flex items-center gap-1 justify-end">
+        <button
+          type="button"
+          onClick={() => apply('-1')}
+          disabled={busy}
+          aria-label="Decrement stock"
+          className="rounded-md border border-ink-200 px-1 text-xs text-ink-500 hover:bg-red-50 hover:text-red-700 disabled:opacity-60"
+        >
+          −
+        </button>
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className={`rounded-md border border-transparent px-2 hover:border-ink-200 ${tone}`}
+          title={
+            available < 0
+              ? 'Oversold (negative on-hand). Click for a larger adjustment.'
+              : 'Click for a larger adjustment'
+          }
+        >
+          {available}
+        </button>
+        <button
+          type="button"
+          onClick={() => apply('+1')}
+          disabled={busy}
+          aria-label="Increment stock"
+          className="rounded-md border border-ink-200 px-1 text-xs text-ink-500 hover:bg-green-50 hover:text-green-700 disabled:opacity-60"
+        >
+          +
+        </button>
+      </span>
+    );
+  }
+
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1 justify-end">
+      <input
+        type="number"
+        step="1"
+        value={delta}
+        onChange={(e) => setDelta(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            apply(delta);
+          } else if (e.key === 'Escape') {
+            setDelta('');
+            setNotes('');
+            setOpen(false);
+          }
+        }}
+        placeholder="+3 / -1"
+        className="input h-7 w-16 py-0 text-right font-mono text-xs"
+        disabled={busy}
+        autoFocus
+      />
+      <input
+        type="text"
+        value={notes}
+        onChange={(e) => setNotes(e.target.value)}
+        placeholder="why? (optional)"
+        maxLength={200}
+        disabled={busy}
+        className="input h-7 w-32 py-0 text-xs"
+        aria-label="Adjustment note"
+      />
+      <button
+        type="button"
+        onClick={() => apply(delta)}
+        disabled={busy || delta === ''}
+        className="rounded-md bg-ink-900 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-ink-800 disabled:opacity-60"
+      >
+        {busy ? '…' : 'Save'}
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          setDelta('');
+          setNotes('');
+          setErr(null);
+          setOpen(false);
+        }}
+        disabled={busy}
+        aria-label="Cancel"
+        className="rounded-md border border-ink-200 px-1 text-[11px] text-ink-500 hover:bg-ink-50"
+      >
+        ✕
+      </button>
+      {err && <span className="text-[10px] text-red-700">{err}</span>}
+    </span>
   );
 }
 

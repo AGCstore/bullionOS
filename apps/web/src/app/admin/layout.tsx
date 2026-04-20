@@ -72,7 +72,7 @@ const NAV_ITEMS: NavEntry[] = [
     ],
   },
   { href: '/admin/shipments', label: 'Shipments' },
-  { href: '/admin/in-stock-sheet', label: 'In stock sheet' },
+  { href: '/admin/in-stock-sheet', label: 'In Stock Sheet' },
   { href: '/admin/buy-sheet', label: 'What We Pay' },
   { href: '/admin/products', label: 'Catalog' },
   {
