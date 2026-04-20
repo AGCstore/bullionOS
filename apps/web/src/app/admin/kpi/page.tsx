@@ -213,7 +213,9 @@ function WholesaleOwedCard() {
             Total owed by all wholesalers
           </h2>
           <div className="mt-1 font-mono text-3xl font-semibold text-ink-900">
-            {isLoading ? '…' : `$${money(Number(data?.total_owed ?? 0))}`}
+            {/* money() already prepends "$" — an extra literal "$"
+                here was producing "$$1,234". */}
+            {isLoading ? '…' : money(Number(data?.total_owed ?? 0))}
           </div>
           <div className="mt-0.5 text-xs text-ink-500">
             {data?.by_client.length ?? 0} wholesaler
@@ -245,7 +247,8 @@ function WholesaleOwedCard() {
                 {c.invoice_count} invoice{c.invoice_count === 1 ? '' : 's'}
               </span>
               <span className="ml-auto font-mono text-ink-900">
-                ${money(Number(c.owed))}
+                {/* money() already prepends "$" — drop the literal. */}
+                {money(Number(c.owed))}
               </span>
             </li>
           ))}
