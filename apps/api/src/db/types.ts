@@ -365,6 +365,26 @@ export interface DailyUpdateAttachmentsTable {
 export type DailyUpdateAttachment = Selectable<DailyUpdateAttachmentsTable>;
 export type NewDailyUpdateAttachment = Insertable<DailyUpdateAttachmentsTable>;
 
+// ===== KPI manual entries (migration 027) =====
+
+export type KpiManualCategory = 'sales' | 'purchases' | 'wholesale';
+
+export interface KpiManualEntriesTable {
+  id: Generated<string>;
+  /** First day of the month this entry is booked against (YYYY-MM-01). */
+  bucket_month: ColumnType<Date, Date | string, Date | string>;
+  category: KpiManualCategory;
+  /** Required in practice for wholesale, optional at the DB layer. */
+  client_id: string | null;
+  amount: Numeric;
+  notes: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+export type KpiManualEntry = Selectable<KpiManualEntriesTable>;
+export type NewKpiManualEntry = Insertable<KpiManualEntriesTable>;
+export type KpiManualEntryUpdate = Updateable<KpiManualEntriesTable>;
+
 // ===== Database root =====
 export interface DB {
   users: UsersTable;
@@ -393,6 +413,7 @@ export interface DB {
   daily_updates: DailyUpdatesTable;
   daily_update_comments: DailyUpdateCommentsTable;
   daily_update_attachments: DailyUpdateAttachmentsTable;
+  kpi_manual_entries: KpiManualEntriesTable;
 }
 
 // ===== Calendar bookings (migration 023) =====

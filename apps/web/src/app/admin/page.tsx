@@ -186,38 +186,69 @@ function DailyUpdateCard() {
   const [composeOpen, setComposeOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
+  // Files staged during compose before the post exists. On Save/Post,
+  // we upload each file to the resulting daily_update_id. If the
+  // composer is editing an existing post, new files upload immediately
+  // against the already-known id.
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [uploadBusy, setUploadBusy] = useState(false);
 
   function openCompose() {
     setDraft('');
+    setPendingFiles([]);
     setComposeOpen(true);
     setEditing(false);
   }
   function openEdit() {
     setDraft(data?.body ?? '');
+    setPendingFiles([]);
     setEditing(true);
     setComposeOpen(true);
+  }
+
+  async function uploadOneFile(dailyUpdateId: string, file: File): Promise<void> {
+    const fd = new FormData();
+    fd.append('file', file);
+    await apiFetch(`/admin/daily-updates/${dailyUpdateId}/attachments`, {
+      method: 'POST',
+      body: fd,
+    });
   }
 
   async function save() {
     const body = draft.trim();
     if (!body) return;
+    setUploadBusy(true);
     try {
+      let targetId: string;
       if (editing && data) {
         await apiFetch(`/admin/daily-updates/${data.id}`, {
           method: 'PATCH',
           body: JSON.stringify({ body }),
         });
+        targetId = data.id;
       } else {
-        await apiFetch('/admin/daily-updates', {
+        const created = await apiFetch<{ id: string }>('/admin/daily-updates', {
           method: 'POST',
           body: JSON.stringify({ body }),
         });
+        targetId = created.id;
+      }
+      // Sequential uploads so one failure doesn't orphan the others.
+      // Small N (operators attach a handful of photos max) means
+      // serial latency is negligible and the user sees a clean
+      // progression.
+      for (const f of pendingFiles) {
+        await uploadOneFile(targetId, f);
       }
       await qc.invalidateQueries({ queryKey: ['admin', 'daily-update'] });
       setComposeOpen(false);
       setDraft('');
+      setPendingFiles([]);
     } catch (err) {
       alert(err instanceof ApiError ? err.message : 'Failed to save');
+    } finally {
+      setUploadBusy(false);
     }
   }
 
@@ -310,23 +341,77 @@ function DailyUpdateCard() {
             placeholder="What's happening today? Markdown supported."
             autoFocus
           />
-          <div className="mt-2 flex justify-end gap-2">
-            <button
-              onClick={() => {
-                setComposeOpen(false);
-                setDraft('');
-              }}
-              className="rounded-md border border-ink-200 px-3 py-1.5 text-sm hover:bg-ink-50"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={save}
-              disabled={draft.trim().length === 0}
-              className="rounded-md bg-ink-900 px-4 py-1.5 text-sm font-medium text-white hover:bg-ink-800 disabled:opacity-60"
-            >
-              {editing ? 'Save changes' : 'Post'}
-            </button>
+
+          {/* Staged attachments (pre-post). Files sit in local state
+              until Save fires — Save creates/updates the post then
+              uploads each file sequentially against the resulting id. */}
+          {pendingFiles.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {pendingFiles.map((f, i) => (
+                <div
+                  key={i}
+                  className="inline-flex items-center gap-1 rounded-md border border-ink-200 bg-ink-50 px-2 py-1 text-xs"
+                >
+                  {f.type.startsWith('image/') ? '📷' : '📎'} {f.name}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setPendingFiles((prev) => prev.filter((_, idx) => idx !== i))
+                    }
+                    className="ml-1 text-ink-400 hover:text-red-700"
+                    aria-label={`Remove ${f.name}`}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+            <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-ink-700 hover:text-ink-900">
+              <input
+                type="file"
+                multiple
+                className="hidden"
+                accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt"
+                onChange={(e) => {
+                  const files = Array.from(e.target.files ?? []);
+                  if (files.length === 0) return;
+                  setPendingFiles((prev) => [...prev, ...files]);
+                  e.target.value = '';
+                }}
+              />
+              <span className="rounded-md border border-dashed border-ink-300 bg-white px-3 py-1.5 font-medium">
+                + Attach image or file
+              </span>
+            </label>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setComposeOpen(false);
+                  setDraft('');
+                  setPendingFiles([]);
+                }}
+                className="rounded-md border border-ink-200 px-3 py-1.5 text-sm hover:bg-ink-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={save}
+                disabled={uploadBusy || draft.trim().length === 0}
+                className="rounded-md bg-ink-900 px-4 py-1.5 text-sm font-medium text-white hover:bg-ink-800 disabled:opacity-60"
+              >
+                {uploadBusy
+                  ? 'Saving…'
+                  : editing
+                    ? 'Save changes'
+                    : pendingFiles.length > 0
+                      ? `Post + upload ${pendingFiles.length}`
+                      : 'Post'}
+              </button>
+            </div>
           </div>
         </div>
       ) : isLoading ? (
