@@ -164,8 +164,11 @@ export class AdminProductsController {
         category: p.category,
         show_on_website: p.show_on_website,
         weight_troy_oz: p.weight_troy_oz,
-        // Pass through the operator's pinning choice so the frontend's
-        // grouping logic uses it instead of the heuristic.
+        // Purity + sort_order exposed so the 3 sheet-consuming pages
+        // can render inline purity editors and honor the operator's
+        // manual drag order without a second roundtrip.
+        purity: p.purity,
+        sort_order: p.sort_order,
         display_category_override: p.display_category_override,
         buy_price: q ? q.buy_unit_price : null,
         sell_price: q ? q.sell_unit_price : null,

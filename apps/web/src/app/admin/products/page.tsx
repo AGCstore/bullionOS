@@ -29,6 +29,7 @@ import {
 } from '@/lib/product-category';
 import { rankProducts } from '@/lib/product-search';
 import { InlineField } from '@/components/inline-field';
+import { savePatch, saveOrder } from '@/lib/product-mutations';
 
 interface Product {
   id: string;
@@ -42,33 +43,6 @@ interface Product {
   is_active: boolean;
   show_on_website: boolean;
   sort_order: number;
-}
-
-/**
- * Shared PATCH helper used by every inline editor on a catalog row.
- * One place to own cache invalidation so a field edit on Catalog
- * refreshes every other surface that renders product data.
- */
-async function savePatch(
-  productId: string,
-  qc: ReturnType<typeof useQueryClient>,
-  patch: Record<string, unknown>,
-): Promise<void> {
-  await apiFetch(`/admin/products/${productId}`, {
-    method: 'PATCH',
-    body: JSON.stringify(patch),
-  });
-  // The sheet endpoint (/admin/products/sheet) feeds 4 pages: inventory,
-  // in-stock sheet, buy sheet, the invoice wizard's product combobox.
-  // Invalidate all of them so the edited row propagates instantly.
-  await Promise.all([
-    qc.invalidateQueries({ queryKey: ['admin', 'products'] }),
-    qc.invalidateQueries({ queryKey: ['admin', 'products', 'sheet'] }),
-    qc.invalidateQueries({ queryKey: ['admin', 'inventory'] }),
-    qc.invalidateQueries({ queryKey: ['admin', 'product', productId] }),
-    qc.invalidateQueries({ queryKey: ['client', 'prices'] }),
-    qc.invalidateQueries({ queryKey: ['client', 'in-stock'] }),
-  ]);
 }
 
 /**
@@ -172,10 +146,7 @@ export default function ProductsPage() {
     const previous = items;
     setItems(nextFlat);
     try {
-      await apiFetch('/admin/products/reorder', {
-        method: 'POST',
-        body: JSON.stringify({ order: nextFlat.map((p) => p.id) }),
-      });
+      await saveOrder(qc, nextFlat.map((p) => p.id));
       qc.setQueryData(['admin', 'products'], nextFlat);
     } catch (err) {
       setItems(previous);

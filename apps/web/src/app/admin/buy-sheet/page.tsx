@@ -11,11 +11,27 @@ import {
   SECTIONS,
   METAL_GROUPS,
   deriveDisplayCategory,
-  compareByFamily,
   groupSectionsByMetal,
   type DisplayCategory,
 } from '@/lib/product-category';
 import { rankProducts } from '@/lib/product-search';
+import { InlineField } from '@/components/inline-field';
+import { savePatch, saveOrder } from '@/lib/product-mutations';
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  arrayMove,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 interface EnrichedSheet extends SheetRow {
   displayCategory: DisplayCategory;
@@ -54,11 +70,44 @@ export default function BuySheetPage() {
       };
       out.get(enriched.displayCategory)?.push(enriched);
     }
-    for (const list of out.values()) list.sort(compareByFamily);
+    // sort_order is the single source of truth across every list page.
+    for (const list of out.values()) {
+      list.sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name));
+    }
     return out;
   }, [filtered]);
 
   const sectionsToRender = SECTIONS.filter((s) => (bySection.get(s.id)?.length ?? 0) > 0);
+
+  // Drag reorder — in-section. Persists via saveOrder (same endpoint as
+  // Catalog) so every product-listing surface picks up the new order.
+  const dragDisabled = search.trim().length > 0;
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+  );
+  async function onDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    for (const section of SECTIONS) {
+      const rows = bySection.get(section.id);
+      if (!rows) continue;
+      const oldIdx = rows.findIndex((r) => r.product_id === active.id);
+      const newIdx = rows.findIndex((r) => r.product_id === over.id);
+      if (oldIdx < 0 || newIdx < 0) continue;
+      const reordered = arrayMove(rows, oldIdx, newIdx);
+      const flat: string[] = [];
+      for (const s of SECTIONS) {
+        const r = s.id === section.id ? reordered : bySection.get(s.id);
+        if (r) flat.push(...r.map((x) => x.product_id));
+      }
+      try {
+        await saveOrder(qc, flat);
+      } catch (err) {
+        alert((err as Error).message ?? 'Reorder failed');
+      }
+      return;
+    }
+  }
 
   return (
     <PageTint side="buy">
@@ -132,27 +181,35 @@ export default function BuySheetPage() {
           </div>
         )}
 
-        {!isLoading &&
-          groupSectionsByMetal(sectionsToRender).map((g) => (
-            <div key={g.metal}>
-              <h2
-                className={`mt-10 mb-2 rounded-md border px-3 py-2 text-lg font-semibold ${METAL_GROUPS[g.metal].accentClass}`}
-              >
-                {METAL_GROUPS[g.metal].label}
-              </h2>
-              {g.sections.map((s) => (
-                <BuySection
-                  key={s.id}
-                  id={s.id}
-                  label={s.label}
-                  rows={bySection.get(s.id)!}
-                  onEdited={() =>
-                    qc.invalidateQueries({ queryKey: ['admin', 'products', 'sheet'] })
-                  }
-                />
-              ))}
-            </div>
-          ))}
+        {!isLoading && (
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={onDragEnd}
+          >
+            {groupSectionsByMetal(sectionsToRender).map((g) => (
+              <div key={g.metal}>
+                <h2
+                  className={`mt-10 mb-2 rounded-md border px-3 py-2 text-lg font-semibold ${METAL_GROUPS[g.metal].accentClass}`}
+                >
+                  {METAL_GROUPS[g.metal].label}
+                </h2>
+                {g.sections.map((s) => (
+                  <BuySection
+                    key={s.id}
+                    id={s.id}
+                    label={s.label}
+                    rows={bySection.get(s.id)!}
+                    dragDisabled={dragDisabled}
+                    onEdited={() =>
+                      qc.invalidateQueries({ queryKey: ['admin', 'products', 'sheet'] })
+                    }
+                  />
+                ))}
+              </div>
+            ))}
+          </DndContext>
+        )}
 
         {!isLoading && sectionsToRender.length === 0 && (
           <div className="mt-8 rounded-xl border border-ink-200 bg-white p-12 text-center text-sm text-ink-400">
@@ -168,11 +225,13 @@ function BuySection({
   id,
   label,
   rows,
+  dragDisabled,
   onEdited,
 }: {
   id: string;
   label: string;
   rows: EnrichedSheet[];
+  dragDisabled: boolean;
   onEdited: () => void;
 }) {
   return (
@@ -180,9 +239,10 @@ function BuySection({
       <h3 className="mb-2 text-sm font-semibold text-buy-700">{label}</h3>
       {/* MOB-002: horizontal scroll on narrow viewports. */}
       <div className="overflow-x-auto rounded-xl border border-ink-200 bg-white">
-        <table className="w-full min-w-[720px] text-sm">
+        <table className="w-full min-w-[760px] text-sm">
           <thead className="bg-ink-50 text-left text-xs uppercase tracking-wide text-ink-400">
             <tr>
+              <th className="w-8 px-2 py-3" />
               <th className="px-4 py-3">Item</th>
               <th className="px-4 py-3 text-right">On hand</th>
               <th className="px-4 py-3 text-right">We pay</th>
@@ -190,27 +250,80 @@ function BuySection({
               <th className="px-4 py-3 text-right w-32">Edit</th>
             </tr>
           </thead>
-          <tbody>
-            {rows.map((r) => (
-              <BuyRowView key={r.product_id} row={r} onEdited={onEdited} />
-            ))}
-          </tbody>
+          <SortableContext
+            items={rows.map((r) => r.product_id)}
+            strategy={verticalListSortingStrategy}
+          >
+            <tbody>
+              {rows.map((r) => (
+                <BuyRowView
+                  key={r.product_id}
+                  row={r}
+                  dragDisabled={dragDisabled}
+                  onEdited={onEdited}
+                />
+              ))}
+            </tbody>
+          </SortableContext>
         </table>
       </div>
     </section>
   );
 }
 
-function BuyRowView({ row, onEdited }: { row: EnrichedSheet; onEdited: () => void }) {
+function BuyRowView({
+  row,
+  dragDisabled,
+  onEdited,
+}: {
+  row: EnrichedSheet;
+  dragDisabled: boolean;
+  onEdited: () => void;
+}) {
+  const qc = useQueryClient();
   const { data: rule } = useQuery({
     queryKey: ['admin', 'product', row.product_id, 'rule'],
     queryFn: () =>
       apiFetch<PricingRule>(`/admin/products/${row.product_id}/pricing-rule`),
   });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: row.product_id, disabled: dragDisabled });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.6 : 1,
+    background: isDragging ? '#f7f7f8' : undefined,
+  };
   return (
-    <tr className="border-t border-ink-200 align-top">
+    <tr ref={setNodeRef} style={style} className="border-t border-ink-200 align-top">
+      <td className="px-2 py-3 text-center">
+        <button
+          {...attributes}
+          {...listeners}
+          aria-label="Drag to reorder"
+          disabled={dragDisabled}
+          className={`px-1 ${
+            dragDisabled
+              ? 'cursor-not-allowed text-ink-200'
+              : 'cursor-grab text-ink-400 hover:text-ink-900 active:cursor-grabbing'
+          }`}
+        >
+          ⋮⋮
+        </button>
+      </td>
       <td className="px-4 py-3">
-        <div className="font-medium">{row.name}</div>
+        <div className="font-medium">
+          <InlineField
+            value={row.name}
+            onSave={async (next) => {
+              await savePatch(row.product_id, qc, { name: next });
+              onEdited();
+            }}
+            maxLength={200}
+            ariaLabel="product name"
+            validate={(v) => (v.trim().length === 0 ? 'Name required' : null)}
+          />
+        </div>
         <div className="font-mono text-xs text-ink-400">{row.sku}</div>
       </td>
       <td className="px-4 py-3 text-right font-mono text-ink-600">

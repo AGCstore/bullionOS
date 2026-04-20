@@ -11,6 +11,9 @@ export interface SheetRow {
   category: string;
   show_on_website: boolean;
   weight_troy_oz: string;
+  purity: string;
+  /** Operator-set manual order from the drag-to-reorder UI (any page). */
+  sort_order: number;
   /** Operator-set pin; empty/null means use the heuristic. */
   display_category_override: string | null;
   buy_price: string | null;
