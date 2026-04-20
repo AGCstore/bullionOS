@@ -150,7 +150,32 @@ export class InventoryService {
     const nextOnHand = currentOnHand + delta;
     const nextReserved = currentReserved + reservedDelta;
 
-    if (!force && nextOnHand < 0) {
+    // Implicit-force on the consume path.
+    //
+    // When an invoice transitions finalized → paid/shipped, we call
+    // consumeReservationFor which sets delta === reserved_delta (both
+    // negative, same magnitude). That operation is strictly a 1:1
+    // conversion of an already-committed reservation into a real
+    // deduction — it cannot create new oversell exposure that wasn't
+    // already booked at reserve time. So if the reservation was
+    // created with force_oversell at finalize (currentReserved was
+    // allowed to exceed currentOnHand back then), the corresponding
+    // consume MUST also be allowed through — otherwise the invoice
+    // gets stuck between finalized and paid. Blocking it wouldn't
+    // prevent any oversell: the commitment was made the moment we
+    // reserved.
+    //
+    // The operator still has to explicitly opt-in at reserve time
+    // (via the admin-only force_oversell checkbox). This just prevents
+    // the guard from re-tripping on the follow-on paid transition.
+    const isConsumingReservation =
+      delta < 0 &&
+      reservedDelta < 0 &&
+      delta === reservedDelta &&
+      currentReserved >= -reservedDelta;
+    const effectiveForce = force || isConsumingReservation;
+
+    if (!effectiveForce && nextOnHand < 0) {
       throw new BadRequestException(
         `Insufficient on-hand stock for product ${params.product_id}: have ${currentOnHand}, needed ${-delta}`,
       );
@@ -162,7 +187,7 @@ export class InventoryService {
         `Reservation underflow for product ${params.product_id}: reserved ${currentReserved}, releasing ${-reservedDelta}`,
       );
     }
-    if (!force && nextReserved > nextOnHand) {
+    if (!effectiveForce && nextReserved > nextOnHand) {
       throw new BadRequestException(
         `Cannot reserve more than is on hand for product ${params.product_id}: on_hand=${nextOnHand}, reserved=${nextReserved}`,
       );
