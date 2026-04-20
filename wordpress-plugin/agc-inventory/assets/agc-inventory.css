@@ -182,6 +182,39 @@
     font-family: 'Instrument Sans', system-ui, -apple-system, sans-serif;
 }
 
+/* v2 themed error card — lives inside .agc-inv-wrap so it inherits the
+ * navy + gold palette and Instrument Sans automatically. Replaces the
+ * red-on-dark-red .agc-inv-error container from v1 for a friendlier look
+ * that doesn't scream "broken page" on a first visit while Railway is
+ * cold-starting. */
+.agc-inv-wrap .agc-inv-error-card {
+    padding: 1.25rem 1.5rem;
+    border: 1px solid var(--agc-gold);
+    border-radius: 4px;
+    background: linear-gradient(
+        180deg,
+        rgba(212, 160, 23, 0.08) 0%,
+        rgba(212, 160, 23, 0) 100%
+    );
+    color: var(--agc-ink);
+    font-size: 0.95rem;
+}
+
+.agc-inv-wrap .agc-inv-error-card strong {
+    color: var(--agc-gold);
+    font-weight: 600;
+}
+
+.agc-inv-wrap .agc-inv-error-card a {
+    color: var(--agc-gold);
+    text-decoration: none;
+    border-bottom: 1px solid var(--agc-gold-soft);
+}
+
+.agc-inv-wrap .agc-inv-error-card a:hover {
+    color: var(--agc-gold-soft);
+}
+
 /* Refresh animation — swap the rows with a tasteful dim instead of a
  * snap so 1-minute polls don't flicker. */
 .agc-inv-wrap.agc-inv-refreshing {

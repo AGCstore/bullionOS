@@ -2,11 +2,10 @@
 /**
  * Plugin Name:       AGC Inventory
  * Plugin URI:        https://agcdesk.com
- * Description:       Pulls live inventory and "What We Pay" from AGC Desk and
- *                    renders them as Elementor widgets or shortcodes on
- *                    atlantagoldandcoin.com. Refreshes every 5 minutes
- *                    between 8 AM and 6 PM Eastern.
- * Version:           1.1.0
+ * Description:       Live inventory and "What We Pay" widgets for Atlanta
+ *                    Gold & Coin, fed by the AGC Desk API. Elementor widgets
+ *                    + shortcodes, auto-refreshing during shop hours.
+ * Version:           2.0.0
  * Author:            Atlanta Gold and Coin
  * License:           Proprietary
  * Text Domain:       agc-inventory
@@ -18,33 +17,47 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
+/**
+ * AGC Inventory v2.0.0
+ * ──────────────────────────────────────────────────────────────────────────
+ * Single-file plugin. v1 split Elementor widget classes into /includes/*.php
+ * which was harder to debug on sandboxes (Playground, WP.com) because a
+ * silent failure to load a sub-file would cause the main plugin to
+ * "activate" but have no working hooks. All code now lives in this file.
+ *
+ * Architecture:
+ *   1. PHP-side:   agc_inv_fetch() proxies to AGC Desk API with a WP
+ *                  transient cache. Two shortcodes + two Elementor
+ *                  widgets render the data server-side on first paint.
+ *   2. Browser:    agc-inventory.js polls admin-ajax every 60s during
+ *                  shop hours (8 AM – 6 PM ET) and swaps innerHTML.
+ *   3. Theme:      agc-inventory.css — near-black navy base + primary
+ *                  gold accents, Instrument Sans from Google Fonts.
+ *                  Scoped under .agc-inv-wrap so it never bleeds into
+ *                  the parent theme.
+ *
+ * Failure modes are visible, not silent:
+ *   - API unreachable → renders a dark-navy error card ("Inventory is
+ *     temporarily unavailable") with a retry hint, NOT a blank div.
+ *   - Elementor missing → widgets skip registration but shortcodes
+ *     still work.
+ *   - Outbound HTTPS blocked (WP.com free, some sandboxes) → same
+ *     error card, with a note in the settings page pointing to the
+ *     "Test connection" button.
+ */
+
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-define( 'AGC_INV_VERSION', '1.1.0' );
-// Default AGC Desk API base. Operator can override on the settings page.
+define( 'AGC_INV_VERSION', '2.0.0' );
 define( 'AGC_INV_DEFAULT_BASE', 'https://agc-api-production.up.railway.app/api/v1' );
-// Server-side transient cache TTL.
-//
-// Was 60s, which made toggling a product off in AGC Desk take up to
-// 2 minutes to disappear from the WP page (60s WP transient + 60s
-// browser poll). 15s gives admins same-minute visibility when they
-// flip show_on_website, at the cost of 4× more upstream fetches per
-// minute — still trivial load for the API (one request per minute
-// per visitor is the upper bound because the browser is still the
-// gate, not the WP server).
-//
-// If you need stale data to disappear immediately (e.g. during a price
-// demo), hit /wp-admin/admin-ajax.php?action=agc_inv_flush_cache as a
-// logged-in admin — that busts the transient and the next browser poll
-// fetches fresh in under a second.
+// Server-side transient TTL. Short enough that a show_on_website toggle
+// in AGC Desk appears on the shop's WP page within ~15s, long enough
+// to absorb a burst of visitors without flooding the API.
 define( 'AGC_INV_CACHE_TTL', 15 );
-// Business-hours window for the browser auto-refresh. Changes to inventory
-// only happen while the shop is open (US/Eastern), so don't hammer the API
-// at 3 AM — first page-load after 8 AM picks up any overnight changes.
 define( 'AGC_INV_WINDOW_START_HOUR', 8 );
 define( 'AGC_INV_WINDOW_END_HOUR', 18 );
 
-// ─── Options / Settings ────────────────────────────────────────────────────
+// ─── Options / Settings page ────────────────────────────────────────────────
 
 function agc_inv_get_base() {
     $opt = get_option( 'agc_inv_base', '' );
@@ -71,6 +84,12 @@ function agc_inv_render_settings_page() {
     ?>
     <div class="wrap">
         <h1>AGC Inventory Settings</h1>
+        <p>
+            Plugin version <strong><?php echo esc_html( AGC_INV_VERSION ); ?></strong>.
+            If the front-end widgets show "temporarily unavailable", click
+            <strong>Test connection</strong> below to diagnose.
+        </p>
+
         <form method="post" action="options.php">
             <?php settings_fields( 'agc_inv_settings' ); ?>
             <table class="form-table">
@@ -91,53 +110,59 @@ function agc_inv_render_settings_page() {
         </form>
 
         <h2>Shortcodes</h2>
-        <p>If you're not using Elementor, drop either of these on a page or post:</p>
         <pre><code>[agc_live_inventory]
 [agc_what_we_pay]</code></pre>
 
         <h2>Elementor</h2>
-        <p>Two widgets appear under the <strong>AGC Desk</strong> category in the
-        Elementor editor:</p>
-        <ul style="list-style:disc; margin-left:20px;">
-            <li><strong>AGC Live Inventory</strong> — in-stock items with quantity + sell price.</li>
-            <li><strong>AGC What We Pay</strong> — every catalog item with the current buy price.</li>
-        </ul>
+        <p>Two widgets appear under <strong>AGC Desk</strong> in the editor:
+            <em>AGC Live Inventory</em> and <em>AGC What We Pay</em>.</p>
 
-        <h2>Refresh behavior</h2>
-        <p>Both widgets auto-refresh every minute between
-        <?php echo esc_html( AGC_INV_WINDOW_START_HOUR ); ?> AM and
-        <?php echo esc_html( AGC_INV_WINDOW_END_HOUR - 12 ); ?> PM Eastern.
-        Outside those hours the poll pauses to keep server load low — the
-        first page-load after 8 AM pulls fresh data again.</p>
-
-        <p>Server-side transient TTL is <code><?php echo esc_html( AGC_INV_CACHE_TTL ); ?>s</code>.
-        When you toggle a product&rsquo;s &ldquo;On website&rdquo; switch in AGC Desk,
-        the change propagates to this WordPress site within
-        <code><?php echo esc_html( AGC_INV_CACHE_TTL + 60 ); ?>s</code> at the
-        worst case (WP cache + 1 browser poll).</p>
-
+        <h2>Diagnostics</h2>
         <p>
-            <button
-                type="button"
-                class="button"
-                id="agc-inv-flush-cache-btn"
-                onclick="agcInvFlushCache(this);"
-            >Flush cache now</button>
-            <span id="agc-inv-flush-cache-result" style="margin-left: 12px;"></span>
+            <button type="button" class="button button-primary"
+                onclick="agcInvTestConnection(this);">Test connection</button>
+            <button type="button" class="button" style="margin-left: 8px;"
+                onclick="agcInvFlushCache(this);">Flush cache now</button>
+            <span id="agc-inv-diag-out" style="margin-left: 12px; font-family: monospace;"></span>
         </p>
         <script>
+        function agcInvTestConnection(btn) {
+            btn.disabled = true;
+            var out = document.getElementById('agc-inv-diag-out');
+            out.textContent = 'Pinging AGC Desk…';
+            fetch(ajaxurl + '?action=agc_inv_diag', { credentials: 'same-origin' })
+                .then(function (r) { return r.json(); })
+                .then(function (json) {
+                    if (json && json.success) {
+                        out.innerHTML = '<span style="color:#228B22">✓ '
+                            + json.data.items_what_we_pay + ' prices · '
+                            + json.data.items_in_stock + ' in-stock items · '
+                            + 'base=' + json.data.base + '</span>';
+                    } else {
+                        out.innerHTML = '<span style="color:#a00">✗ '
+                            + (json && json.data && json.data.message
+                                ? json.data.message : 'Unknown error') + '</span>';
+                    }
+                })
+                .catch(function (e) {
+                    out.innerHTML = '<span style="color:#a00">✗ ' + e + '</span>';
+                })
+                .then(function () { btn.disabled = false; });
+        }
         function agcInvFlushCache(btn) {
             btn.disabled = true;
-            var out = document.getElementById('agc-inv-flush-cache-result');
+            var out = document.getElementById('agc-inv-diag-out');
             out.textContent = 'Flushing…';
             fetch(ajaxurl + '?action=agc_inv_flush_cache', { credentials: 'same-origin' })
                 .then(function (r) { return r.json(); })
                 .then(function (json) {
                     out.textContent = (json && json.success)
-                        ? '✓ Flushed. The next page-load fetches fresh.'
+                        ? '✓ Cache flushed. Next page-load fetches fresh.'
                         : '✗ Failed';
                 })
-                .catch(function () { out.textContent = '✗ Failed'; })
+                .catch(function (e) {
+                    out.textContent = '✗ ' + e;
+                })
                 .then(function () { btn.disabled = false; });
         }
         </script>
@@ -145,38 +170,49 @@ function agc_inv_render_settings_page() {
     <?php
 }
 
-// ─── Manual cache flush (admin-only) ───────────────────────────────────────
+// ─── Cache flush (admin-only) ───────────────────────────────────────────────
 
-/**
- * Admin-only AJAX endpoint that nukes both the /public/in-stock and
- * /public/what-we-pay transients. Useful when you've just toggled a
- * product off in AGC Desk and want the change to show up on
- * atlantagoldandcoin.com immediately instead of waiting up to
- * AGC_INV_CACHE_TTL seconds.
- *
- * Hit it at:
- *   /wp-admin/admin-ajax.php?action=agc_inv_flush_cache
- *
- * nopriv variant intentionally omitted — this is an admin convenience,
- * not a public API. Returns 403 to un-authed visitors.
- */
 add_action( 'wp_ajax_agc_inv_flush_cache', function () {
     if ( ! current_user_can( 'manage_options' ) ) {
         wp_send_json_error( [ 'message' => 'forbidden' ], 403 );
     }
     delete_transient( 'agc_inv_' . md5( 'public/in-stock' ) );
     delete_transient( 'agc_inv_' . md5( 'public/what-we-pay' ) );
-    wp_send_json_success( [ 'flushed' => true, 'at' => current_time( 'c' ) ] );
+    wp_send_json_success( [ 'flushed' => true ] );
 } );
 
-// ─── WP AJAX endpoints (for browser-side 1-min poll) ───────────────────────
+// ─── Diagnostics endpoint ───────────────────────────────────────────────────
 
 /**
- * Browser polls these every minute via fetch(). Each one is a thin proxy
- * to agc_inv_fetch() so the WP transient still does the rate-limiting.
- * We deliberately expose these to un-authed visitors (nopriv) because
- * both AGC Desk endpoints behind them are public to begin with.
+ * Admin-only "is the API reachable?" check. Fetches both endpoints once,
+ * reports the item counts and the URL it hit. Surfaces outbound-HTTPS
+ * blocks (WP.com free, some sandboxes) as a clear error instead of a
+ * silent blank widget.
  */
+add_action( 'wp_ajax_agc_inv_diag', function () {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( [ 'message' => 'forbidden' ], 403 );
+    }
+    $base     = agc_inv_get_base();
+    $in_stock = agc_inv_fetch( 'public/in-stock', true );
+    $what_pay = agc_inv_fetch( 'public/what-we-pay', true );
+    if ( null === $in_stock && null === $what_pay ) {
+        wp_send_json_error( [
+            'message' => 'Could not reach AGC Desk at ' . $base
+                . '. Check WordPress allows outbound HTTPS to this host.',
+            'base'    => $base,
+        ] );
+    }
+    wp_send_json_success( [
+        'base'                 => $base,
+        'items_what_we_pay'    => is_array( $what_pay ) && isset( $what_pay['items'] )
+            ? count( $what_pay['items'] ) : 0,
+        'items_in_stock'       => is_array( $in_stock ) ? count( $in_stock ) : 0,
+    ] );
+} );
+
+// ─── Browser polling endpoints ──────────────────────────────────────────────
+
 add_action( 'wp_ajax_agc_inv_live_inventory', 'agc_inv_ajax_live_inventory' );
 add_action( 'wp_ajax_nopriv_agc_inv_live_inventory', 'agc_inv_ajax_live_inventory' );
 add_action( 'wp_ajax_agc_inv_what_we_pay', 'agc_inv_ajax_what_we_pay' );
@@ -188,18 +224,15 @@ function agc_inv_ajax_live_inventory() {
     if ( ! is_array( $items ) ) {
         wp_send_json_error( [ 'message' => 'unavailable' ], 502 );
     }
-    // Mirror of the server filter. See PHP shortcode renderer for the
-    // full rationale — zero-stock rows never appear on the Live Inventory
-    // page, period, regardless of what the API hands us.
     $items = array_values( array_filter( $items, function ( $r ) {
         return isset( $r['available'] ) && intval( $r['available'] ) > 0;
     } ) );
     $items   = agc_inv_filter_by_metal( $items, $metal );
     $grouped = agc_inv_group_by_metal( $items );
     wp_send_json_success( [
-        'grouped'  => $grouped,
-        'mode'     => 'live-inventory',
-        'updated'  => current_time( 'g:i A' ),
+        'grouped' => $grouped,
+        'mode'    => 'live-inventory',
+        'updated' => current_time( 'g:i A' ),
     ] );
 }
 
@@ -221,15 +254,19 @@ function agc_inv_ajax_what_we_pay() {
 // ─── HTTP client w/ transient cache ─────────────────────────────────────────
 
 /**
- * Fetch JSON from AGC Desk. Uses a WP transient so repeat page-loads within
- * AGC_INV_CACHE_TTL don't hit the API. Returns null on failure; callers
- * render a "currently unavailable" notice.
+ * Fetch JSON from AGC Desk. Uses a WP transient so repeat page-loads
+ * within AGC_INV_CACHE_TTL don't hit the API. Returns null on failure.
+ *
+ * @param string $path    Path relative to the API base (no leading slash).
+ * @param bool   $bypass  If true, skip the transient cache (used by diag).
  */
-function agc_inv_fetch( $path ) {
+function agc_inv_fetch( $path, $bypass = false ) {
     $cache_key = 'agc_inv_' . md5( $path );
-    $cached    = get_transient( $cache_key );
-    if ( false !== $cached ) {
-        return $cached;
+    if ( ! $bypass ) {
+        $cached = get_transient( $cache_key );
+        if ( false !== $cached ) {
+            return $cached;
+        }
     }
 
     $url      = agc_inv_get_base() . '/' . ltrim( $path, '/' );
@@ -249,16 +286,15 @@ function agc_inv_fetch( $path ) {
     if ( null === $data ) {
         return null;
     }
-    set_transient( $cache_key, $data, AGC_INV_CACHE_TTL );
+    if ( ! $bypass ) {
+        set_transient( $cache_key, $data, AGC_INV_CACHE_TTL );
+    }
     return $data;
 }
 
-// ─── Assets ────────────────────────────────────────────────────────────────
+// ─── Asset enqueue ─────────────────────────────────────────────────────────
 
 add_action( 'wp_enqueue_scripts', function () {
-    // Instrument Sans from Google Fonts. Registered as a standalone style
-    // so our main stylesheet can depend on it and hoist the @font-face
-    // declarations into <head> before our selectors paint.
     wp_register_style(
         'agc-inv-font',
         'https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&display=swap',
@@ -280,8 +316,6 @@ add_action( 'wp_enqueue_scripts', function () {
     );
     wp_localize_script( 'agc-inv', 'AGC_INV', [
         'ajaxUrl'     => admin_url( 'admin-ajax.php' ),
-        // Browser-side refresh cadence. Lives in JS so the operator could
-        // tweak it later without reshipping the plugin.
         'refreshMs'   => 60 * 1000,
         'windowStart' => AGC_INV_WINDOW_START_HOUR,
         'windowEnd'   => AGC_INV_WINDOW_END_HOUR,
@@ -291,9 +325,7 @@ add_action( 'wp_enqueue_scripts', function () {
 // ─── Shortcodes ────────────────────────────────────────────────────────────
 
 add_shortcode( 'agc_live_inventory', function ( $atts ) {
-    $atts = shortcode_atts( [
-        'metal' => '', // gold, silver, platinum, palladium, or empty = all
-    ], $atts, 'agc_live_inventory' );
+    $atts = shortcode_atts( [ 'metal' => '' ], $atts, 'agc_live_inventory' );
     return agc_inv_render_live_inventory( $atts );
 } );
 
@@ -302,7 +334,7 @@ add_shortcode( 'agc_what_we_pay', function ( $atts ) {
     return agc_inv_render_what_we_pay( $atts );
 } );
 
-// ─── Renderers (shared by shortcodes + Elementor widgets) ──────────────────
+// ─── Renderers ─────────────────────────────────────────────────────────────
 
 function agc_inv_render_live_inventory( $atts ) {
     wp_enqueue_style( 'agc-inv' );
@@ -310,16 +342,12 @@ function agc_inv_render_live_inventory( $atts ) {
 
     $items = agc_inv_fetch( 'public/in-stock' );
     if ( ! is_array( $items ) ) {
-        return '<div class="agc-inv-error">Inventory is temporarily unavailable. Please refresh in a moment.</div>';
+        return agc_inv_error_card( 'Live inventory is temporarily unavailable. This usually resolves within a minute.' );
     }
-    // Defensive double-filter: the API's /public/in-stock already excludes
-    // zero-stock rows, but if a future bug ever lets one through (or the
-    // feed is ever pointed at a staging server with seeded zero-qty rows),
-    // we still refuse to show them on the live inventory page.
     $items = array_values( array_filter( $items, function ( $r ) {
         return isset( $r['available'] ) && intval( $r['available'] ) > 0;
     } ) );
-    $items = agc_inv_filter_by_metal( $items, $atts['metal'] );
+    $items   = agc_inv_filter_by_metal( $items, $atts['metal'] );
     $grouped = agc_inv_group_by_metal( $items );
 
     ob_start();
@@ -367,10 +395,10 @@ function agc_inv_render_what_we_pay( $atts ) {
 
     $payload = agc_inv_fetch( 'public/what-we-pay' );
     if ( ! is_array( $payload ) || ! isset( $payload['items'] ) ) {
-        return '<div class="agc-inv-error">Pricing is temporarily unavailable. Please refresh in a moment.</div>';
+        return agc_inv_error_card( 'Live pricing is temporarily unavailable. This usually resolves within a minute.' );
     }
-    $items = $payload['items'];
-    $items = agc_inv_filter_by_metal( $items, $atts['metal'] );
+    $items   = $payload['items'];
+    $items   = agc_inv_filter_by_metal( $items, $atts['metal'] );
     $grouped = agc_inv_group_by_metal( $items );
 
     ob_start();
@@ -414,6 +442,19 @@ function agc_inv_render_what_we_pay( $atts ) {
     return ob_get_clean();
 }
 
+/**
+ * Themed error card — same typography + palette as the main widget so a
+ * temporary outage doesn't clash with the shop's overall look.
+ */
+function agc_inv_error_card( $message ) {
+    wp_enqueue_style( 'agc-inv' );
+    return '<div class="agc-inv-wrap"><div class="agc-inv-error-card">'
+        . '<strong>Just a moment &mdash;</strong> '
+        . esc_html( $message ) . ' Call '
+        . '<a href="tel:4042369744">404-236-9744</a> if you need pricing now.'
+        . '</div></div>';
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
 function agc_inv_filter_by_metal( $items, $metal ) {
@@ -427,7 +468,7 @@ function agc_inv_filter_by_metal( $items, $metal ) {
 }
 
 function agc_inv_group_by_metal( $items ) {
-    $order = [ 'gold', 'silver', 'platinum', 'palladium' ];
+    $order   = [ 'gold', 'silver', 'platinum', 'palladium' ];
     $buckets = [];
     foreach ( $order as $m ) {
         $buckets[ $m ] = [];
@@ -441,7 +482,6 @@ function agc_inv_group_by_metal( $items ) {
             $buckets[ $m ][] = $it;
         }
     }
-    // Remove empty buckets so we don't render empty headings.
     return array_filter( $buckets, function ( $v ) { return ! empty( $v ); } );
 }
 
@@ -456,21 +496,101 @@ function agc_inv_pretty_metal( $metal ) {
     return isset( $map[ $metal ] ) ? $map[ $metal ] : ucfirst( $metal );
 }
 
-// ─── Elementor widget registration ─────────────────────────────────────────
-
-add_action( 'elementor/widgets/register', function ( $widgets_manager ) {
-    if ( ! did_action( 'elementor/loaded' ) ) {
-        return;
-    }
-    require_once __DIR__ . '/includes/class-agc-live-inventory-widget.php';
-    require_once __DIR__ . '/includes/class-agc-what-we-pay-widget.php';
-    $widgets_manager->register( new \AGC_Live_Inventory_Widget() );
-    $widgets_manager->register( new \AGC_What_We_Pay_Widget() );
-} );
+// ─── Elementor widgets ─────────────────────────────────────────────────────
+//
+// Defined inline so there's no extra require step that could silently fail
+// on sandboxes. Both classes extend \Elementor\Widget_Base, so we only
+// define them once Elementor is confirmed loaded.
 
 add_action( 'elementor/elements/categories_registered', function ( $elements_manager ) {
     $elements_manager->add_category( 'agc-desk', [
         'title' => 'AGC Desk',
         'icon'  => 'fa fa-coins',
     ] );
+} );
+
+add_action( 'elementor/widgets/register', function ( $widgets_manager ) {
+    if ( ! did_action( 'elementor/loaded' ) ) {
+        return;
+    }
+    if ( ! class_exists( '\\Elementor\\Widget_Base' ) ) {
+        return;
+    }
+
+    if ( ! class_exists( 'AGC_Live_Inventory_Widget' ) ) {
+        class AGC_Live_Inventory_Widget extends \Elementor\Widget_Base {
+            public function get_name()       { return 'agc_live_inventory'; }
+            public function get_title()      { return 'AGC Live Inventory'; }
+            public function get_icon()       { return 'eicon-product-stock'; }
+            public function get_categories() { return [ 'agc-desk' ]; }
+            public function get_keywords()   { return [ 'agc', 'inventory', 'stock', 'live', 'bullion', 'coin' ]; }
+
+            protected function register_controls() {
+                $this->start_controls_section( 'content_section', [
+                    'label' => 'Content',
+                    'tab'   => \Elementor\Controls_Manager::TAB_CONTENT,
+                ] );
+                $this->add_control( 'metal', [
+                    'label'   => 'Metal filter',
+                    'type'    => \Elementor\Controls_Manager::SELECT,
+                    'default' => '',
+                    'options' => [
+                        ''          => 'All metals',
+                        'gold'      => 'Gold only',
+                        'silver'    => 'Silver only',
+                        'platinum'  => 'Platinum only',
+                        'palladium' => 'Palladium only',
+                    ],
+                ] );
+                $this->end_controls_section();
+            }
+
+            protected function render() {
+                $settings = $this->get_settings_for_display();
+                echo agc_inv_render_live_inventory( [
+                    'metal' => $settings['metal'] ?? '',
+                ] );
+            }
+        }
+    }
+
+    if ( ! class_exists( 'AGC_What_We_Pay_Widget' ) ) {
+        class AGC_What_We_Pay_Widget extends \Elementor\Widget_Base {
+            public function get_name()       { return 'agc_what_we_pay'; }
+            public function get_title()      { return 'AGC What We Pay'; }
+            public function get_icon()       { return 'eicon-price-list'; }
+            public function get_categories() { return [ 'agc-desk' ]; }
+            public function get_keywords()   { return [ 'agc', 'buy', 'price', 'bullion', 'coin', 'quote' ]; }
+
+            protected function register_controls() {
+                $this->start_controls_section( 'content_section', [
+                    'label' => 'Content',
+                    'tab'   => \Elementor\Controls_Manager::TAB_CONTENT,
+                ] );
+                $this->add_control( 'metal', [
+                    'label'   => 'Metal filter',
+                    'type'    => \Elementor\Controls_Manager::SELECT,
+                    'default' => '',
+                    'options' => [
+                        ''          => 'All metals',
+                        'gold'      => 'Gold only',
+                        'silver'    => 'Silver only',
+                        'platinum'  => 'Platinum only',
+                        'palladium' => 'Palladium only',
+                    ],
+                ] );
+                $this->end_controls_section();
+            }
+
+            protected function render() {
+                $settings = $this->get_settings_for_display();
+                echo agc_inv_render_what_we_pay( [
+                    'metal' => $settings['metal'] ?? '',
+                ] );
+            }
+        }
+    }
+
+    $widgets_manager->register( new AGC_Live_Inventory_Widget() );
+    $widgets_manager->register( new AGC_What_We_Pay_Widget() );
 } );
