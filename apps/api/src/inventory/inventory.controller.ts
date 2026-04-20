@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch } from '@nestjs/common';
+import { Body, Controller, Get, Header, Param, ParseUUIDPipe, Patch } from '@nestjs/common';
 import { CurrentUser, type RequestUser } from '../common/decorators/current-user.decorator';
 import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -32,9 +32,21 @@ export class InventoryController {
     return this.service.inStock();
   }
 
-  /** Public shop feed — no auth. */
+  /**
+   * Public shop feed — no auth. Consumed by the WordPress plugin at
+   * atlantagoldandcoin.com.
+   *
+   * Explicit no-store header so neither Railway's Fastly edge nor any
+   * reverse proxy layers a cache on top of our intended WP transient.
+   * When an admin toggles show_on_website, this response must reflect
+   * the flip on the very next fetch; if Fastly held a 30s cached copy,
+   * the WP transient would read stale data, re-cache it, and the toggle
+   * wouldn't visibly take effect until both layers expired.
+   */
   @Public()
   @Get('public/in-stock')
+  @Header('Cache-Control', 'no-store, no-cache, must-revalidate')
+  @Header('Pragma', 'no-cache')
   publicInStock() {
     return this.service.inStock();
   }

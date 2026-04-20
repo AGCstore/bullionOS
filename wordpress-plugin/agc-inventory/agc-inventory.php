@@ -23,11 +23,21 @@ if ( ! defined( 'ABSPATH' ) ) {
 define( 'AGC_INV_VERSION', '1.0.0' );
 // Default AGC Desk API base. Operator can override on the settings page.
 define( 'AGC_INV_DEFAULT_BASE', 'https://agc-api-production.up.railway.app/api/v1' );
-// Server-side transient cache TTL. The browser polls every minute; the
-// transient is set to the same window so every minute the first browser
-// that lands triggers one upstream refresh and the rest hit the cached
-// copy. Total upstream load: ≤1 request per minute per WP instance.
-define( 'AGC_INV_CACHE_TTL', 60 );
+// Server-side transient cache TTL.
+//
+// Was 60s, which made toggling a product off in AGC Desk take up to
+// 2 minutes to disappear from the WP page (60s WP transient + 60s
+// browser poll). 15s gives admins same-minute visibility when they
+// flip show_on_website, at the cost of 4× more upstream fetches per
+// minute — still trivial load for the API (one request per minute
+// per visitor is the upper bound because the browser is still the
+// gate, not the WP server).
+//
+// If you need stale data to disappear immediately (e.g. during a price
+// demo), hit /wp-admin/admin-ajax.php?action=agc_inv_flush_cache as a
+// logged-in admin — that busts the transient and the next browser poll
+// fetches fresh in under a second.
+define( 'AGC_INV_CACHE_TTL', 15 );
 // Business-hours window for the browser auto-refresh. Changes to inventory
 // only happen while the shop is open (US/Eastern), so don't hammer the API
 // at 3 AM — first page-load after 8 AM picks up any overnight changes.
@@ -99,9 +109,65 @@ function agc_inv_render_settings_page() {
         <?php echo esc_html( AGC_INV_WINDOW_END_HOUR - 12 ); ?> PM Eastern.
         Outside those hours the poll pauses to keep server load low — the
         first page-load after 8 AM pulls fresh data again.</p>
+
+        <p>Server-side transient TTL is <code><?php echo esc_html( AGC_INV_CACHE_TTL ); ?>s</code>.
+        When you toggle a product&rsquo;s &ldquo;On website&rdquo; switch in AGC Desk,
+        the change propagates to this WordPress site within
+        <code><?php echo esc_html( AGC_INV_CACHE_TTL + 60 ); ?>s</code> at the
+        worst case (WP cache + 1 browser poll).</p>
+
+        <p>
+            <button
+                type="button"
+                class="button"
+                id="agc-inv-flush-cache-btn"
+                onclick="agcInvFlushCache(this);"
+            >Flush cache now</button>
+            <span id="agc-inv-flush-cache-result" style="margin-left: 12px;"></span>
+        </p>
+        <script>
+        function agcInvFlushCache(btn) {
+            btn.disabled = true;
+            var out = document.getElementById('agc-inv-flush-cache-result');
+            out.textContent = 'Flushing…';
+            fetch(ajaxurl + '?action=agc_inv_flush_cache', { credentials: 'same-origin' })
+                .then(function (r) { return r.json(); })
+                .then(function (json) {
+                    out.textContent = (json && json.success)
+                        ? '✓ Flushed. The next page-load fetches fresh.'
+                        : '✗ Failed';
+                })
+                .catch(function () { out.textContent = '✗ Failed'; })
+                .then(function () { btn.disabled = false; });
+        }
+        </script>
     </div>
     <?php
 }
+
+// ─── Manual cache flush (admin-only) ───────────────────────────────────────
+
+/**
+ * Admin-only AJAX endpoint that nukes both the /public/in-stock and
+ * /public/what-we-pay transients. Useful when you've just toggled a
+ * product off in AGC Desk and want the change to show up on
+ * atlantagoldandcoin.com immediately instead of waiting up to
+ * AGC_INV_CACHE_TTL seconds.
+ *
+ * Hit it at:
+ *   /wp-admin/admin-ajax.php?action=agc_inv_flush_cache
+ *
+ * nopriv variant intentionally omitted — this is an admin convenience,
+ * not a public API. Returns 403 to un-authed visitors.
+ */
+add_action( 'wp_ajax_agc_inv_flush_cache', function () {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( [ 'message' => 'forbidden' ], 403 );
+    }
+    delete_transient( 'agc_inv_' . md5( 'public/in-stock' ) );
+    delete_transient( 'agc_inv_' . md5( 'public/what-we-pay' ) );
+    wp_send_json_success( [ 'flushed' => true, 'at' => current_time( 'c' ) ] );
+} );
 
 // ─── WP AJAX endpoints (for browser-side 1-min poll) ───────────────────────
 

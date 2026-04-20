@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Header } from '@nestjs/common';
 import { Public } from '../common/decorators/public.decorator';
 import { ProductsService } from '../products/products.service';
 import { PricingService } from '../pricing/pricing.service';
@@ -88,6 +88,13 @@ export class PublicController {
    */
   @Public()
   @Get('what-we-pay')
+  // No-store at the HTTP layer so Fastly/Railway edge can't pile another
+  // cache on top of our 30s Redis cache. Without this, a toggle on AGC
+  // Desk could take Fastly TTL + Redis TTL + WP transient + browser
+  // poll to appear on atlantagoldandcoin.com — cascading caches that
+  // add up to minutes.
+  @Header('Cache-Control', 'no-store, no-cache, must-revalidate')
+  @Header('Pragma', 'no-cache')
   async whatWePay(): Promise<WhatWePayResponse> {
     const cached = await this.cache.get<WhatWePayResponse>(
       PublicCacheService.KEY_WHAT_WE_PAY,
