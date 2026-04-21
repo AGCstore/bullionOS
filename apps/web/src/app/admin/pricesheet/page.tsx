@@ -161,9 +161,14 @@ function PriceRow({
     meltValue > 0 && row.buy_price !== null
       ? (Number(row.buy_price) / meltValue) * 100
       : null;
-  const sellPct =
+  // We Sell subtitle is dollar-markup over spot melt value, not a
+  // percentage — operator's mental model at the counter is "we're
+  // charging $X over melt," not "we're charging 105%." Negative
+  // values (sell below melt) are unusual but displayed verbatim so
+  // pricing-rule misconfigurations are obvious.
+  const sellOverSpot =
     meltValue > 0 && row.sell_price !== null
-      ? (Number(row.sell_price) / meltValue) * 100
+      ? Number(row.sell_price) - meltValue
       : null;
 
   return (
@@ -193,9 +198,11 @@ function PriceRow({
             ? `$${Number(row.sell_price).toFixed(2)}`
             : '—'}
         </div>
-        {sellPct !== null && (
+        {sellOverSpot !== null && (
           <div className="font-mono text-[11px] text-green-600/80">
-            {sellPct.toFixed(1)}% of spot
+            {sellOverSpot >= 0
+              ? `+$${sellOverSpot.toFixed(2)} over spot`
+              : `-$${Math.abs(sellOverSpot).toFixed(2)} under spot`}
           </div>
         )}
       </td>
