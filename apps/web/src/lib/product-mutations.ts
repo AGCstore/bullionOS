@@ -35,18 +35,58 @@ export async function savePatch(
 /**
  * Reorder the full catalog. The server stores one global sort_order
  * per product (migration 018) — any drag on any surface ultimately
- * funnels into this endpoint so Catalog / Products / In-stock / Buy
- * sheet agree on the sequence. Caller passes the new flat list of
- * product ids in the desired order.
+ * funnels into this endpoint so Catalog / In-stock sheet / Buy sheet
+ * agree on the sequence. Caller passes the new flat list of product
+ * ids in the desired order.
+ *
+ * Optimistic update: we rewrite sort_order values in the React Query
+ * cache for ['admin', 'products'] and ['admin', 'products', 'sheet']
+ * BEFORE awaiting the server. Without this, the sheet pages snap the
+ * dragged row back to its old position during the ~200-500ms server
+ * roundtrip because their render is driven entirely by cached
+ * sort_order. If the server call fails we reset the cache.
  */
 export async function saveOrder(
   qc: QueryClient,
   orderedIds: string[],
 ): Promise<void> {
-  await apiFetch('/admin/products/reorder', {
-    method: 'POST',
-    body: JSON.stringify({ order: orderedIds }),
-  });
+  const positionByProduct = new Map<string, number>();
+  orderedIds.forEach((id, i) => positionByProduct.set(id, (i + 1) * 10));
+
+  // Snapshot for rollback.
+  const prevProducts = qc.getQueryData(['admin', 'products']);
+  const prevSheet = qc.getQueryData(['admin', 'products', 'sheet']);
+
+  const applyOrder = <T extends { id?: string; product_id?: string; sort_order: number }>(
+    rows: T[] | undefined,
+  ): T[] | undefined => {
+    if (!rows) return rows;
+    return rows.map((r) => {
+      const key = r.id ?? r.product_id;
+      const next = key ? positionByProduct.get(key) : undefined;
+      return next !== undefined ? { ...r, sort_order: next } : r;
+    });
+  };
+  qc.setQueryData(['admin', 'products'], (rows: unknown) =>
+    applyOrder(rows as Array<{ id?: string; product_id?: string; sort_order: number }>),
+  );
+  qc.setQueryData(['admin', 'products', 'sheet'], (rows: unknown) =>
+    applyOrder(rows as Array<{ id?: string; product_id?: string; sort_order: number }>),
+  );
+
+  try {
+    await apiFetch('/admin/products/reorder', {
+      method: 'POST',
+      body: JSON.stringify({ order: orderedIds }),
+    });
+  } catch (err) {
+    // Roll back the optimistic cache so the UI reverts to the pre-drag
+    // state instead of the in-flight intermediate.
+    qc.setQueryData(['admin', 'products'], prevProducts);
+    qc.setQueryData(['admin', 'products', 'sheet'], prevSheet);
+    throw err;
+  }
+
   await Promise.all([
     qc.invalidateQueries({ queryKey: ['admin', 'products'] }),
     qc.invalidateQueries({ queryKey: ['admin', 'products', 'sheet'] }),
