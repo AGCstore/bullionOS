@@ -88,10 +88,20 @@ export default function InvoicesPage() {
       alert(err instanceof ApiError ? err.message : 'Delete failed');
     }
   }
+  // Canceled invoices are "ghosts" — audit-retained but visually noisy
+  // everywhere else. The Canceled tab is the single place they show up;
+  // every other tab (including All) hides them. API doesn't support a
+  // status≠canceled filter, so we strip client-side — the 500-row cap
+  // on the list endpoint keeps the work trivial.
+  const withoutCanceled =
+    tab === 'canceled'
+      ? data ?? []
+      : (data ?? []).filter((inv) => inv.status !== 'canceled');
   // "Recent" is a compact top-N slice of the same payload "All" fetches.
   // Rendered-at-top-of-list is the UX win; the server payload is small
   // enough (<= 500 rows) that filtering client-side is fine.
-  const displayRows = tab === 'recent' ? (data ?? []).slice(0, 15) : data ?? [];
+  const displayRows =
+    tab === 'recent' ? withoutCanceled.slice(0, 15) : withoutCanceled;
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -198,7 +208,7 @@ export default function InvoicesPage() {
                 )}
               </tr>
             ))}
-            {(!data || data.length === 0) && (
+            {displayRows.length === 0 && (
               <tr>
                 <td colSpan={7} className="px-4 py-12 text-center text-ink-400">
                   No invoices in this view.
