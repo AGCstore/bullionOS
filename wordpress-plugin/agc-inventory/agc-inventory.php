@@ -5,7 +5,7 @@
  * Description:       Live inventory and "What We Pay" widgets for Atlanta
  *                    Gold & Coin, fed by the AGC Desk API. Elementor widgets
  *                    + shortcodes, auto-refreshing during shop hours.
- * Version:           2.0.2
+ * Version:           2.0.3
  * Author:            Atlanta Gold and Coin
  * License:           Proprietary
  * Text Domain:       agc-inventory
@@ -48,7 +48,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-define( 'AGC_INV_VERSION', '2.0.2' );
+define( 'AGC_INV_VERSION', '2.0.3' );
 define( 'AGC_INV_DEFAULT_BASE', 'https://agc-api-production.up.railway.app/api/v1' );
 // Server-side transient TTL. Short enough that a show_on_website toggle
 // in AGC Desk appears on the shop's WP page within ~15s, long enough
@@ -384,7 +384,8 @@ function agc_inv_render_live_inventory( $atts ) {
         <?php endforeach; ?>
         <p class="agc-inv-footnote">
             Updated <span class="agc-inv-updated"><?php echo esc_html( current_time( 'g:i A' ) ); ?></span>.
-            Refreshes every minute between 8 AM &ndash; 6 PM Eastern. Call
+            Refreshes every minute while the metals market is open
+            (Sun 6 PM &ndash; Fri 5 PM Eastern, daily break 5&ndash;6 PM). Call
             <a href="tel:4042369744">404-236-9744</a> to confirm availability.
         </p>
     </div>
@@ -437,7 +438,8 @@ function agc_inv_render_what_we_pay( $atts ) {
         <?php endforeach; ?>
         <p class="agc-inv-footnote">
             Live prices &mdash; updated <span class="agc-inv-updated"><?php echo esc_html( current_time( 'g:i A' ) ); ?></span>.
-            Refreshes every minute between 8 AM &ndash; 6 PM Eastern. Prices
+            Refreshes every minute while the metals market is open
+            (Sun 6 PM &ndash; Fri 5 PM Eastern, daily break 5&ndash;6 PM). Prices
             are indicative; call <a href="tel:4042369744">404-236-9744</a> to schedule your appointment.
         </p>
     </div>

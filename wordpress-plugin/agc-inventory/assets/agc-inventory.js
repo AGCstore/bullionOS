@@ -50,22 +50,48 @@
   }
 
   /**
-   * Return true when it's 08:00–18:00 in US/Eastern. We use
-   * Intl.DateTimeFormat with timeZone: 'America/New_York' so the check
-   * works regardless of the visitor's locale.
+   * Return true when the metals market is open AND we're inside one of
+   * the two daily refresh windows, all in US/Eastern:
+   *
+   *   Day window:       08:00 – 17:00
+   *   Overnight window: 18:00 – 07:00 (wraps midnight)
+   *
+   *   Gaps (NO refresh):   17:00 – 18:00  (COMEX daily break)
+   *                        07:00 – 08:00  (pre-market quiet hour)
+   *
+   *   Weekend close:       Fri 17:00 – Sun 18:00  (market closed)
+   *
+   * Tracks CME Globex hours for precious-metals futures. The page
+   * still renders during gaps/close — only the 60s poller pauses.
    */
   function inBusinessHours() {
     try {
       var parts = new Intl.DateTimeFormat('en-US', {
         timeZone: 'America/New_York',
+        weekday: 'short',
         hour: 'numeric',
         hour12: false,
       }).formatToParts(new Date());
       var hour = 0;
+      var weekday = '';
       for (var i = 0; i < parts.length; i++) {
         if (parts[i].type === 'hour') hour = parseInt(parts[i].value, 10);
+        if (parts[i].type === 'weekday') weekday = parts[i].value;
       }
-      return hour >= (cfg.windowStart || 8) && hour < (cfg.windowEnd || 18);
+      // Intl returns hour=24 at the exact start of the next day in some
+      // runtimes; normalize so comparisons work.
+      if (hour === 24) hour = 0;
+
+      // Weekend close: Fri ≥17:00 through Sun <18:00
+      if (weekday === 'Fri' && hour >= 17) return false;
+      if (weekday === 'Sat') return false;
+      if (weekday === 'Sun' && hour < 18) return false;
+
+      // Daily gaps
+      if (hour === 17) return false; // 17:00-17:59 (COMEX break)
+      if (hour === 7) return false;  // 07:00-07:59 (pre-market quiet)
+
+      return true;
     } catch (e) {
       // If the runtime doesn't support tz parts, always refresh —
       // erring on the side of fresh data for the operator.
@@ -121,7 +147,7 @@
       (widget === 'live-inventory' ? 'Updated ' : 'Live prices — updated ') +
       '<span class="agc-inv-updated">' +
       escapeHtml(data.updated || '') +
-      '</span>. Refreshes every minute between 8 AM – 6 PM Eastern. ' +
+      '</span>. Refreshes every minute while the metals market is open (Sun 6 PM – Fri 5 PM Eastern, daily break 5–6 PM). ' +
       (widget === 'live-inventory'
         ? 'Call <a href="tel:4042369744">404-236-9744</a> to confirm availability.'
         : 'Prices are indicative; call <a href="tel:4042369744">404-236-9744</a> to schedule your appointment.') +

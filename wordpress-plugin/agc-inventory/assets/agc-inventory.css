@@ -17,16 +17,28 @@
  */
 
 .agc-inv-wrap {
-    --agc-bg: #05060d;
-    --agc-bg-soft: #0c0e17;
+    /* v4 palette — DEEP navy gradient base. Stays blue enough to read as
+     * "navy" rather than black, but dark enough to anchor a shop-page
+     * block without screaming. Metal-group headings pick up a muted
+     * gold-grey (brass) so they feel elegant rather than traffic-cone
+     * gold, while the bright --agc-gold is still there for accents
+     * (borders, links, focus rings). */
+    --agc-bg: #0a1528;
+    --agc-bg-soft: #142846;
     --agc-ink: #ede8df;
-    --agc-muted: #9e9585;
-    --agc-gold: #d4a017;
+    --agc-muted: #9aa6b8;
+    --agc-gold: #d4a017;         /* bright gold — accents only */
     --agc-gold-soft: #f0d58a;
+    --agc-brass: #b5a07a;        /* muted gold-grey for headings */
+    --agc-brass-soft: #d1c2a0;
 
     font-family: 'Instrument Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
     color: var(--agc-ink);
-    background: var(--agc-bg);
+    background: linear-gradient(
+        180deg,
+        var(--agc-bg-soft) 0%,
+        var(--agc-bg) 100%
+    );
     padding: 1.75rem 1.5rem;
     border-radius: 6px;
     max-width: 100%;
@@ -45,23 +57,23 @@
     font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: var(--agc-gold);
+    color: var(--agc-brass);
     padding: 0.65rem 0.9rem;
     margin: 0 0 0.75rem 0;
-    border: 1px solid var(--agc-gold);
+    border: 1px solid rgba(181, 160, 122, 0.4);
     border-radius: 4px;
     background: linear-gradient(
         180deg,
-        rgba(212, 160, 23, 0.06) 0%,
-        rgba(212, 160, 23, 0) 100%
+        rgba(181, 160, 122, 0.10) 0%,
+        rgba(181, 160, 122, 0) 100%
     );
 }
 
-/* Per-metal accents use the gold palette only — the original plugin
- * painted each metal with a different hue (amber, slate, sky, violet).
- * The spec's 5-color system is deliberately tight, so every metal gets
- * the same gold outline and differentiation is carried by the section
- * label text alone. Keeps the front end disciplined. */
+/* Per-metal accents use the muted brass palette uniformly — the original
+ * plugin painted each metal with a different hue (amber, slate, sky,
+ * violet). We keep the taxonomy tight on purpose: every metal gets the
+ * same brass outline and differentiation is carried by the section
+ * label text alone. Reserves bright --agc-gold for borders/links. */
 .agc-inv-wrap .agc-inv-section--gold .agc-inv-metal-heading,
 .agc-inv-wrap .agc-inv-section--silver .agc-inv-metal-heading,
 .agc-inv-wrap .agc-inv-section--platinum .agc-inv-metal-heading,
@@ -69,11 +81,11 @@
 .agc-inv-wrap .agc-inv-section--other .agc-inv-metal-heading {
     background: linear-gradient(
         180deg,
-        rgba(212, 160, 23, 0.06) 0%,
-        rgba(212, 160, 23, 0) 100%
+        rgba(181, 160, 122, 0.10) 0%,
+        rgba(181, 160, 122, 0) 100%
     );
-    border-color: var(--agc-gold);
-    color: var(--agc-gold);
+    border-color: rgba(181, 160, 122, 0.4);
+    color: var(--agc-brass);
 }
 
 /* Table ──────────────────────────────── */
