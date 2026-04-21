@@ -249,6 +249,49 @@ export class ClientsService {
    * Returns the resolved client id + whether it's newly created so the
    * caller can surface "created client" vs "linked existing" in the UI.
    */
+  /**
+   * Read-only twin of findOrCreateByContact — returns the matching
+   * client id or null without creating anything. Used by the calendar
+   * UI to show "linked to X" badges without side effects on page load.
+   * Same matching order: primary email → secondary_emails → phone
+   * last-10-digits.
+   */
+  async findByContact(input: {
+    email?: string | null;
+    phone?: string | null;
+  }): Promise<{ id: string } | null> {
+    const email = input.email?.trim().toLowerCase() ?? null;
+    const phone = input.phone?.trim() ?? null;
+    const digits = phone?.replace(/\D/g, '') ?? null;
+    const last10 = digits && digits.length >= 10 ? digits.slice(-10) : digits;
+
+    if (email) {
+      const hit = await this.db
+        .selectFrom('clients')
+        .select('id')
+        .where('email', '=', email)
+        .executeTakeFirst();
+      if (hit) return { id: hit.id };
+      const sec = await this.db
+        .selectFrom('clients')
+        .select('id')
+        .where(sql<boolean>`secondary_emails @> ${JSON.stringify([email])}::jsonb`)
+        .executeTakeFirst();
+      if (sec) return { id: sec.id };
+    }
+    if (last10 && last10.length >= 10) {
+      const hit = await this.db
+        .selectFrom('clients')
+        .select('id')
+        .where(
+          sql<boolean>`right(regexp_replace(coalesce(phone, ''), '\\D', '', 'g'), 10) = ${last10}`,
+        )
+        .executeTakeFirst();
+      if (hit) return { id: hit.id };
+    }
+    return null;
+  }
+
   async findOrCreateByContact(input: {
     name?: string | null;
     email?: string | null;

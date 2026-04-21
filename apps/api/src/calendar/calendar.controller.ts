@@ -38,6 +38,7 @@ import { IntegrationsService } from '../integrations/integrations.service';
 import type { CredentialsFor } from '../integrations/integrations.registry';
 import { CalendarService } from './calendar.service';
 import { CalendarBookingsService } from './calendar-bookings.service';
+import { ClientsService } from '../clients/clients.service';
 
 class EventAttendeeDto {
   @IsEmail()
@@ -91,6 +92,35 @@ class LinkBookingDto {
   @ValidateIf((_, v) => v !== null)
   @IsUUID()
   client_id?: string | null;
+}
+
+/**
+ * Used by the Calendar page to turn a Google Calendar attendee into a
+ * CRM client. Email is the preferred signal; name + phone are
+ * supplementary so the created client row is pre-filled if no match
+ * existed.
+ *
+ * dryRun=true → read-only probe (for the "linked to X" badge on each
+ * attendee row).
+ */
+class ResolveAttendeeDto {
+  @IsOptional()
+  @IsEmail()
+  @MaxLength(254)
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  phone?: string;
+
+  @IsOptional()
+  dryRun?: boolean;
 }
 
 class CreateBookingDto {
@@ -154,6 +184,7 @@ export class CalendarController {
     private readonly calendar: CalendarService,
     private readonly bookings: CalendarBookingsService,
     private readonly integrations: IntegrationsService,
+    private readonly clients: ClientsService,
   ) {}
 
   // ---------- Public booking ----------
@@ -257,6 +288,44 @@ export class CalendarController {
   @Roles('admin', 'staff')
   adminListPendingBookings() {
     return this.bookings.listPending();
+  }
+
+  /**
+   * Resolve a calendar attendee to a client record.
+   *
+   * Takes the attendee's email + name + phone as they appear on the
+   * Google Calendar event, runs the same findOrCreateByContact
+   * matcher that public bookings use (email primary → secondary
+   * emails → phone last-10 → create retail client on miss), and
+   * returns the resulting client id plus a flag saying whether it
+   * was already in the system.
+   *
+   * `dryRun=true` in the body skips the create step and just reports
+   * whether a match exists — used by the calendar page to render
+   * "linked to X" vs "+ Create client" on each attendee row without
+   * auto-creating anyone on page load.
+   */
+  @Post('admin/calendar/resolve-attendee')
+  @Roles('admin', 'staff')
+  @HttpCode(200)
+  async resolveAttendee(
+    @Body() dto: ResolveAttendeeDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    if (dto.dryRun) {
+      const match = await this.clients.findByContact({
+        email: dto.email ?? null,
+        phone: dto.phone ?? null,
+      });
+      return match ? { client_id: match.id, created: false, matched: true } : { matched: false };
+    }
+    const res = await this.clients.findOrCreateByContact({
+      name: dto.name ?? null,
+      email: dto.email ?? null,
+      phone: dto.phone ?? null,
+      actorUserId: user.id,
+    });
+    return { client_id: res.id, created: res.created, matched: !res.created };
   }
 
   /**

@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, ApiError } from '@/lib/api-client';
 
@@ -179,18 +180,7 @@ function EventRow({
         {event.attendees.length > 0 && (
           <div className="mt-1 flex flex-wrap gap-1 text-[11px]">
             {event.attendees.slice(0, 6).map((a) => (
-              <span
-                key={a.email}
-                className={`rounded-full px-2 py-0.5 ${
-                  a.responseStatus === 'accepted'
-                    ? 'bg-green-100 text-green-700'
-                    : a.responseStatus === 'declined'
-                      ? 'bg-red-100 text-red-700'
-                      : 'bg-ink-100 text-ink-600'
-                }`}
-              >
-                {a.name ?? a.email}
-              </span>
+              <AttendeeChip key={a.email} attendee={a} />
             ))}
           </div>
         )}
@@ -214,6 +204,106 @@ function EventRow({
         </button>
       </div>
     </div>
+  );
+}
+
+/**
+ * Attendee pill that knows whether this email is already in the CRM.
+ *
+ * On mount, does a dry-run lookup (no write) against
+ * /admin/calendar/resolve-attendee. If matched: the chip becomes a
+ * Link to the client record, styled green/red/grey depending on the
+ * attendee's RSVP status. If not matched: a small "+ add" action
+ * appears that kicks off a non-dry-run resolve, which creates the
+ * client using findOrCreateByContact (email → phone → name → create).
+ *
+ * Staying deliberately light-weight: dry-run per-attendee per-render
+ * is fine — the list is capped at 6 attendees per event and results
+ * are cached by react-query on the email as key, so re-renders don't
+ * re-fetch.
+ */
+function AttendeeChip({
+  attendee,
+}: {
+  attendee: { email: string; name: string | null; responseStatus: string | null };
+}) {
+  const qc = useQueryClient();
+  const { data, isLoading } = useQuery({
+    queryKey: ['admin', 'client-lookup', attendee.email.toLowerCase()],
+    queryFn: () =>
+      apiFetch<{ matched: boolean; client_id?: string }>(
+        '/admin/calendar/resolve-attendee',
+        {
+          method: 'POST',
+          body: JSON.stringify({ email: attendee.email, dryRun: true }),
+        },
+      ),
+    // Client linkage doesn't change between page loads often; keep it
+    // cached for the session so reopening the calendar doesn't
+    // re-probe every attendee.
+    staleTime: 5 * 60_000,
+  });
+
+  const statusCls =
+    attendee.responseStatus === 'accepted'
+      ? 'bg-green-100 text-green-700'
+      : attendee.responseStatus === 'declined'
+        ? 'bg-red-100 text-red-700'
+        : 'bg-ink-100 text-ink-600';
+
+  async function createClient() {
+    try {
+      const res = await apiFetch<{ client_id: string; created: boolean }>(
+        '/admin/calendar/resolve-attendee',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            email: attendee.email,
+            name: attendee.name ?? undefined,
+          }),
+        },
+      );
+      await qc.invalidateQueries({
+        queryKey: ['admin', 'client-lookup', attendee.email.toLowerCase()],
+      });
+      if (res.created) {
+        window.open(`/admin/clients/${res.client_id}`, '_blank');
+      }
+    } catch (err) {
+      alert(err instanceof ApiError ? err.message : 'Failed to create client');
+    }
+  }
+
+  const label = attendee.name ?? attendee.email;
+  if (isLoading) {
+    return (
+      <span className={`rounded-full px-2 py-0.5 opacity-60 ${statusCls}`}>
+        {label}
+      </span>
+    );
+  }
+  if (data?.matched && data.client_id) {
+    return (
+      <Link
+        href={`/admin/clients/${data.client_id}`}
+        className={`rounded-full px-2 py-0.5 hover:underline ${statusCls}`}
+        title="Linked to CRM client"
+      >
+        {label} →
+      </Link>
+    );
+  }
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 ${statusCls}`}>
+      {label}
+      <button
+        onClick={createClient}
+        className="text-[10px] font-semibold text-ink-900 hover:underline"
+        title="Create CRM client from this attendee"
+      >
+        + add
+      </button>
+    </span>
   );
 }
 
