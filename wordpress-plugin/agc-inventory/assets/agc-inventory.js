@@ -127,7 +127,12 @@
 
   function render(root, widget, data) {
     var grouped = data.grouped || {};
-    var html = '';
+    // Spot strip — prepended to the rebuilt HTML so it survives the
+    // innerHTML swap below. Only rendered on What We Pay; Live Inventory
+    // skips it entirely. When the API spot call fails, renderSpotStrip
+    // returns an empty placeholder rather than leaving stale prices.
+    var html =
+      widget === 'what-we-pay' ? renderSpotStrip(data.spot || null) : '';
     var order = ['gold', 'silver', 'platinum', 'palladium', 'other'];
     for (var i = 0; i < order.length; i++) {
       var m = order[i];
@@ -196,6 +201,43 @@
       body +
       '</tbody></table></section>'
     );
+  }
+
+  /**
+   * Four-metal spot strip. Mirrors the PHP renderer — same classnames
+   * so the CSS layer knows only one structure. When spot is null (API
+   * down / cold cache), renders an empty placeholder to reserve the
+   * vertical space so the page doesn't jump on the next successful poll.
+   */
+  function renderSpotStrip(spot) {
+    var metals = [
+      { key: 'gold', label: 'Gold' },
+      { key: 'silver', label: 'Silver' },
+      { key: 'platinum', label: 'Platinum' },
+      { key: 'palladium', label: 'Palladium' },
+    ];
+    if (!spot) {
+      return '<div class="agc-inv-spot-strip" data-agc-spot="empty"></div>';
+    }
+    var html = '<div class="agc-inv-spot-strip" data-agc-spot="ready">';
+    for (var i = 0; i < metals.length; i++) {
+      var m = metals[i];
+      var raw = spot[m.key];
+      var priceHtml =
+        raw != null && isFinite(Number(raw)) ? '$' + formatMoney(raw) : '&mdash;';
+      html +=
+        '<div class="agc-inv-spot agc-inv-spot--' +
+        m.key +
+        '"><span class="agc-inv-spot-label">' +
+        m.label +
+        '</span><span class="agc-inv-spot-price" data-agc-spot-metal="' +
+        m.key +
+        '">' +
+        priceHtml +
+        '</span></div>';
+    }
+    html += '</div>';
+    return html;
   }
 
   function formatMoney(v) {

@@ -45,6 +45,59 @@
     letter-spacing: 0.01em;
 }
 
+/* Spot-price strip ──────────────────────────────── */
+
+/* Renders above the metal-group headings on the What We Pay widget only.
+ * Responsive 4-up on desktop, collapses to 2-up on narrow viewports. */
+.agc-inv-wrap .agc-inv-spot-strip {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+}
+@media (max-width: 560px) {
+    .agc-inv-wrap .agc-inv-spot-strip {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+/* Empty state (API cold / error) reserves the vertical room so layout
+ * doesn't jump on the next successful poll. */
+.agc-inv-wrap .agc-inv-spot-strip[data-agc-spot="empty"] {
+    min-height: 3.25rem;
+}
+
+.agc-inv-wrap .agc-inv-spot {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.6rem 0.85rem;
+    border: 1px solid rgba(181, 160, 122, 0.3);
+    border-radius: 4px;
+    background: linear-gradient(
+        180deg,
+        rgba(181, 160, 122, 0.08) 0%,
+        rgba(181, 160, 122, 0.02) 100%
+    );
+}
+
+.agc-inv-wrap .agc-inv-spot-label {
+    font-family: inherit;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--agc-brass);
+}
+
+.agc-inv-wrap .agc-inv-spot-price {
+    font-family: 'Courier New', Consolas, monospace;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--agc-ink);
+    font-variant-numeric: tabular-nums;
+}
+
 /* Metal-group sections ──────────────────────────────── */
 
 .agc-inv-wrap .agc-inv-section {

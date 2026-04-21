@@ -5,7 +5,7 @@
  * Description:       Live inventory and "What We Pay" widgets for Atlanta
  *                    Gold & Coin, fed by the AGC Desk API. Elementor widgets
  *                    + shortcodes, auto-refreshing during shop hours.
- * Version:           2.0.3
+ * Version:           2.0.4
  * Author:            Atlanta Gold and Coin
  * License:           Proprietary
  * Text Domain:       agc-inventory
@@ -48,7 +48,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-define( 'AGC_INV_VERSION', '2.0.3' );
+define( 'AGC_INV_VERSION', '2.0.4' );
 define( 'AGC_INV_DEFAULT_BASE', 'https://agc-api-production.up.railway.app/api/v1' );
 // Server-side transient TTL. Short enough that a show_on_website toggle
 // in AGC Desk appears on the shop's WP page within ~15s, long enough
@@ -247,10 +247,16 @@ function agc_inv_ajax_what_we_pay() {
     }
     $items   = agc_inv_filter_by_metal( $payload['items'], $metal );
     $grouped = agc_inv_group_by_metal( $items );
+    // Spot feed is a second endpoint — fetching it here so the JS poller
+    // can refresh both the pay-list AND the top-of-widget spot strip in
+    // a single roundtrip. Cached transiently same as the pay-list (15s),
+    // and non-fatal: a null spot just hides the strip until the next tick.
+    $spot = agc_inv_fetch( 'public/spot' );
     wp_send_json_success( [
         'grouped' => $grouped,
         'mode'    => 'what-we-pay',
         'updated' => current_time( 'g:i A' ),
+        'spot'    => is_array( $spot ) ? $spot : null,
     ] );
 }
 
@@ -404,10 +410,13 @@ function agc_inv_render_what_we_pay( $atts ) {
     $items   = $payload['items'];
     $items   = agc_inv_filter_by_metal( $items, $atts['metal'] );
     $grouped = agc_inv_group_by_metal( $items );
+    // Spot strip data — hidden gracefully if the spot endpoint is down.
+    $spot = agc_inv_fetch( 'public/spot' );
 
     ob_start();
     ?>
     <div class="agc-inv-wrap" data-agc-widget="what-we-pay" data-agc-metal="<?php echo esc_attr( $atts['metal'] ); ?>">
+        <?php echo agc_inv_render_spot_strip( $spot ); ?>
         <?php if ( empty( $items ) ): ?>
             <p class="agc-inv-empty">Pricing coming soon.</p>
         <?php endif; ?>
@@ -445,6 +454,40 @@ function agc_inv_render_what_we_pay( $atts ) {
     </div>
     <?php
     return ob_get_clean();
+}
+
+/**
+ * Four-metal spot strip rendered above the What We Pay widget. The JS
+ * poller replaces this HTML in-place on every refresh via matching
+ * classnames (.agc-inv-spot-strip + .agc-inv-spot-price per metal).
+ *
+ * Returns empty string when spot payload is missing or malformed so the
+ * widget still paints instead of showing a broken "Loading..." placeholder.
+ */
+function agc_inv_render_spot_strip( $spot ) {
+    if ( ! is_array( $spot ) ) {
+        return '<div class="agc-inv-spot-strip" data-agc-spot="empty"></div>';
+    }
+    $metals = [
+        'gold'      => 'Gold',
+        'silver'    => 'Silver',
+        'platinum'  => 'Platinum',
+        'palladium' => 'Palladium',
+    ];
+    $html = '<div class="agc-inv-spot-strip" data-agc-spot="ready">';
+    foreach ( $metals as $key => $label ) {
+        $price = isset( $spot[ $key ] ) ? $spot[ $key ] : null;
+        $html .= '<div class="agc-inv-spot agc-inv-spot--' . esc_attr( $key ) . '">';
+        $html .= '<span class="agc-inv-spot-label">' . esc_html( $label ) . '</span>';
+        $html .= '<span class="agc-inv-spot-price" data-agc-spot-metal="' . esc_attr( $key ) . '">';
+        $html .= $price !== null
+            ? '$' . esc_html( number_format( floatval( $price ), 2 ) )
+            : '&mdash;';
+        $html .= '</span>';
+        $html .= '</div>';
+    }
+    $html .= '</div>';
+    return $html;
 }
 
 /**
