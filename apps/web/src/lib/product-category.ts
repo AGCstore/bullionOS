@@ -42,7 +42,7 @@ export const SECTIONS: DisplaySection[] = [
   { id: 'gold_coins', label: 'Gold Coins', metal: 'gold' },
   {
     id: 'us_mint_proof_gold',
-    label: 'US Mint Proof Gold Coin',
+    label: 'US Mint Proof Gold Coins',
     metal: 'gold',
   },
   { id: 'gold_bars', label: 'Gold Bars', metal: 'gold' },
