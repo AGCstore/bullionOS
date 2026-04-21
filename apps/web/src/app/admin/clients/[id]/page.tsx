@@ -587,7 +587,12 @@ function ClientAttachmentsPanel({ clientId }: { clientId: string }) {
       ) : (
         <ul className="grid grid-cols-1 gap-2 md:grid-cols-2">
           {(files ?? []).map((f) => (
-            <AttachmentCard key={f.id} attachment={f} onDelete={remove} />
+            <AttachmentCard
+              key={f.id}
+              attachment={f}
+              clientId={clientId}
+              onDelete={remove}
+            />
           ))}
         </ul>
       )}
@@ -595,14 +600,35 @@ function ClientAttachmentsPanel({ clientId }: { clientId: string }) {
   );
 }
 
+interface OcrFields {
+  first_name?: string;
+  last_name?: string;
+  middle_name?: string;
+  suffix?: string;
+  address_line1?: string;
+  city?: string;
+  state?: string;
+  postal_code?: string;
+  country?: string;
+  date_of_birth?: string;
+  expiration_date?: string;
+  issue_date?: string;
+  document_number?: string;
+  min_confidence?: number;
+}
+
 function AttachmentCard({
   attachment,
+  clientId,
   onDelete,
 }: {
   attachment: AttachmentMeta;
+  clientId: string;
   onDelete: (att: AttachmentMeta) => void;
 }) {
+  const qc = useQueryClient();
   const [previewSrc, setPreviewSrc] = useState<string | null>(null);
+  const [applyOpen, setApplyOpen] = useState(false);
   const isImage = attachment.mime.startsWith('image/');
   const kindLabel =
     ATTACHMENT_KINDS.find((k) => k.id === attachment.kind)?.label ??
@@ -624,16 +650,37 @@ function AttachmentCard({
     }
   }
 
+  // OCR status badge. 'succeeded' also unlocks the Fill-from-ID
+  // button; 'failed' stays visible so operators know the attempt
+  // happened and can re-upload if needed.
+  const ocrBadge =
+    attachment.ocr_status === 'succeeded'
+      ? { text: 'OCR ✓', cls: 'bg-green-50 text-green-700' }
+      : attachment.ocr_status === 'failed'
+        ? { text: 'OCR failed', cls: 'bg-red-50 text-red-700' }
+        : attachment.ocr_status === 'pending'
+          ? { text: 'OCR…', cls: 'bg-ink-100 text-ink-600' }
+          : null;
+
   return (
     <li className="rounded-xl border border-ink-200 bg-white p-3">
       <div className="flex items-start justify-between gap-2">
-        <div>
-          <div className="text-[10px] font-semibold uppercase tracking-wide text-ink-400">
-            {kindLabel}
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-400">
+              {kindLabel}
+            </span>
+            {ocrBadge && (
+              <span
+                className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${ocrBadge.cls}`}
+              >
+                {ocrBadge.text}
+              </span>
+            )}
           </div>
           <button
             onClick={openFile}
-            className="mt-0.5 block text-sm font-medium text-ink-900 hover:underline"
+            className="mt-0.5 block truncate text-sm font-medium text-ink-900 hover:underline"
             title="Open"
           >
             {isImage ? '📷' : '📎'} {attachment.filename}
@@ -643,13 +690,24 @@ function AttachmentCard({
             {new Date(attachment.created_at).toLocaleDateString()}
           </div>
         </div>
-        <button
-          onClick={() => onDelete(attachment)}
-          aria-label="Delete attachment"
-          className="rounded-md border border-red-200 px-2 py-0.5 text-xs text-red-700 hover:bg-red-50"
-        >
-          Delete
-        </button>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          {attachment.ocr_status === 'succeeded' && (
+            <button
+              onClick={() => setApplyOpen(true)}
+              className="rounded-md border border-gold-500 bg-gold-500/10 px-2 py-0.5 text-xs font-medium text-gold-700 hover:bg-gold-500/20"
+              title="Pre-fill this client's record with fields extracted from the ID"
+            >
+              Fill from ID
+            </button>
+          )}
+          <button
+            onClick={() => onDelete(attachment)}
+            aria-label="Delete attachment"
+            className="rounded-md border border-red-200 px-2 py-0.5 text-xs text-red-700 hover:bg-red-50"
+          >
+            Delete
+          </button>
+        </div>
       </div>
       {previewSrc && (
         <div className="mt-3">
@@ -661,7 +719,167 @@ function AttachmentCard({
           />
         </div>
       )}
+      {applyOpen && (
+        <ApplyFromIdPanel
+          attachmentId={attachment.id}
+          clientId={clientId}
+          onClose={() => setApplyOpen(false)}
+          onApplied={async () => {
+            await qc.invalidateQueries({ queryKey: ['admin', 'client', clientId] });
+            setApplyOpen(false);
+          }}
+        />
+      )}
     </li>
+  );
+}
+
+/**
+ * Panel: fetches OCR fields, previews each, lets the operator check
+ * which fields to apply, then PATCHes the client record. Intentional
+ * opt-in per field — Textract confidence is usually high but operators
+ * should see what's being written.
+ */
+function ApplyFromIdPanel({
+  attachmentId,
+  clientId,
+  onClose,
+  onApplied,
+}: {
+  attachmentId: string;
+  clientId: string;
+  onClose: () => void;
+  onApplied: () => Promise<void> | void;
+}) {
+  const { data } = useQuery({
+    queryKey: ['admin', 'client-attachment', attachmentId, 'ocr'],
+    queryFn: () =>
+      apiFetch<{ status: string | null; fields: OcrFields | null; text: string | null }>(
+        `/admin/client-attachments/${attachmentId}/ocr`,
+      ),
+    staleTime: 30_000,
+  });
+  const [picks, setPicks] = useState<Record<string, boolean>>({});
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const fields = data?.fields ?? {};
+  // Candidate list — only fields that have a value AND map to a
+  // column on the clients table. date_of_birth etc. are extracted for
+  // audit but we don't store them on the client row today.
+  const candidates: Array<{ key: keyof OcrFields; label: string; patchKey: string }> = (
+    [
+      { key: 'first_name', label: 'First name', patchKey: 'first_name' },
+      { key: 'last_name', label: 'Last name', patchKey: 'last_name' },
+      { key: 'address_line1', label: 'Address', patchKey: 'address_line1' },
+      { key: 'city', label: 'City', patchKey: 'city' },
+      { key: 'state', label: 'State', patchKey: 'region' },
+      { key: 'postal_code', label: 'Postal code', patchKey: 'postal_code' },
+    ] as const
+  ).filter((c) => {
+    const v = fields[c.key];
+    return typeof v === 'string' && v.length > 0;
+  }) as Array<{ key: keyof OcrFields; label: string; patchKey: string }>;
+
+  async function apply() {
+    setErr(null);
+    setBusy(true);
+    try {
+      const patch: Record<string, string> = {};
+      for (const c of candidates) {
+        if (picks[c.key] !== false) {
+          // Default-checked: pick unless operator unchecked it.
+          patch[c.patchKey] = String(fields[c.key]);
+        }
+      }
+      if (Object.keys(patch).length === 0) {
+        setErr('Select at least one field to apply');
+        setBusy(false);
+        return;
+      }
+      await apiFetch(`/admin/clients/${clientId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      });
+      await onApplied();
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : 'Apply failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-3 rounded-md border border-gold-500/40 bg-gold-500/5 p-3">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold uppercase tracking-wide text-gold-700">
+          Fill from ID · preview
+        </span>
+        <button
+          onClick={onClose}
+          className="text-xs text-ink-500 hover:text-ink-900"
+        >
+          Close
+        </button>
+      </div>
+      {!data ? (
+        <p className="mt-2 text-xs text-ink-500">Loading OCR fields…</p>
+      ) : candidates.length === 0 ? (
+        <p className="mt-2 text-xs text-ink-500">
+          No applicable fields were extracted.
+        </p>
+      ) : (
+        <>
+          <ul className="mt-2 space-y-1 text-xs">
+            {candidates.map((c) => (
+              <li key={c.key} className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id={`ocr-${c.key}`}
+                  defaultChecked
+                  onChange={(e) =>
+                    setPicks((p) => ({ ...p, [c.key]: e.target.checked }))
+                  }
+                />
+                <label
+                  htmlFor={`ocr-${c.key}`}
+                  className="flex-1 cursor-pointer"
+                >
+                  <span className="font-semibold text-ink-700">{c.label}:</span>{' '}
+                  <span className="text-ink-900">{String(fields[c.key])}</span>
+                </label>
+              </li>
+            ))}
+          </ul>
+          {fields.min_confidence !== undefined && (
+            <p className="mt-2 text-[10px] text-ink-500">
+              Textract confidence: {fields.min_confidence.toFixed(1)}% (lowest
+              field). Double-check any values with unusual characters.
+            </p>
+          )}
+          {err && (
+            <p role="alert" className="mt-2 rounded-md bg-red-50 px-2 py-1 text-[11px] text-red-700">
+              {err}
+            </p>
+          )}
+          <div className="mt-2 flex justify-end gap-1">
+            <button
+              onClick={onClose}
+              className="rounded-md border border-ink-200 px-2 py-0.5 text-xs hover:bg-ink-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={apply}
+              disabled={busy}
+              className="rounded-md bg-gold-600 px-3 py-0.5 text-xs font-medium text-white hover:bg-gold-700 disabled:opacity-60"
+            >
+              {busy ? 'Applying…' : 'Apply to client'}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 

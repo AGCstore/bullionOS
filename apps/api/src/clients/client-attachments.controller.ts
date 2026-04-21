@@ -62,6 +62,18 @@ export class ClientAttachmentsController {
     });
   }
 
+  /**
+   * Read the OCR result for an attachment. Returns null status when
+   * OCR wasn't run (non-ID mime, Textract not configured, or the
+   * upload predates OCR). `succeeded` includes extracted fields.
+   */
+  @Get('admin/client-attachments/:id/ocr')
+  async getOcr(@Param('id', new ParseUUIDPipe()) id: string) {
+    const out = await this.service.getOcrFields(id);
+    if (!out) throw new NotFoundException('Attachment not found');
+    return out;
+  }
+
   @Get('admin/client-attachments/:id/file')
   async download(
     @Param('id', new ParseUUIDPipe()) id: string,

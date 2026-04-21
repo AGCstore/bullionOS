@@ -58,6 +58,15 @@ const envSchema = z.object({
   TWILIO_AUTH_TOKEN: z.string().optional().default(''),
   TWILIO_FROM: z.string().optional().default(''),
 
+  // AWS Textract — powers the driver's-license / passport OCR on
+  // client attachments. Optional; when unset, OCR is a no-op and
+  // the client_attachments.ocr_status column stays NULL. Textract
+  // is priced per-document (AnalyzeID ~$0.025/doc as of Apr 2026),
+  // so feature is opt-in via env presence.
+  AWS_REGION: z.string().optional().default('us-east-1'),
+  AWS_ACCESS_KEY_ID: z.string().optional().default(''),
+  AWS_SECRET_ACCESS_KEY: z.string().optional().default(''),
+
   ENABLE_2FA: z
     .string()
     .transform((v) => v === 'true')
