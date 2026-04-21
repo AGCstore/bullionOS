@@ -1,33 +1,52 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api-client';
 import type { SheetRow } from '@/lib/sheet-types';
 import { rankProducts } from '@/lib/product-search';
 import { useLiveSpot } from '@/lib/use-live-spot';
+import { saveOrder } from '@/lib/product-mutations';
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  arrayMove,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 /**
  * Quick Reference Price Sheet.
  *
  * Single-surface cheat sheet for operators quoting at the counter —
  * every active product with its current buy + sell price, fuzzy
- * search at the top, and a tiny "X% of spot" line under each price
- * so the operator can sanity-check pricing without cross-referencing
- * the pricing-rules page.
+ * search at the top, and a margin signal under each price:
+ *   We Pay  → "X% of spot" (buy as share of melt value)
+ *   We Sell → "+$X over spot" (sell markup in dollars over melt)
  *
- * Design choices:
- *   - No drag reorder, no editing, no filters — this is read-only.
- *     The sheets that support editing live at /admin/in-stock-sheet
- *     and /admin/buy-sheet. This page is the "glance and quote" view.
- *   - Admin-only page (staff sees it too) — the % of spot is a
- *     margin signal, fine for the back-office but we don't surface it
- *     to clients. Client-facing pricing lives at /dashboard/pricing.
+ * Ordering follows the same global sort_order every other product
+ * listing honors — drag-reorder here re-ranks the catalog everywhere.
+ * Disabled while a search query is active (reordering a filtered
+ * subset against sparse positions would land rows in the wrong
+ * places inside the full catalog — same constraint as In Stock
+ * Sheet / Buy Sheet / Catalog).
+ *
+ * Admin-only page (admin+staff nav); margin signals never leak to
+ * client-facing pricing pages.
  */
 
 type Metal = 'gold' | 'silver' | 'platinum' | 'palladium';
 
 export default function PriceSheetPage() {
+  const qc = useQueryClient();
   const [search, setSearch] = useState('');
   const { spot } = useLiveSpot();
   const { data, isLoading } = useQuery({
@@ -36,13 +55,39 @@ export default function PriceSheetPage() {
     refetchInterval: 60_000,
   });
 
-  // Search across sku/name/metal. rankProducts returns rows as-is when
-  // query is empty, so empty search = full catalog view sorted by
-  // sort_order (server default).
+  // Empty search → rows stay in server sort_order. Active search →
+  // rankProducts returns ranked hits. Reorder is disabled in that
+  // mode (see below) so the ordering only matters at the display
+  // layer here.
   const filtered = useMemo(
     () => rankProducts(data ?? [], search),
     [data, search],
   );
+
+  const dragDisabled = search.trim().length > 0;
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+  );
+
+  async function onDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    // bySection isn't used — price sheet is a flat list — so we work
+    // off the server's full sorted catalog (data) rather than the
+    // filtered view. Drag is disabled while filtered, so `data` and
+    // `filtered` are identical here in practice, but using `data`
+    // keeps the invariant explicit.
+    const rows = data ?? [];
+    const oldIdx = rows.findIndex((r) => r.product_id === active.id);
+    const newIdx = rows.findIndex((r) => r.product_id === over.id);
+    if (oldIdx < 0 || newIdx < 0) return;
+    const reordered = arrayMove(rows, oldIdx, newIdx);
+    try {
+      await saveOrder(qc, reordered.map((r) => r.product_id));
+    } catch (err) {
+      alert((err as Error).message ?? 'Reorder failed');
+    }
+  }
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -50,9 +95,9 @@ export default function PriceSheetPage() {
         <div>
           <h1 className="text-2xl font-semibold">Quick price sheet</h1>
           <p className="mt-1 text-sm text-ink-400">
-            Live buy and sell prices side-by-side. Percentage under each
-            number is the price as a share of current spot (margin signal —
-            admin-only, never surfaced on client-facing pages).
+            Live buy and sell prices side-by-side. Drag the handle on
+            any row to reorder — the new order syncs to every other
+            product-listing page.
           </p>
         </div>
         <div className="text-right text-xs text-ink-400">
@@ -72,7 +117,8 @@ export default function PriceSheetPage() {
         />
         {search.trim() && (
           <span className="ml-3 text-xs text-ink-400">
-            {filtered.length} match{filtered.length === 1 ? '' : 'es'}
+            {filtered.length} match{filtered.length === 1 ? '' : 'es'} · reorder
+            disabled while searching
             <button
               onClick={() => setSearch('')}
               className="ml-2 underline-offset-2 hover:underline"
@@ -84,9 +130,10 @@ export default function PriceSheetPage() {
       </div>
 
       <div className="mt-6 overflow-x-auto rounded-xl border border-ink-200 bg-white">
-        <table className="w-full min-w-[640px] text-sm">
+        <table className="w-full min-w-[680px] text-sm">
           <thead className="bg-ink-50 text-left text-xs uppercase tracking-wide text-ink-400">
             <tr>
+              <th className="w-8 px-2 py-3" />
               <th className="px-4 py-3">Product</th>
               {/* Column tints match the semantic side:
                   - We pay = money going out to the customer → red tint
@@ -100,33 +147,49 @@ export default function PriceSheetPage() {
               </th>
             </tr>
           </thead>
-          <tbody>
-            {isLoading && (
-              <tr>
-                <td
-                  colSpan={3}
-                  className="px-4 py-10 text-center text-sm text-ink-400"
-                >
-                  Loading…
-                </td>
-              </tr>
-            )}
-            {!isLoading && filtered.length === 0 && (
-              <tr>
-                <td
-                  colSpan={3}
-                  className="px-4 py-10 text-center text-sm text-ink-400"
-                >
-                  {search.trim()
-                    ? `No matches for "${search}".`
-                    : 'No products.'}
-                </td>
-              </tr>
-            )}
-            {filtered.map((p) => (
-              <PriceRow key={p.product_id} row={p} spot={spot} />
-            ))}
-          </tbody>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={onDragEnd}
+          >
+            <SortableContext
+              items={filtered.map((p) => p.product_id)}
+              strategy={verticalListSortingStrategy}
+            >
+              <tbody>
+                {isLoading && (
+                  <tr>
+                    <td
+                      colSpan={4}
+                      className="px-4 py-10 text-center text-sm text-ink-400"
+                    >
+                      Loading…
+                    </td>
+                  </tr>
+                )}
+                {!isLoading && filtered.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={4}
+                      className="px-4 py-10 text-center text-sm text-ink-400"
+                    >
+                      {search.trim()
+                        ? `No matches for "${search}".`
+                        : 'No products.'}
+                    </td>
+                  </tr>
+                )}
+                {filtered.map((p) => (
+                  <PriceRow
+                    key={p.product_id}
+                    row={p}
+                    spot={spot}
+                    dragDisabled={dragDisabled}
+                  />
+                ))}
+              </tbody>
+            </SortableContext>
+          </DndContext>
         </table>
       </div>
     </div>
@@ -136,6 +199,7 @@ export default function PriceSheetPage() {
 function PriceRow({
   row,
   spot,
+  dragDisabled,
 }: {
   row: SheetRow;
   spot: {
@@ -144,14 +208,24 @@ function PriceRow({
     platinum: string;
     palladium: string;
   } | null;
+  dragDisabled: boolean;
 }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: row.product_id, disabled: dragDisabled });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.6 : 1,
+    background: isDragging ? '#f7f7f8' : undefined,
+  };
+
   const spotForMetal = spot
     ? Number(spot[row.metal as Metal] ?? 0)
     : 0;
   // metal_content = weight × purity per unit. Multiplying by spot
   // gives the raw metal value of one unit. Dividing our quoted price
-  // by that value is the "% of spot" figure — 100% means we buy/sell
-  // at pure melt, 96% on a buy means we're 4pts below melt, etc.
+  // by that value is the "% of spot" figure — 100% means we buy at
+  // pure melt, 96% on a buy means we're 4pts below melt, etc.
   const weight = Number(row.weight_troy_oz) || 0;
   const purity = Number(row.purity) || 0;
   const metalContent = weight * purity;
@@ -172,7 +246,26 @@ function PriceRow({
       : null;
 
   return (
-    <tr className="border-t border-ink-200 hover:bg-ink-50/50">
+    <tr
+      ref={setNodeRef}
+      style={style}
+      className="border-t border-ink-200 hover:bg-ink-50/50"
+    >
+      <td className="px-2 py-3 text-center align-middle">
+        <button
+          {...attributes}
+          {...listeners}
+          aria-label="Drag to reorder"
+          disabled={dragDisabled}
+          className={`px-1 ${
+            dragDisabled
+              ? 'cursor-not-allowed text-ink-200'
+              : 'cursor-grab text-ink-400 hover:text-ink-900 active:cursor-grabbing'
+          }`}
+        >
+          ⋮⋮
+        </button>
+      </td>
       <td className="px-4 py-3">
         <div className="font-medium">{row.name}</div>
         <div className="font-mono text-xs text-ink-400">
