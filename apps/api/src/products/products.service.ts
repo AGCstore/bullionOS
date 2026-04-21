@@ -153,4 +153,20 @@ export class ProductsService {
     if (Number(r.numUpdatedRows) === 0) throw new NotFoundException('Product not found');
     await this.cache.invalidatePricingDependent();
   }
+
+  /**
+   * Permanent row deletion — callable only behind the PIN gate in
+   * AdminProductsController. FKs are all set to CASCADE / SET NULL (see
+   * migrations 010 + 012) so the row can disappear without orphaning
+   * invoice lines or movement history. Use this when a product was
+   * created in error and shouldn't even exist in the "inactive" bucket.
+   */
+  async deleteHard(id: string): Promise<void> {
+    const r = await this.db
+      .deleteFrom('products')
+      .where('id', '=', id)
+      .executeTakeFirst();
+    if (Number(r.numDeletedRows) === 0) throw new NotFoundException('Product not found');
+    await this.cache.invalidatePricingDependent();
+  }
 }

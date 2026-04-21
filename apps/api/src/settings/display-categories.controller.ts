@@ -202,6 +202,7 @@ const BUILTIN_SLUGS = new Set([
   'gold_bars',
   'pre_1933_gold',
   'silver_coins',
+  'morgan_peace_dollars',
   'silver_junk',
   'silver_generic',
   'silver_mint_sets',

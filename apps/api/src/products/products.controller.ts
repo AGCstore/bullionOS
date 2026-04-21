@@ -285,6 +285,7 @@ export class AdminProductsController {
   async remove(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Query('pin') pin?: string,
+    @Query('hard') hard?: string,
   ) {
     const expected = process.env.PRODUCT_DELETE_PIN || '0424';
     if (!pin || pin.trim() !== expected) {
@@ -292,6 +293,14 @@ export class AdminProductsController {
         'Delete PIN required. Ask an admin if you don’t have it.',
       );
     }
-    await this.products.delete(id);
+    // Same PIN gates both soft- and hard-delete. `?hard=1` asks for the
+    // row to actually disappear (used when a product was created in
+    // error and the inactive bucket shouldn't keep it around). Default
+    // stays soft-delete so a stray click is still trivially reversible.
+    if (hard === '1' || hard === 'true') {
+      await this.products.deleteHard(id);
+    } else {
+      await this.products.delete(id);
+    }
   }
 }

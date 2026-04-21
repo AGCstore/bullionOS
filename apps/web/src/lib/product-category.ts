@@ -19,6 +19,7 @@ export type DisplayCategory =
   | 'gold_bars'
   | 'pre_1933_gold'
   | 'silver_coins'
+  | 'morgan_peace_dollars'
   | 'silver_junk'
   | 'silver_generic'
   | 'silver_mint_sets'
@@ -47,6 +48,11 @@ export const SECTIONS: DisplaySection[] = [
   { id: 'gold_bars', label: 'Gold Bars', metal: 'gold' },
   { id: 'pre_1933_gold', label: 'Pre-1933 U.S. Gold Coins', metal: 'gold' },
   { id: 'silver_coins', label: 'Silver Coins', metal: 'silver' },
+  {
+    id: 'morgan_peace_dollars',
+    label: 'Morgan and Peace Silver Dollars',
+    metal: 'silver',
+  },
   { id: 'silver_junk', label: 'Junk Silver (90%)', metal: 'silver' },
   { id: 'silver_generic', label: 'Silver Rounds / Bars (Generic)', metal: 'silver' },
   { id: 'silver_mint_sets', label: 'Silver U.S. Mint Sets', metal: 'silver' },
@@ -162,11 +168,16 @@ export function deriveDisplayCategory(p: {
     ) {
       return 'silver_mint_sets';
     }
-    // Junk silver: 90% US coinage (Morgan / Peace dollars, pre-'65 US
-    // Half / Quarter / Dime). The price tag on these is driven by silver
-    // content, not numismatics, so they live in their own bucket.
+    // Morgan / Peace silver dollars get their own bucket — numismatic
+    // premium is meaningful and clusters naturally. Checked BEFORE the
+    // junk-silver regex because "morgan" and "peace" appear in both.
+    if (/\bmorgan\b|\bpeace\b/.test(n)) {
+      return 'morgan_peace_dollars';
+    }
+    // Junk silver: 90% US coinage (pre-'65 US Half / Quarter / Dime,
+    // US Silver Dollar mixed bag). Priced by silver content.
     if (
-      /\bmorgan\b|\bpeace\b|\bus\s+dollar\b|\bsilver\s+dollar\b|\bus\s+half\b|\bus\s+quarter\b|\bus\s+dime\b|\bhalf\s+dollar\b|\b90%\b/.test(n)
+      /\bus\s+dollar\b|\bsilver\s+dollar\b|\bus\s+half\b|\bus\s+quarter\b|\bus\s+dime\b|\bhalf\s+dollar\b|\b90%\b/.test(n)
     ) {
       return 'silver_junk';
     }

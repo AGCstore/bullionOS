@@ -632,7 +632,10 @@ function SortableRow({
           {product.is_active ? (
             <DeleteButton productId={product.id} productName={product.name} />
           ) : (
-            <RestoreButton productId={product.id} productName={product.name} />
+            <>
+              <RestoreButton productId={product.id} productName={product.name} />
+              <PurgeButton productId={product.id} productName={product.name} />
+            </>
           )}
         </div>
       </td>
@@ -700,6 +703,60 @@ function DeleteButton({
       className="rounded-md border border-red-200 px-2 py-0.5 text-red-700 hover:bg-red-50 disabled:opacity-60"
     >
       {busy ? '…' : 'Delete'}
+    </button>
+  );
+}
+
+/**
+ * Permanent row delete — only shown for inactive products, so the
+ * operator has already passed one gate (soft-delete) and consciously
+ * clicked it a second time. Still PIN-protected server-side. The row
+ * is fully removed from `products`; historical invoices/movement rows
+ * are unaffected (FKs cascade / set-null per migrations 010 + 012).
+ */
+function PurgeButton({
+  productId,
+  productName,
+}: {
+  productId: string;
+  productName: string;
+}) {
+  const qc = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  async function run() {
+    if (
+      !confirm(
+        `Permanently delete "${productName}"?\n\nThis row will be GONE — no "Restore" afterwards. Historical invoices that reference it stay intact, but the SKU disappears from every dropdown, sheet, and feed forever.`,
+      )
+    )
+      return;
+    const pin = prompt('Enter delete PIN to confirm permanent deletion:');
+    if (!pin) return;
+    setBusy(true);
+    try {
+      await apiFetch(
+        `/admin/products/${productId}?hard=1&pin=${encodeURIComponent(pin.trim())}`,
+        { method: 'DELETE' },
+      );
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['admin', 'products'] }),
+        qc.invalidateQueries({ queryKey: ['admin', 'products', 'sheet'] }),
+        qc.invalidateQueries({ queryKey: ['admin', 'inventory'] }),
+      ]);
+    } catch (err) {
+      alert(err instanceof ApiError ? err.message : 'Purge failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <button
+      onClick={run}
+      disabled={busy}
+      title={`Permanently delete "${productName}" — cannot be undone`}
+      className="rounded-md border border-red-400 bg-red-50 px-2 py-0.5 text-red-800 hover:bg-red-100 disabled:opacity-60"
+    >
+      {busy ? '…' : 'Purge'}
     </button>
   );
 }
