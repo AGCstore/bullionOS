@@ -542,46 +542,66 @@
  * a dark navy band with gold accents for brand continuity.
  * ═════════════════════════════════════════════════════════════════ */
 
+/* Vertical pill pinned to the RIGHT-MIDDLE of the viewport. Stays
+ * parked there while the page scrolls. Label reads bottom-to-top so
+ * the tab itself is narrow; on phones (<=520px) it collapses to an
+ * icon-only pill. */
 .agc-drawer-fab {
     position: fixed;
-    right: 20px;
-    bottom: 20px;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
     z-index: 2147483640;
     display: inline-flex;
+    flex-direction: column;
     align-items: center;
-    gap: 9px;
-    padding: 13px 22px 13px 18px;
-    border-radius: 999px;
-    background: linear-gradient(135deg, #e8d4a0 0%, #d4b070 45%, #b8965e 100%);
+    justify-content: center;
+    gap: 8px;
+    padding: 18px 11px;
+    border-radius: 12px 0 0 12px;
+    background: linear-gradient(180deg, #e8d4a0 0%, #d4b070 45%, #b8965e 100%);
     color: #1d2327;
     font-family: 'Instrument Sans', system-ui, -apple-system, sans-serif;
-    font-size: 14px;
+    font-size: 12px;
     font-weight: 700;
-    letter-spacing: 0.02em;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
     border: none;
     cursor: pointer;
     box-shadow:
-        0 10px 28px rgba(0, 0, 0, 0.22),
+        -6px 10px 28px rgba(0, 0, 0, 0.22),
         0 1px 0 rgba(255, 255, 255, 0.35) inset;
     transition: transform 180ms cubic-bezier(0.2, 0.8, 0.3, 1),
-        box-shadow 180ms ease;
+        box-shadow 180ms ease, padding 180ms ease;
+    text-decoration: none;
 }
 .agc-drawer-fab:hover {
-    transform: translateY(-2px);
+    transform: translateY(-50%) translateX(-3px);
     box-shadow:
-        0 14px 32px rgba(0, 0, 0, 0.28),
+        -10px 14px 32px rgba(0, 0, 0, 0.28),
         0 1px 0 rgba(255, 255, 255, 0.45) inset;
+    color: #1d2327;
+}
+.agc-drawer-fab:focus-visible {
+    outline: 2px solid #1d2327;
+    outline-offset: 3px;
 }
 .agc-drawer-fab-icon {
     flex-shrink: 0;
+    display: block;
 }
+/* Vertical text — bottom-to-top so it reads up the pill. */
 .agc-drawer-fab-label {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
     font-weight: 700;
 }
 @media (max-width: 520px) {
     .agc-drawer-fab {
-        padding: 13px;
-        border-radius: 50%;
+        padding: 12px 10px;
+        border-radius: 12px 0 0 12px;
     }
     .agc-drawer-fab-label { display: none; }
 }
@@ -606,7 +626,10 @@
     position: fixed;
     top: 0;
     right: 0;
+    /* 100dvh handles iOS Safari URL-bar shrinking correctly; fallback
+     * to 100vh for older browsers that don't parse dvh. */
     height: 100vh;
+    height: 100dvh;
     width: min(500px, 100vw);
     background: #fff;
     box-shadow: -16px 0 40px rgba(0, 0, 0, 0.24);
@@ -638,7 +661,10 @@
 }
 
 .agc-drawer-header {
-    padding: 24px 26px 20px;
+    padding: 22px 24px 18px;
+    /* Safe-area inset so notched iPhones in landscape don't let content
+     * touch the physical display edge. */
+    padding-right: calc(24px + env(safe-area-inset-right, 0));
     background: linear-gradient(180deg, #142846 0%, #0f1a2e 100%);
     color: #f1ede2;
     display: flex;
@@ -708,6 +734,10 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    /* WCAG 2.5.5 touch-target minimum (44x44 is ideal; 36x36 is
+     * acceptable for secondary controls). */
+    min-width: 36px;
+    min-height: 36px;
 }
 .agc-drawer-close:hover {
     background: rgba(212, 176, 112, 0.16);
@@ -720,8 +750,13 @@
 }
 
 .agc-drawer-body {
-    padding: 24px 26px;
+    padding: 22px 24px;
+    padding-right: calc(24px + env(safe-area-inset-right, 0));
     overflow-y: auto;
+    /* iOS momentum scroll + contain scroll-chain so dragging inside
+     * the drawer doesn't scroll the locked <body> behind it. */
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
     flex: 1;
     color: #1d2327;
     font-family: inherit;
@@ -743,11 +778,15 @@
 .agc-drawer-body .gform_wrapper textarea,
 .agc-drawer-body .gform_wrapper select {
     font-family: inherit;
-    font-size: 15px;
-    padding: 10px 12px;
+    /* 16px minimum — anything smaller triggers auto-zoom on iOS Safari
+     * when the user taps a field. */
+    font-size: 16px;
+    padding: 11px 13px;
     border: 1px solid #e0dcd0;
     border-radius: 6px;
     transition: border-color 160ms ease, box-shadow 160ms ease;
+    width: 100%;
+    box-sizing: border-box;
 }
 .agc-drawer-body .gform_wrapper input[type="text"]:focus,
 .agc-drawer-body .gform_wrapper input[type="email"]:focus,
@@ -761,7 +800,9 @@
 
 .agc-drawer-footer {
     border-top: 1px solid #eee9d7;
-    padding: 14px 26px;
+    /* Safe-area inset bottom so iPhone home-indicator doesn't sit
+     * on top of the phone link. */
+    padding: 12px 24px calc(12px + env(safe-area-inset-bottom, 0));
     background: #fafaf7;
     font-size: 0.85rem;
     color: #666;
@@ -782,8 +823,167 @@
     color: #b8965e;
 }
 
+/* Full-width drawer on phones, smaller typography so the navy header
+ * doesn't crowd the close button. */
+@media (max-width: 520px) {
+    .agc-drawer { width: 100vw; }
+    .agc-drawer-header h2 { font-size: 1.15rem; }
+    .agc-drawer-header p { font-size: 0.78rem; }
+    .agc-drawer-body {
+        padding: 20px;
+        padding-right: calc(20px + env(safe-area-inset-right, 0));
+    }
+    .agc-drawer-footer {
+        padding-left: 20px;
+        padding-right: 20px;
+    }
+}
+
 /* Page scroll lock while the drawer is open — JS adds this class to
  * <body> on open, removes on close. */
 body.agc-drawer-locked {
     overflow: hidden;
+}
+
+/* ═════════════════════════════════════════════════════════════════
+ * OUT-OF-STOCK SECTION (Live Inventory bottom)
+ * Renders at the end of the widget when items with show_on_website=true
+ * have qty=0. Each row carries a "Notify me" button that opens a simple
+ * email-capture prompt and POSTs to the API's restock-subscriptions
+ * endpoint.
+ * ═════════════════════════════════════════════════════════════════ */
+
+.agc-inv-oos-section {
+    margin-top: 2rem;
+    padding-top: 1.5rem;
+    border-top: 1px dashed var(--agc-border-strong);
+}
+.agc-inv-oos-heading {
+    font-family: inherit;
+    font-size: 0.9rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--agc-muted);
+    padding: 0.6rem 0.9rem;
+    margin: 0 0 0.75rem 0;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+}
+.agc-inv-oos-heading .agc-inv-oos-count {
+    font-size: 0.7rem;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: none;
+    color: var(--agc-muted);
+    opacity: 0.7;
+}
+.agc-inv-oos-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+.agc-inv-oos-table td {
+    padding: 0.6rem 0.9rem;
+    border-bottom: 1px solid rgba(139, 148, 166, 0.12);
+    vertical-align: middle;
+}
+.agc-inv-oos-table tr:last-child td {
+    border-bottom: none;
+}
+.agc-inv-oos-name {
+    color: var(--agc-muted);
+    font-weight: 500;
+}
+.agc-inv-oos-cta {
+    text-align: right;
+    width: 11rem;
+}
+.agc-inv-notify-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: 6px;
+    background: rgba(212, 176, 112, 0.1);
+    border: 1px solid rgba(212, 176, 112, 0.35);
+    color: var(--agc-gold-soft);
+    font-family: inherit;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    cursor: pointer;
+    transition: background 160ms ease, border-color 160ms ease,
+        color 160ms ease, transform 160ms ease;
+}
+.agc-inv-notify-btn:hover {
+    background: rgba(212, 176, 112, 0.2);
+    border-color: var(--agc-gold);
+    color: var(--agc-ink);
+    transform: translateY(-1px);
+}
+.agc-inv-notify-btn.is-subscribed {
+    background: rgba(109, 219, 146, 0.1);
+    border-color: rgba(109, 219, 146, 0.4);
+    color: #6ddb92;
+    cursor: default;
+}
+.agc-inv-notify-btn.is-subscribed:hover {
+    transform: none;
+}
+.agc-inv-notify-btn[disabled] {
+    opacity: 0.6;
+    cursor: wait;
+}
+
+/* Inline email-capture form that replaces the button on click. Keeps
+ * the UX tight — no full modal, operators scroll + subscribe in place. */
+.agc-inv-notify-form {
+    display: inline-flex;
+    align-items: stretch;
+    gap: 6px;
+    min-width: 260px;
+}
+.agc-inv-notify-form input[type="email"] {
+    flex: 1;
+    font-family: inherit;
+    font-size: 0.85rem;
+    padding: 6px 10px;
+    border: 1px solid var(--agc-border-strong);
+    border-radius: 6px;
+    background: var(--agc-bg-card);
+    color: var(--agc-ink);
+    box-sizing: border-box;
+    min-width: 0;
+}
+.agc-inv-notify-form input[type="email"]:focus {
+    outline: none;
+    border-color: var(--agc-gold);
+    box-shadow: 0 0 0 2px rgba(212, 176, 112, 0.2);
+}
+.agc-inv-notify-form button {
+    font-family: inherit;
+    font-size: 0.78rem;
+    font-weight: 700;
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: none;
+    background: linear-gradient(
+        135deg,
+        #e8d4a0 0%,
+        #d4b070 50%,
+        #b8965e 100%
+    );
+    color: #1d2327;
+    cursor: pointer;
+}
+@media (max-width: 520px) {
+    .agc-inv-oos-cta {
+        width: auto;
+    }
+    .agc-inv-notify-form {
+        min-width: 0;
+        flex-wrap: wrap;
+    }
 }

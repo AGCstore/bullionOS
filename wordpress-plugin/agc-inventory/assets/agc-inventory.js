@@ -491,3 +491,106 @@
     initDrawer();
   }
 })();
+
+/**
+ * "Notify me when back in stock" signup handler.
+ *
+ * Each row's button carries data-agc-notify="<product_id>" + the API
+ * base. On click, the button is replaced inline with an email input +
+ * subscribe submit. Successful POST flips the button to a green
+ * "We'll email you" confirmation state and disables further clicks.
+ *
+ * Delegated at document level so the handler covers rows that appear
+ * after a widget re-render (operators pressing 'Refresh' etc.). No
+ * WordPress account / auth is required on the customer side; the API
+ * endpoint is @Public.
+ */
+(function () {
+  function init() {
+    document.addEventListener('click', function (e) {
+      var btn = e.target.closest
+        ? e.target.closest('.agc-inv-notify-btn')
+        : null;
+      if (!btn) return;
+      if (btn.classList.contains('is-subscribed')) return;
+      if (btn.disabled) return;
+
+      var productId = btn.getAttribute('data-agc-notify');
+      var apiBase = btn.getAttribute('data-agc-api-base');
+      var productName = btn.getAttribute('data-agc-product-name') || 'this item';
+      if (!productId || !apiBase) return;
+
+      e.preventDefault();
+      openForm(btn, productId, apiBase, productName);
+    });
+
+    function openForm(btn, productId, apiBase, productName) {
+      // Swap the button node with an inline email capture form.
+      var form = document.createElement('form');
+      form.className = 'agc-inv-notify-form';
+      form.setAttribute('novalidate', '');
+      form.innerHTML =
+        '<input type="email" required autocomplete="email" placeholder="you@example.com" />' +
+        '<button type="submit">Notify Me</button>';
+      btn.replaceWith(form);
+      var input = form.querySelector('input[type="email"]');
+      var submit = form.querySelector('button[type="submit"]');
+      if (input && typeof input.focus === 'function') input.focus();
+
+      form.addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        var email = (input.value || '').trim();
+        if (!email || email.indexOf('@') === -1) {
+          input.focus();
+          return;
+        }
+        submit.disabled = true;
+        submit.textContent = '…';
+        submitSignup(apiBase, productId, email)
+          .then(function () {
+            // Put a confirmed-state button in place of the form.
+            var confirmed = document.createElement('button');
+            confirmed.type = 'button';
+            confirmed.className = 'agc-inv-notify-btn is-subscribed';
+            confirmed.textContent = '✓ Subscribed';
+            confirmed.setAttribute(
+              'title',
+              "We'll email " + email + ' when ' + productName + ' is back in stock.',
+            );
+            form.replaceWith(confirmed);
+          })
+          .catch(function (err) {
+            submit.disabled = false;
+            submit.textContent = 'Notify Me';
+            // Minimal surface — a single alert keeps the widget JS tiny.
+            // Upgrade to an inline tooltip later if the volume warrants it.
+            alert(
+              (err && err.message) ||
+                "Couldn't sign up right now. Please try again in a minute.",
+            );
+          });
+      });
+    }
+
+    function submitSignup(apiBase, productId, email) {
+      var url = apiBase.replace(/\/$/, '') + '/public/restock-notify';
+      return fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ product_id: productId, email: email }),
+      }).then(function (r) {
+        if (r.ok) return r.json().catch(function () { return {}; });
+        return r.json().then(function (j) {
+          var msg = j && (j.message || j.error || (j.errors && j.errors[0]));
+          throw new Error(msg || 'Signup failed (HTTP ' + r.status + ')');
+        });
+      });
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();

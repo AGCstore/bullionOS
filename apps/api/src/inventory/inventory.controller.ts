@@ -1,4 +1,23 @@
-import { Body, Controller, Get, Header, Param, ParseUUIDPipe, Patch } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Header,
+  HttpCode,
+  Inject,
+  Ip,
+  NotFoundException,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+} from '@nestjs/common';
+import { IsEmail, IsUUID } from 'class-validator';
+import { Kysely, sql } from 'kysely';
+import { randomUUID } from 'node:crypto';
+import { KYSELY } from '../db/database.module';
+import type { DB } from '../db/types';
 import { CurrentUser, type RequestUser } from '../common/decorators/current-user.decorator';
 import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -7,9 +26,17 @@ import { SetInventoryLocationDto } from './dto/set-location.dto';
 import { InventoryService } from './inventory.service';
 import { resolveDisplayCategory, SECTIONS } from '../common/display-category';
 
+class RestockSubscribeDto {
+  @IsUUID() product_id!: string;
+  @IsEmail() email!: string;
+}
+
 @Controller()
 export class InventoryController {
-  constructor(private readonly service: InventoryService) {}
+  constructor(
+    private readonly service: InventoryService,
+    @Inject(KYSELY) private readonly db: Kysely<DB>,
+  ) {}
 
   @Get('admin/inventory')
   @Roles('admin', 'staff')
@@ -87,5 +114,83 @@ export class InventoryController {
         display_category_label: labelBySlug.get(slug) ?? 'Other',
       };
     });
+  }
+
+  /**
+   * Out-of-stock SKUs on the public shop feed — powers the "Notify me
+   * when back in stock" section at the bottom of the Live Inventory
+   * widget. Same no-auth + no-store conventions as the in-stock sibling.
+   */
+  @Public()
+  @Get('public/out-of-stock')
+  @Header('Cache-Control', 'no-store, no-cache, must-revalidate')
+  @Header('Pragma', 'no-cache')
+  async publicOutOfStock() {
+    const rows = await this.service.outOfStock();
+    const labelBySlug = new Map<string, string>(
+      SECTIONS.map((s) => [s.id as string, s.label]),
+    );
+    return rows.map((r) => {
+      const slug = resolveDisplayCategory(r);
+      return {
+        ...r,
+        display_category: slug,
+        display_category_label: labelBySlug.get(slug) ?? 'Other',
+      };
+    });
+  }
+
+  /**
+   * Anonymous signup for a restock notification. No double-opt-in yet
+   * (the email is trusted on first submit); duplicate signups UPSERT
+   * against the (product_id, email) unique index and are a no-op.
+   *
+   * The actual email-on-restock trigger is a separate worker that
+   * watches inventory.applyMovement — this endpoint only captures
+   * the intent. See docs/restock-notify.md for the wiring plan.
+   */
+  @Public()
+  @Post('public/restock-notify')
+  @HttpCode(200)
+  async subscribeRestockNotification(
+    @Body() dto: RestockSubscribeDto,
+    @Ip() ip: string,
+  ) {
+    const email = dto.email.trim().toLowerCase();
+    if (!email || email.length > 254) {
+      throw new BadRequestException('Invalid email');
+    }
+    // Confirm the product exists + is publicly visible so we don't
+    // collect signups for SKUs that will never surface to the widget.
+    const product = await this.db
+      .selectFrom('products')
+      .select(['id', 'name', 'show_on_website'])
+      .where('id', '=', dto.product_id)
+      .where('is_active', '=', true)
+      .executeTakeFirst();
+    if (!product) throw new NotFoundException('Product not found');
+    if (!product.show_on_website) {
+      throw new BadRequestException('Product is not listed publicly');
+    }
+    const token = randomUUID().replace(/-/g, '');
+    await this.db
+      .insertInto('restock_subscriptions')
+      .values({
+        product_id: dto.product_id,
+        email,
+        token,
+        ip: (ip || '').slice(0, 64) || null,
+      })
+      .onConflict((oc) =>
+        // Re-signing up for the same product is a no-op; keep the
+        // original token + created_at so a later unsubscribe URL still
+        // works.
+        oc.columns(['product_id', 'email']).doNothing(),
+      )
+      .execute();
+    return {
+      ok: true,
+      message: `We'll email ${email} when ${product.name} is back in stock.`,
+    };
   }
 }

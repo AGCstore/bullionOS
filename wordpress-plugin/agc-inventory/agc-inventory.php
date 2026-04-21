@@ -5,7 +5,7 @@
  * Description:       Live inventory and "What We Pay" widgets for Atlanta
  *                    Gold & Coin, fed by the AGC Desk API. Elementor widgets
  *                    + shortcodes, auto-refreshing during shop hours.
- * Version:           2.3.0
+ * Version:           2.4.0
  * Author:            Atlanta Gold and Coin
  * License:           Proprietary
  * Text Domain:       agc-inventory
@@ -48,7 +48,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-define( 'AGC_INV_VERSION', '2.3.0' );
+define( 'AGC_INV_VERSION', '2.4.0' );
 define( 'AGC_INV_DEFAULT_BASE', 'https://agc-api-production.up.railway.app/api/v1' );
 // Server-side transient TTL. Short enough that a show_on_website toggle
 // in AGC Desk appears on the shop's WP page within ~15s, long enough
@@ -416,6 +416,15 @@ function agc_inv_render_live_inventory( $atts ) {
     $items    = agc_inv_filter_by_metal( $items, $atts['metal'] );
     $sections = agc_inv_group_by_display_category( $items );
 
+    // Out-of-stock list renders at the bottom with "Notify me" buttons.
+    // Fetch is best-effort — if the endpoint fails the widget still
+    // shows the in-stock section above.
+    $oos = agc_inv_fetch( 'public/out-of-stock' );
+    if ( ! is_array( $oos ) ) $oos = [];
+    if ( $atts['metal'] !== '' ) {
+        $oos = agc_inv_filter_by_metal( $oos, $atts['metal'] );
+    }
+
     ob_start();
     ?>
     <?php echo agc_inv_render_hero( 'Live Inventory', 'On-hand coins, bars, and bullion — refreshed in real time.' ); ?>
@@ -449,6 +458,9 @@ function agc_inv_render_live_inventory( $atts ) {
                 </table>
             </section>
         <?php endforeach; ?>
+        <?php if ( ! empty( $oos ) ): ?>
+            <?php echo agc_inv_render_oos_section( $oos ); ?>
+        <?php endif; ?>
         <p class="agc-inv-footnote">
             Updated <span class="agc-inv-updated"><?php echo esc_html( current_time( 'g:i A' ) ); ?></span>.
             Refreshes every minute while the metals market is open
@@ -460,6 +472,44 @@ function agc_inv_render_live_inventory( $atts ) {
     if ( '1' === (string) $atts['drawer'] ) {
         echo agc_inv_render_schedule_drawer( $atts['form_id'] );
     }
+    return ob_get_clean();
+}
+
+/**
+ * Out-of-stock section — simple list with a "Notify me" CTA per row.
+ * Each button wires to the public/restock-notify API endpoint via
+ * agc-inventory.js; no WordPress account required on the signup side.
+ */
+function agc_inv_render_oos_section( $rows ) {
+    $apiBase = agc_inv_get_base();
+    ob_start();
+    ?>
+    <div class="agc-inv-oos-section">
+        <h3 class="agc-inv-oos-heading">
+            Out of Stock
+            <span class="agc-inv-oos-count"><?php echo count( $rows ); ?> item<?php echo count( $rows ) === 1 ? '' : 's'; ?> &mdash; get notified when back in stock</span>
+        </h3>
+        <table class="agc-inv-oos-table">
+            <tbody>
+                <?php foreach ( $rows as $row ): ?>
+                    <tr data-agc-oos-id="<?php echo esc_attr( $row['product_id'] ?? '' ); ?>">
+                        <td class="agc-inv-oos-name"><?php echo esc_html( $row['name'] ?? '' ); ?></td>
+                        <td class="agc-inv-oos-cta">
+                            <button
+                                type="button"
+                                class="agc-inv-notify-btn"
+                                data-agc-notify="<?php echo esc_attr( $row['product_id'] ?? '' ); ?>"
+                                data-agc-api-base="<?php echo esc_attr( $apiBase ); ?>"
+                                data-agc-product-name="<?php echo esc_attr( $row['name'] ?? '' ); ?>">
+                                Notify Me
+                            </button>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+    </div>
+    <?php
     return ob_get_clean();
 }
 

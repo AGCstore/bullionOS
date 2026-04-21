@@ -73,6 +73,48 @@ export class InventoryService {
    * Always filters on `is_active=true` and `available > 0` regardless
    * of audience.
    */
+  /**
+   * Out-of-stock SKUs that are flagged for the public shop page.
+   * Drives the "Notify me when back in stock" surface at the bottom
+   * of the Live Inventory widget. `available > 0` is inverted vs the
+   * in-stock query — rows returned here have qty_on_hand equal to or
+   * below reservations.
+   */
+  outOfStock(): Promise<
+    Array<{
+      product_id: string;
+      sku: string;
+      name: string;
+      metal: string;
+      category: string;
+      weight_troy_oz: string;
+      display_category_override: string | null;
+      sort_order: number;
+    }>
+  > {
+    return this.db
+      .selectFrom('products as p')
+      .leftJoin('inventory as inv', 'inv.product_id', 'p.id')
+      .select([
+        'p.id as product_id',
+        'p.sku',
+        'p.name',
+        'p.metal',
+        'p.category',
+        'p.weight_troy_oz',
+        'p.display_category_override',
+        'p.sort_order',
+      ])
+      .where('p.is_active', '=', true)
+      .where('p.show_on_website', '=', true)
+      .where(
+        sql<boolean>`COALESCE(inv.quantity_on_hand, 0) - COALESCE(inv.quantity_reserved, 0) <= 0`,
+      )
+      .orderBy('p.sort_order')
+      .orderBy('p.name')
+      .execute() as never;
+  }
+
   inStock(opts: { onlyWebsite?: boolean } = {}): Promise<
     Array<
       Pick<

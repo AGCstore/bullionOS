@@ -407,6 +407,20 @@ export type KpiManualEntry = Selectable<KpiManualEntriesTable>;
 export type NewKpiManualEntry = Insertable<KpiManualEntriesTable>;
 export type KpiManualEntryUpdate = Updateable<KpiManualEntriesTable>;
 
+// ===== Restock subscriptions (migration 029) =====
+
+export interface RestockSubscriptionsTable {
+  id: Generated<string>;
+  product_id: string;
+  email: string;
+  token: string;
+  ip: string | null;
+  created_at: Generated<Timestamp>;
+  notified_at: Timestamp | null;
+}
+export type RestockSubscription = Selectable<RestockSubscriptionsTable>;
+export type NewRestockSubscription = Insertable<RestockSubscriptionsTable>;
+
 // ===== Database root =====
 export interface DB {
   users: UsersTable;
@@ -437,6 +451,7 @@ export interface DB {
   daily_update_attachments: DailyUpdateAttachmentsTable;
   kpi_manual_entries: KpiManualEntriesTable;
   client_attachments: ClientAttachmentsTable;
+  restock_subscriptions: RestockSubscriptionsTable;
 }
 
 // ===== Calendar bookings (migration 023) =====
