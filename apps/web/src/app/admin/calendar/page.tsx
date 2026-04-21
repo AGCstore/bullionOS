@@ -139,7 +139,11 @@ export default function AdminCalendarPage() {
           {grouped.map((g) => (
             <section key={g.dayIso}>
               <h2 className="mb-2 text-sm font-semibold text-ink-700">
-                {new Date(g.dayIso).toLocaleDateString(undefined, {
+                {/* Appending T00:00:00 flips parsing from UTC-midnight to
+                    local-midnight. Without it, new Date("2026-04-21")
+                    is 8pm the PREVIOUS day in ET, so the heading read
+                    "Monday April 20" for a Tuesday April 21 event. */}
+                {new Date(`${g.dayIso}T00:00:00`).toLocaleDateString(undefined, {
                   weekday: 'long',
                   month: 'long',
                   day: 'numeric',
