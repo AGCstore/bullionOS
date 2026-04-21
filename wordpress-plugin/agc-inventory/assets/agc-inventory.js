@@ -400,3 +400,94 @@
     init();
   }
 })();
+
+/**
+ * Schedule-appointment drawer controller (bundled into the widget JS
+ * so both Live Inventory and What We Pay get it without a second enqueue).
+ *
+ * Trigger: any element with [data-agc-buy-open="1"] opens the drawer.
+ * Close: overlay click, ESC key, or the X button inside the drawer.
+ *
+ * If multiple widgets render on the same page, we bind once (IIFE-scope
+ * `bound` flag) and only the FIRST drawer DOM is addressed — duplicates
+ * on the page would double-fire the body scroll lock otherwise.
+ */
+(function () {
+  var bound = false;
+  function initDrawer() {
+    if (bound) return;
+    var drawer = document.querySelector('[data-agc-buy-drawer]');
+    var overlay = document.querySelector('[data-agc-buy-overlay]');
+    if (!drawer || !overlay) return;
+    bound = true;
+
+    var lastOpener = null;
+
+    function open(opener) {
+      if (opener) lastOpener = opener;
+      drawer.setAttribute('aria-hidden', 'false');
+      drawer.classList.add('agc-drawer--open');
+      overlay.hidden = false;
+      // Force reflow so the opacity transition actually animates.
+      // eslint-disable-next-line no-unused-expressions
+      overlay.offsetHeight;
+      overlay.classList.add('agc-drawer-overlay--open');
+      document.body.classList.add('agc-drawer-locked');
+      var closeBtn = drawer.querySelector('[data-agc-buy-close]');
+      if (closeBtn && typeof closeBtn.focus === 'function') {
+        // Defer focus so the slide-in animation is visible before the
+        // screen reader announces the close button.
+        setTimeout(function () { closeBtn.focus(); }, 80);
+      }
+    }
+
+    function close() {
+      drawer.setAttribute('aria-hidden', 'true');
+      drawer.classList.remove('agc-drawer--open');
+      overlay.classList.remove('agc-drawer-overlay--open');
+      document.body.classList.remove('agc-drawer-locked');
+      setTimeout(function () {
+        if (!overlay.classList.contains('agc-drawer-overlay--open')) {
+          overlay.hidden = true;
+        }
+      }, 300);
+      if (lastOpener && typeof lastOpener.focus === 'function') {
+        lastOpener.focus();
+      }
+    }
+
+    document.addEventListener('click', function (e) {
+      var opener = e.target.closest
+        ? e.target.closest('[data-agc-buy-open]')
+        : null;
+      if (opener) {
+        e.preventDefault();
+        open(opener);
+        return;
+      }
+      var closer = e.target.closest
+        ? e.target.closest('[data-agc-buy-close]')
+        : null;
+      if (closer) {
+        e.preventDefault();
+        close();
+      }
+    });
+
+    overlay.addEventListener('click', function (e) {
+      if (e.target === overlay) close();
+    });
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && drawer.classList.contains('agc-drawer--open')) {
+        close();
+      }
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initDrawer);
+  } else {
+    initDrawer();
+  }
+})();

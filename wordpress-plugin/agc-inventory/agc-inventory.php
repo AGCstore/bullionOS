@@ -5,7 +5,7 @@
  * Description:       Live inventory and "What We Pay" widgets for Atlanta
  *                    Gold & Coin, fed by the AGC Desk API. Elementor widgets
  *                    + shortcodes, auto-refreshing during shop hours.
- * Version:           2.2.2
+ * Version:           2.3.0
  * Author:            Atlanta Gold and Coin
  * License:           Proprietary
  * Text Domain:       agc-inventory
@@ -48,7 +48,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-define( 'AGC_INV_VERSION', '2.2.2' );
+define( 'AGC_INV_VERSION', '2.3.0' );
 define( 'AGC_INV_DEFAULT_BASE', 'https://agc-api-production.up.railway.app/api/v1' );
 // Server-side transient TTL. Short enough that a show_on_website toggle
 // in AGC Desk appears on the shop's WP page within ~15s, long enough
@@ -359,12 +359,20 @@ add_action( 'wp_enqueue_scripts', function () {
 // ─── Shortcodes ────────────────────────────────────────────────────────────
 
 add_shortcode( 'agc_live_inventory', function ( $atts ) {
-    $atts = shortcode_atts( [ 'metal' => '' ], $atts, 'agc_live_inventory' );
+    $atts = shortcode_atts(
+        [ 'metal' => '', 'form_id' => '2', 'drawer' => '1' ],
+        $atts,
+        'agc_live_inventory'
+    );
     return agc_inv_render_live_inventory( $atts );
 } );
 
 add_shortcode( 'agc_what_we_pay', function ( $atts ) {
-    $atts = shortcode_atts( [ 'metal' => '' ], $atts, 'agc_what_we_pay' );
+    $atts = shortcode_atts(
+        [ 'metal' => '', 'form_id' => '2', 'drawer' => '1' ],
+        $atts,
+        'agc_what_we_pay'
+    );
     return agc_inv_render_what_we_pay( $atts );
 } );
 
@@ -410,6 +418,7 @@ function agc_inv_render_live_inventory( $atts ) {
 
     ob_start();
     ?>
+    <?php echo agc_inv_render_hero( 'Live Inventory', 'On-hand coins, bars, and bullion — refreshed in real time.' ); ?>
     <div class="agc-inv-wrap" data-agc-widget="live-inventory" data-agc-metal="<?php echo esc_attr( $atts['metal'] ); ?>">
         <?php echo agc_inv_render_toolbar( $sections, 'live-inventory' ); ?>
         <?php if ( empty( $items ) ): ?>
@@ -448,6 +457,9 @@ function agc_inv_render_live_inventory( $atts ) {
         </p>
     </div>
     <?php
+    if ( '1' === (string) $atts['drawer'] ) {
+        echo agc_inv_render_schedule_drawer( $atts['form_id'] );
+    }
     return ob_get_clean();
 }
 
@@ -467,6 +479,7 @@ function agc_inv_render_what_we_pay( $atts ) {
 
     ob_start();
     ?>
+    <?php echo agc_inv_render_hero( 'What We Pay', 'Live buying rates — updated as the spot market moves.' ); ?>
     <div class="agc-inv-wrap" data-agc-widget="what-we-pay" data-agc-metal="<?php echo esc_attr( $atts['metal'] ); ?>">
         <?php echo agc_inv_render_spot_strip( $spot ); ?>
         <?php echo agc_inv_render_toolbar( $sections, 'what-we-pay' ); ?>
@@ -508,6 +521,9 @@ function agc_inv_render_what_we_pay( $atts ) {
         </p>
     </div>
     <?php
+    if ( '1' === (string) $atts['drawer'] ) {
+        echo agc_inv_render_schedule_drawer( $atts['form_id'] );
+    }
     return ob_get_clean();
 }
 
@@ -669,6 +685,102 @@ function agc_inv_render_spot_strip( $spot ) {
  * Themed error card — same typography + palette as the main widget so a
  * temporary outage doesn't clash with the shop's overall look.
  */
+/**
+ * Branded hero block rendered above the widget body. Deep-navy gradient
+ * backdrop (matching the widget interior) with a gold "LIVE" pulse
+ * indicator + title + subtitle. Keeps typography on the plugin's
+ * Instrument Sans so nothing fights the parent theme's font stack.
+ */
+function agc_inv_render_hero( $title, $subtitle ) {
+    $html  = '<div class="agc-inv-hero">';
+    $html .= '<div class="agc-inv-hero-inner">';
+    $html .= '<span class="agc-inv-hero-badge">';
+    $html .= '<span class="agc-inv-hero-pulse" aria-hidden="true"></span>';
+    $html .= 'Live';
+    $html .= '</span>';
+    $html .= '<h2 class="agc-inv-hero-title">' . esc_html( $title ) . '</h2>';
+    $html .= '<p class="agc-inv-hero-sub">' . esc_html( $subtitle ) . '</p>';
+    $html .= '</div>';
+    $html .= '</div>';
+    return $html;
+}
+
+/**
+ * Schedule-appointment drawer that both widgets embed at the end of
+ * their render. Includes:
+ *   - the floating "Schedule" pill (FAB) pinned bottom-right
+ *   - the semi-opaque backdrop
+ *   - the drawer aside containing the Gravity Form
+ *
+ * Any button on the page carrying data-agc-buy-open="1" will open it
+ * (the widget-row CTAs and the FAB itself); ESC / overlay click / close
+ * button close it. Multiple widgets on the same page is fine — the JS
+ * guards against duplicate drawer nodes by id.
+ */
+function agc_inv_render_schedule_drawer( $form_id ) {
+    $form_id = absint( $form_id ) ?: 2;
+    // If Gravity Forms isn't active, do_shortcode returns the raw
+    // [gravityform ...] text which looks broken. Degrade gracefully
+    // to a simple "call us" message so the drawer still feels finished.
+    $shortcode = '[gravityform id="' . $form_id . '" title="true" description="false"]';
+    $form_html = do_shortcode( $shortcode );
+    if ( trim( $form_html ) === $shortcode ) {
+        $form_html = '<p style="margin:0;color:#666;font-size:14px;">The appointment form isn\'t wired up yet. Please call <a href="tel:+14042369744" style="color:#b8860b;font-weight:600;">(404) 236-9744</a> to schedule.</p>';
+    }
+    // Stable id on the drawer element prevents duplicate-instance issues
+    // if multiple widgets appear on one page — only the first one's
+    // nodes remain; the others are a no-op.
+    ob_start();
+    ?>
+    <button type="button" class="agc-drawer-fab" data-agc-buy-open="1" aria-label="Schedule appointment">
+        <svg class="agc-drawer-fab-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+            <line x1="16" y1="2" x2="16" y2="6"></line>
+            <line x1="8" y1="2" x2="8" y2="6"></line>
+            <line x1="3" y1="10" x2="21" y2="10"></line>
+        </svg>
+        <span class="agc-drawer-fab-label">Schedule</span>
+    </button>
+    <div class="agc-drawer-overlay" data-agc-buy-overlay hidden></div>
+    <aside class="agc-drawer" id="agc-drawer" aria-hidden="true" aria-labelledby="agc-drawer-title" data-agc-buy-drawer>
+        <div class="agc-drawer-accent" aria-hidden="true"></div>
+        <div class="agc-drawer-header">
+            <div class="agc-drawer-title-block">
+                <div class="agc-drawer-eyebrow">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="16" y1="2" x2="16" y2="6"></line>
+                        <line x1="8" y1="2" x2="8" y2="6"></line>
+                        <line x1="3" y1="10" x2="21" y2="10"></line>
+                    </svg>
+                    Atlanta Gold &amp; Coin
+                </div>
+                <h2 id="agc-drawer-title">Schedule an Appointment</h2>
+                <p>Meet with a specialist to discuss buying, selling, or appraising your precious metals.</p>
+            </div>
+            <button type="button" class="agc-drawer-close" data-agc-buy-close="1" aria-label="Close appointment form">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+            </button>
+        </div>
+        <div class="agc-drawer-body">
+            <?php echo $form_html; // Gravity Forms output is escaped by the GF plugin. ?>
+        </div>
+        <div class="agc-drawer-footer">
+            <a href="tel:+14042369744">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"></path>
+                </svg>
+                Prefer to call? <strong>(404) 236-9744</strong>
+            </a>
+        </div>
+    </aside>
+    <?php
+    return ob_get_clean();
+}
+
 function agc_inv_error_card( $message ) {
     wp_enqueue_style( 'agc-inv' );
     return '<div class="agc-inv-wrap"><div class="agc-inv-error-card">'

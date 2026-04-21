@@ -439,3 +439,351 @@
     outline: 2px solid var(--agc-gold);
     outline-offset: 2px;
 }
+
+/* ═════════════════════════════════════════════════════════════════
+ * WIDGET HERO (rendered by agc_inv_render_hero)
+ * Sits above the .agc-inv-wrap card with a dark-navy gradient that
+ * extends the widget's palette outward. Gold LIVE badge + pulse dot
+ * signals freshness without competing with the rest of the surface.
+ * ═════════════════════════════════════════════════════════════════ */
+
+.agc-inv-hero {
+    max-width: 100%;
+    margin: 0 auto 1rem;
+    padding: 1.5rem 1.5rem 1.25rem;
+    border-radius: 8px 8px 0 0;
+    background: linear-gradient(180deg, #142846 0%, #0f1a2e 100%);
+    color: #f1ede2;
+    font-family: 'Instrument Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    position: relative;
+    overflow: hidden;
+}
+.agc-inv-hero::after {
+    /* Thin gold rail anchors the hero to the widget body below. */
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 2px;
+    background: linear-gradient(
+        90deg,
+        rgba(212, 176, 112, 0) 0%,
+        #d4b070 12%,
+        #d4b070 88%,
+        rgba(212, 176, 112, 0) 100%
+    );
+}
+.agc-inv-hero-inner {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+}
+.agc-inv-hero-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.25rem 0.7rem 0.25rem 0.55rem;
+    border-radius: 999px;
+    background: rgba(212, 176, 112, 0.14);
+    color: #d4b070;
+    border: 1px solid rgba(212, 176, 112, 0.3);
+    font-size: 0.66rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    align-self: flex-start;
+    font-variant-numeric: tabular-nums;
+}
+.agc-inv-hero-pulse {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #6ddb92;
+    box-shadow: 0 0 0 0 rgba(109, 219, 146, 0.55);
+    animation: agc-inv-pulse 1.8s cubic-bezier(0.2, 0.8, 0.3, 1) infinite;
+}
+@keyframes agc-inv-pulse {
+    0% { box-shadow: 0 0 0 0 rgba(109, 219, 146, 0.55); }
+    70% { box-shadow: 0 0 0 8px rgba(109, 219, 146, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(109, 219, 146, 0); }
+}
+.agc-inv-hero-title {
+    margin: 0;
+    font-family: inherit;
+    font-size: 1.55rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: #f1ede2;
+    line-height: 1.15;
+}
+.agc-inv-hero-sub {
+    margin: 0;
+    font-size: 0.88rem;
+    color: #9aa6b8;
+    line-height: 1.5;
+    max-width: 56ch;
+}
+/* Stitch hero to widget: kill the top-radius + pull-up so they read
+ * as a single card. */
+.agc-inv-hero + .agc-inv-wrap {
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+    margin-top: -1rem;
+    padding-top: 1.5rem;
+}
+
+/* ═════════════════════════════════════════════════════════════════
+ * SCHEDULE DRAWER (rendered by agc_inv_render_schedule_drawer)
+ * A right-side slide-in panel with the Gravity Form inside. Opens via
+ * any [data-agc-buy-open] button on the page. Drawer itself is white
+ * so the Gravity Form renders on a familiar backdrop; the header gets
+ * a dark navy band with gold accents for brand continuity.
+ * ═════════════════════════════════════════════════════════════════ */
+
+.agc-drawer-fab {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    z-index: 2147483640;
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    padding: 13px 22px 13px 18px;
+    border-radius: 999px;
+    background: linear-gradient(135deg, #e8d4a0 0%, #d4b070 45%, #b8965e 100%);
+    color: #1d2327;
+    font-family: 'Instrument Sans', system-ui, -apple-system, sans-serif;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    border: none;
+    cursor: pointer;
+    box-shadow:
+        0 10px 28px rgba(0, 0, 0, 0.22),
+        0 1px 0 rgba(255, 255, 255, 0.35) inset;
+    transition: transform 180ms cubic-bezier(0.2, 0.8, 0.3, 1),
+        box-shadow 180ms ease;
+}
+.agc-drawer-fab:hover {
+    transform: translateY(-2px);
+    box-shadow:
+        0 14px 32px rgba(0, 0, 0, 0.28),
+        0 1px 0 rgba(255, 255, 255, 0.45) inset;
+}
+.agc-drawer-fab-icon {
+    flex-shrink: 0;
+}
+.agc-drawer-fab-label {
+    font-weight: 700;
+}
+@media (max-width: 520px) {
+    .agc-drawer-fab {
+        padding: 13px;
+        border-radius: 50%;
+    }
+    .agc-drawer-fab-label { display: none; }
+}
+
+.agc-drawer-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(10, 20, 38, 0.55);
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 260ms ease;
+    z-index: 2147483641;
+}
+.agc-drawer-overlay.agc-drawer-overlay--open {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.agc-drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    height: 100vh;
+    width: min(500px, 100vw);
+    background: #fff;
+    box-shadow: -16px 0 40px rgba(0, 0, 0, 0.24);
+    transform: translateX(calc(100% + 24px));
+    transition: transform 320ms cubic-bezier(0.2, 0.8, 0.3, 1);
+    z-index: 2147483642;
+    display: flex;
+    flex-direction: column;
+    font-family: 'Instrument Sans', system-ui, -apple-system, sans-serif;
+}
+.agc-drawer.agc-drawer--open {
+    transform: translateX(0);
+}
+
+/* Gold rail on the left edge of the drawer — signals the opening
+ * direction + ties the drawer visually to the widget hero rail. */
+.agc-drawer-accent {
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 3px;
+    background: linear-gradient(
+        180deg,
+        #e8d4a0 0%,
+        #d4b070 50%,
+        #b8965e 100%
+    );
+}
+
+.agc-drawer-header {
+    padding: 24px 26px 20px;
+    background: linear-gradient(180deg, #142846 0%, #0f1a2e 100%);
+    color: #f1ede2;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 14px;
+    flex-shrink: 0;
+    position: relative;
+}
+.agc-drawer-header::after {
+    content: '';
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 1px;
+    background: linear-gradient(
+        90deg,
+        rgba(212, 176, 112, 0) 0%,
+        rgba(212, 176, 112, 0.6) 40%,
+        rgba(212, 176, 112, 0.6) 60%,
+        rgba(212, 176, 112, 0) 100%
+    );
+}
+.agc-drawer-title-block {
+    flex: 1;
+    min-width: 0;
+}
+.agc-drawer-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: #d4b070;
+    margin-bottom: 8px;
+}
+.agc-drawer-eyebrow svg {
+    opacity: 0.9;
+}
+.agc-drawer-header h2 {
+    margin: 0 0 6px 0;
+    font-family: inherit;
+    font-size: 1.35rem;
+    font-weight: 700;
+    letter-spacing: -0.005em;
+    color: #f1ede2;
+    line-height: 1.2;
+}
+.agc-drawer-header p {
+    margin: 0;
+    font-size: 0.86rem;
+    color: #9aa6b8;
+    line-height: 1.5;
+}
+
+.agc-drawer-close {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #f1ede2;
+    padding: 7px;
+    cursor: pointer;
+    border-radius: 8px;
+    transition: background 160ms ease, border-color 160ms ease,
+        color 160ms ease;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.agc-drawer-close:hover {
+    background: rgba(212, 176, 112, 0.16);
+    border-color: rgba(212, 176, 112, 0.45);
+    color: #e8d4a0;
+}
+.agc-drawer-close:focus-visible {
+    outline: 2px solid #d4b070;
+    outline-offset: 2px;
+}
+
+.agc-drawer-body {
+    padding: 24px 26px;
+    overflow-y: auto;
+    flex: 1;
+    color: #1d2327;
+    font-family: inherit;
+    background: #ffffff;
+    /* Subtle inner shadow at the top edge so the scroll start reads
+     * as contained rather than floating under the navy header. */
+    box-shadow: 0 4px 8px -6px rgba(0, 0, 0, 0.15) inset;
+}
+.agc-drawer-body .gform_wrapper,
+.agc-drawer-body .gform_wrapper form,
+.agc-drawer-body .gform_fields {
+    max-width: 100%;
+}
+/* Soften GF input styling inside the drawer — most themes render GF
+ * with tight borders that look dated next to our drawer chrome. */
+.agc-drawer-body .gform_wrapper input[type="text"],
+.agc-drawer-body .gform_wrapper input[type="email"],
+.agc-drawer-body .gform_wrapper input[type="tel"],
+.agc-drawer-body .gform_wrapper textarea,
+.agc-drawer-body .gform_wrapper select {
+    font-family: inherit;
+    font-size: 15px;
+    padding: 10px 12px;
+    border: 1px solid #e0dcd0;
+    border-radius: 6px;
+    transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+.agc-drawer-body .gform_wrapper input[type="text"]:focus,
+.agc-drawer-body .gform_wrapper input[type="email"]:focus,
+.agc-drawer-body .gform_wrapper input[type="tel"]:focus,
+.agc-drawer-body .gform_wrapper textarea:focus,
+.agc-drawer-body .gform_wrapper select:focus {
+    outline: none;
+    border-color: #d4b070;
+    box-shadow: 0 0 0 3px rgba(212, 176, 112, 0.18);
+}
+
+.agc-drawer-footer {
+    border-top: 1px solid #eee9d7;
+    padding: 14px 26px;
+    background: #fafaf7;
+    font-size: 0.85rem;
+    color: #666;
+    flex-shrink: 0;
+    text-align: center;
+}
+.agc-drawer-footer a {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    color: #1d2327;
+    text-decoration: none;
+    font-weight: 500;
+}
+.agc-drawer-footer a:hover { color: #b8965e; }
+.agc-drawer-footer a strong {
+    font-weight: 700;
+    color: #b8965e;
+}
+
+/* Page scroll lock while the drawer is open — JS adds this class to
+ * <body> on open, removes on close. */
+body.agc-drawer-locked {
+    overflow: hidden;
+}
