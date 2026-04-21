@@ -759,15 +759,30 @@ function ApplyFromIdPanel({
       ),
     staleTime: 30_000,
   });
+
+  // Pull the current client row so we can compare "current → new" and
+  // default each checkbox sensibly: empty fields auto-check (safe
+  // fill), existing values auto-uncheck (overwrite requires explicit
+  // opt-in). Staff seats aren't restricted here — the outer Fill
+  // button only renders when the attachment OCR succeeded.
+  const { data: client } = useQuery({
+    queryKey: ['admin', 'client', clientId],
+    queryFn: () => apiFetch<Client>(`/admin/clients/${clientId}`),
+  });
+
   const [picks, setPicks] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const fields = data?.fields ?? {};
-  // Candidate list — only fields that have a value AND map to a
-  // column on the clients table. date_of_birth etc. are extracted for
-  // audit but we don't store them on the client row today.
-  const candidates: Array<{ key: keyof OcrFields; label: string; patchKey: string }> = (
+  // Candidate list — only fields that have an extracted value AND map
+  // to a column on the clients table. date_of_birth etc. are
+  // extracted for audit but we don't store them on the client row.
+  const candidates: Array<{
+    key: keyof OcrFields;
+    label: string;
+    patchKey: keyof Client;
+  }> = (
     [
       { key: 'first_name', label: 'First name', patchKey: 'first_name' },
       { key: 'last_name', label: 'Last name', patchKey: 'last_name' },
@@ -779,7 +794,20 @@ function ApplyFromIdPanel({
   ).filter((c) => {
     const v = fields[c.key];
     return typeof v === 'string' && v.length > 0;
-  }) as Array<{ key: keyof OcrFields; label: string; patchKey: string }>;
+  }) as Array<{ key: keyof OcrFields; label: string; patchKey: keyof Client }>;
+
+  // `picks[key]` semantics:
+  //   undefined → use the default rule for this field (checked iff
+  //               current value is empty)
+  //   true/false → operator explicitly toggled it
+  function isChecked(c: { key: keyof OcrFields; patchKey: keyof Client }): boolean {
+    if (picks[c.key] !== undefined) return picks[c.key];
+    const currentVal = client
+      ? (client[c.patchKey] as string | null | undefined)
+      : undefined;
+    const currentIsEmpty = !currentVal || String(currentVal).trim().length === 0;
+    return currentIsEmpty; // default-check only when empty
+  }
 
   async function apply() {
     setErr(null);
@@ -787,13 +815,12 @@ function ApplyFromIdPanel({
     try {
       const patch: Record<string, string> = {};
       for (const c of candidates) {
-        if (picks[c.key] !== false) {
-          // Default-checked: pick unless operator unchecked it.
-          patch[c.patchKey] = String(fields[c.key]);
+        if (isChecked(c)) {
+          patch[c.patchKey as string] = String(fields[c.key]);
         }
       }
       if (Object.keys(patch).length === 0) {
-        setErr('Select at least one field to apply');
+        setErr('Nothing selected. Tick a field to fill or overwrite.');
         setBusy(false);
         return;
       }
@@ -830,26 +857,75 @@ function ApplyFromIdPanel({
         </p>
       ) : (
         <>
-          <ul className="mt-2 space-y-1 text-xs">
-            {candidates.map((c) => (
-              <li key={c.key} className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id={`ocr-${c.key}`}
-                  defaultChecked
-                  onChange={(e) =>
-                    setPicks((p) => ({ ...p, [c.key]: e.target.checked }))
-                  }
-                />
-                <label
-                  htmlFor={`ocr-${c.key}`}
-                  className="flex-1 cursor-pointer"
+          <p className="mt-1 text-[11px] text-ink-500">
+            Fields with existing values are unchecked by default —
+            tick them to overwrite.
+          </p>
+          <ul className="mt-2 space-y-2 text-xs">
+            {candidates.map((c) => {
+              const currentVal = client
+                ? (client[c.patchKey] as string | null | undefined)
+                : undefined;
+              const currentIsEmpty =
+                !currentVal || String(currentVal).trim().length === 0;
+              const newVal = String(fields[c.key]);
+              const checked = isChecked(c);
+              const willOverwrite = !currentIsEmpty && newVal !== currentVal;
+              const identical = !currentIsEmpty && newVal === currentVal;
+              return (
+                <li
+                  key={c.key}
+                  className={`flex items-start gap-2 rounded-md px-2 py-1.5 ${
+                    willOverwrite && checked
+                      ? 'bg-red-50'
+                      : currentIsEmpty && checked
+                        ? 'bg-green-50'
+                        : ''
+                  }`}
                 >
-                  <span className="font-semibold text-ink-700">{c.label}:</span>{' '}
-                  <span className="text-ink-900">{String(fields[c.key])}</span>
-                </label>
-              </li>
-            ))}
+                  <input
+                    type="checkbox"
+                    id={`ocr-${c.key}`}
+                    className="mt-0.5"
+                    checked={checked}
+                    disabled={identical}
+                    onChange={(e) =>
+                      setPicks((p) => ({ ...p, [c.key]: e.target.checked }))
+                    }
+                  />
+                  <label
+                    htmlFor={`ocr-${c.key}`}
+                    className="flex-1 cursor-pointer"
+                  >
+                    <div className="font-semibold text-ink-700">{c.label}</div>
+                    {identical ? (
+                      <div className="text-ink-500">
+                        Matches current value: {newVal}
+                      </div>
+                    ) : currentIsEmpty ? (
+                      <div>
+                        <span className="text-ink-400 italic">currently empty</span>
+                        <span className="mx-1 text-ink-400">→</span>
+                        <span className="font-mono text-green-800">{newVal}</span>
+                      </div>
+                    ) : (
+                      <div>
+                        <span className="font-mono text-ink-700 line-through">
+                          {currentVal}
+                        </span>
+                        <span className="mx-1 text-ink-400">→</span>
+                        <span className="font-mono text-red-800">{newVal}</span>
+                        {checked && (
+                          <span className="ml-2 rounded-full bg-red-200 px-1.5 text-[9px] font-semibold uppercase tracking-wide text-red-800">
+                            will overwrite
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </label>
+                </li>
+              );
+            })}
           </ul>
           {fields.min_confidence !== undefined && (
             <p className="mt-2 text-[10px] text-ink-500">
