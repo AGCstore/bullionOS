@@ -27,6 +27,9 @@ import type { CreateInvoiceDto } from './dto/create-invoice.dto';
 
 export interface InvoiceWithLines extends Invoice {
   client_name: string;
+  /** Separate first-name field so email templates can greet "Hi John" instead of "Hi John Smith". */
+  client_first_name: string | null;
+  client_last_name: string | null;
   client_email: string | null;
   /** Whether the backing client is wholesale — drives the "Mark Paid" button + WH reports. */
   client_type?: 'retail' | 'wholesaler';
@@ -137,6 +140,8 @@ export class InvoicesService {
         sql<string>`coalesce(nullif(trim(coalesce(c.first_name, '') || ' ' || coalesce(c.last_name, '')), ''), c.company, '(unnamed)')`.as(
           'client_name',
         ),
+        'c.first_name as client_first_name',
+        'c.last_name as client_last_name',
         'c.email as client_email',
         'c.client_type as client_type',
         'c.company as client_company',
@@ -156,6 +161,8 @@ export class InvoicesService {
     return {
       ...(invoice as Invoice & {
         client_name: string;
+        client_first_name: string | null;
+        client_last_name: string | null;
         client_email: string | null;
         client_type: 'retail' | 'wholesaler';
         client_company: string | null;
@@ -402,6 +409,8 @@ export class InvoicesService {
         sql<string>`coalesce(nullif(trim(coalesce(c.first_name, '') || ' ' || coalesce(c.last_name, '')), ''), c.company, '(unnamed)')`.as(
           'client_name',
         ),
+        'c.first_name as client_first_name',
+        'c.last_name as client_last_name',
         'c.email as client_email',
       ])
       .where('i.id', '=', id)
@@ -414,7 +423,15 @@ export class InvoicesService {
       .orderBy('position')
       .execute();
 
-    return { ...(inv as Invoice & { client_name: string; client_email: string | null }), line_items: lines };
+    return {
+      ...(inv as Invoice & {
+        client_name: string;
+        client_first_name: string | null;
+        client_last_name: string | null;
+        client_email: string | null;
+      }),
+      line_items: lines,
+    };
   }
 
   /**
@@ -823,7 +840,7 @@ export class InvoicesService {
         ? `Your invoice from {{company_name}} — {{invoice_number}}`
         : `Buy ticket from {{company_name}} — {{invoice_number}}`;
     const defaultBody =
-      `Hi {{client_name}},\n\n` +
+      `Hi {{client_first_name}},\n\n` +
       `Your {{doc_label}} {{invoice_number}} is attached as a PDF.\n` +
       `Total: \${{total}}\n` +
       `Status: {{status}}\n\n` +
@@ -831,6 +848,12 @@ export class InvoicesService {
       `— {{company_name}}`;
     const vars = {
       client_name: invoice.client_name,
+      // Fall back to the full client_name if first_name is empty (wholesalers
+      // frequently have company but no personal name). Same for last_name.
+      // This keeps greetings like "Hi {{client_first_name}}" from rendering
+      // as "Hi" on company-only rows.
+      client_first_name: invoice.client_first_name?.trim() || invoice.client_name,
+      client_last_name: invoice.client_last_name?.trim() || '',
       invoice_number: human,
       doc_label: docLabel,
       type: invoice.type,

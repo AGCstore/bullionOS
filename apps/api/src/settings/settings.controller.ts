@@ -90,7 +90,7 @@ const EMAIL_TEMPLATE_REGISTRY: Array<{
     default_subject:
       'Your {{doc_label}} from {{company_name}} — {{invoice_number}}',
     default_body:
-      'Hi {{client_name}},\n\n' +
+      'Hi {{client_first_name}},\n\n' +
       'Your {{doc_label}} {{invoice_number}} is attached as a PDF.\n' +
       'Total: ${{total}}\n' +
       'Status: {{status}}\n\n' +
@@ -98,6 +98,15 @@ const EMAIL_TEMPLATE_REGISTRY: Array<{
       '— {{company_name}}',
     variables: [
       { key: 'client_name', description: 'Client’s full name (or company for wholesalers)' },
+      {
+        key: 'client_first_name',
+        description:
+          'Client’s first name only — preferred for greetings. Falls back to full name if first_name is blank (company-only wholesalers).',
+      },
+      {
+        key: 'client_last_name',
+        description: 'Client’s last name only. Empty string if not set.',
+      },
       { key: 'invoice_number', description: 'Formatted invoice number, e.g. 2026-000123' },
       { key: 'doc_label', description: '"invoice" or "buy ticket" depending on invoice type' },
       { key: 'type', description: '"sell" or "buy" raw' },

@@ -5,7 +5,7 @@
  * Description:       Live inventory and "What We Pay" widgets for Atlanta
  *                    Gold & Coin, fed by the AGC Desk API. Elementor widgets
  *                    + shortcodes, auto-refreshing during shop hours.
- * Version:           2.0.0
+ * Version:           2.0.1
  * Author:            Atlanta Gold and Coin
  * License:           Proprietary
  * Text Domain:       agc-inventory
@@ -48,7 +48,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-define( 'AGC_INV_VERSION', '2.0.0' );
+define( 'AGC_INV_VERSION', '2.0.1' );
 define( 'AGC_INV_DEFAULT_BASE', 'https://agc-api-production.up.railway.app/api/v1' );
 // Server-side transient TTL. Short enough that a show_on_website toggle
 // in AGC Desk appears on the shop's WP page within ~15s, long enough
@@ -97,11 +97,14 @@ function agc_inv_render_settings_page() {
                     <th scope="row"><label for="agc_inv_base">AGC Desk API base</label></th>
                     <td>
                         <input type="url" name="agc_inv_base" id="agc_inv_base"
-                            value="<?php echo esc_attr( agc_inv_get_base() ); ?>"
+                            value="<?php echo esc_attr( get_option( 'agc_inv_base', '' ) ); ?>"
                             class="regular-text" placeholder="<?php echo esc_attr( AGC_INV_DEFAULT_BASE ); ?>" />
                         <p class="description">
                             Base URL of the AGC Desk API, including <code>/api/v1</code>.
-                            Leave blank to use the default.
+                            Leave blank to use the default
+                            (<code><?php echo esc_html( AGC_INV_DEFAULT_BASE ); ?></code>).
+                            When the field is empty, the plugin follows whatever default
+                            is compiled in — makes host migrations one-line changes.
                         </p>
                     </td>
                 </tr>
