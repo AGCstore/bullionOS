@@ -1,5 +1,5 @@
 /*!
- * AGC Inventory plugin — front-of-site theme (v5).
+ * AGC Inventory plugin — front-of-site theme (v5.1).
  *
  * Design goals
  * ------------
@@ -175,8 +175,7 @@
 
 /* ── Prominent search bar (both widgets) ──────────────────────────
  *   - Wrapper gets a champagne-tinted recessed panel behind the input
- *   - Input: 2px gold border, bigger type + padding, inline magnifier
- *     icon (inlined SVG via data URI), strong focus ring
+ *   - Input: 2px gold border, bigger type + padding, strong focus ring
  *   - Placeholder tinted to match the champagne accent so the input
  *     reads as a hero control, not a hidden detail
  */
@@ -194,15 +193,11 @@
     background: var(--agc-bg);
     border: 2px solid var(--agc-gold);
     border-radius: 8px;
-    padding: 0.9rem 1rem 0.9rem 2.75rem;
+    padding: 0.9rem 1rem;
     font-size: 1.02rem;
     font-weight: 500;
     letter-spacing: 0.01em;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
-    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23d4b070' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><line x1='21' y1='21' x2='16.5' y2='16.5'/></svg>");
-    background-repeat: no-repeat;
-    background-position: 0.9rem center;
-    background-size: 1.1rem 1.1rem;
 }
 .agc-inv-wrap .agc-inv-search-input::placeholder {
     color: var(--agc-gold-soft);
