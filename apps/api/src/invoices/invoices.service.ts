@@ -188,9 +188,31 @@ export class InvoicesService {
       );
     }
 
+    // Validate ad-hoc lines up front so we throw ONE clean error
+    // instead of a cryptic pricing.quote failure. An ad-hoc line
+    // (no product_id) must carry a custom_name AND an
+    // override_unit_price — pricing is operator-entered.
+    for (const li of dto.line_items) {
+      if (!li.product_id) {
+        if (!li.custom_name || li.custom_name.trim().length === 0) {
+          throw new BadRequestException(
+            'Ad-hoc line items require a custom_name',
+          );
+        }
+        if (li.override_unit_price === undefined) {
+          throw new BadRequestException(
+            `Ad-hoc line "${li.custom_name}" requires a unit price`,
+          );
+        }
+      }
+    }
+
     // Pre-compute quotes outside the transaction (reads from Redis + Postgres).
+    // Ad-hoc lines skip pricing.quote and carry null quote — the insert
+    // path below branches on product_id presence.
     const quotes = await Promise.all(
       dto.line_items.map(async (li) => {
+        if (!li.product_id) return { li, quote: null };
         const quote = await this.pricing.quote(li.product_id, li.quantity);
         return { li, quote };
       }),
@@ -216,7 +238,7 @@ export class InvoicesService {
       let subtotal = d(0);
       const lineInserts: Array<{
         invoice_id: string;
-        product_id: string;
+        product_id: string | null;
         position: number;
         quantity: number;
         product_name_snapshot: string;
@@ -268,39 +290,58 @@ export class InvoicesService {
         .executeTakeFirstOrThrow();
 
       quotes.forEach(({ li, quote }, idx) => {
+        const isAdHoc = !li.product_id;
         const useOverride = li.override_unit_price !== undefined;
-        const unitPrice = useOverride
+        // Ad-hoc lines are always operator-priced (validated above).
+        // Catalog lines take the override when set, else the live quote.
+        const unitPrice = isAdHoc
           ? d(li.override_unit_price!)
-          : dto.type === 'sell'
-            ? d(quote.sell_unit_price)
-            : d(quote.buy_unit_price);
+          : useOverride
+            ? d(li.override_unit_price!)
+            : dto.type === 'sell'
+              ? d(quote!.sell_unit_price)
+              : d(quote!.buy_unit_price);
         const lineTotal = unitPrice.times(li.quantity);
         subtotal = subtotal.plus(lineTotal);
 
-        const premiumType =
-          dto.type === 'sell' ? quote.sell_premium_type : quote.buy_premium_type;
-        const premiumValue =
-          dto.type === 'sell' ? quote.sell_premium_value : quote.buy_premium_value;
+        // Premium fields exist on every line_item row (NOT NULL on
+        // migration 005 — invoice history snapshot). For ad-hoc lines
+        // we zero-fill with premium_type='flat', premium_value='0' —
+        // the operator-entered unit price IS the premium, no formula.
+        const premiumType: 'percent' | 'flat' = isAdHoc
+          ? 'flat'
+          : dto.type === 'sell'
+            ? quote!.sell_premium_type
+            : quote!.buy_premium_type;
+        const premiumValue = isAdHoc
+          ? '0'
+          : dto.type === 'sell'
+            ? quote!.sell_premium_value
+            : quote!.buy_premium_value;
 
         lineInserts.push({
           invoice_id: invoice.id,
-          product_id: li.product_id,
+          product_id: li.product_id ?? null,
           position: idx + 1,
           quantity: li.quantity,
           product_name_snapshot:
             li.custom_name && li.custom_name.trim().length > 0
               ? li.custom_name.trim()
-              : quote.product_name,
+              : quote!.product_name,
           // Snapshot all three product physical attributes INDEPENDENTLY so an
           // audit of this invoice years later can reproduce the math without
           // re-reading a potentially-mutated product record.
           //   weight  — gross troy oz per unit (e.g. 1.0909 for a Gold Eagle)
           //   purity  — fineness fraction      (e.g. 0.9167)
           //   content — weight * purity        (e.g. ~1.0000)
-          gross_weight_troy_oz: quote.product_weight_troy_oz,
-          purity: quote.product_purity,
-          metal_content_troy_oz: quote.metal_content_per_unit,
-          spot_price_per_oz: quote.spot_per_oz,
+          // Ad-hoc lines have no product to snapshot; zero-fill so
+          // the NOT NULL columns take a value. The PDF + detail view
+          // render the custom_name, so the numeric zeros aren't
+          // surfaced — they only exist for schema compliance.
+          gross_weight_troy_oz: isAdHoc ? '0' : quote!.product_weight_troy_oz,
+          purity: isAdHoc ? '0' : quote!.product_purity,
+          metal_content_troy_oz: isAdHoc ? '0' : quote!.metal_content_per_unit,
+          spot_price_per_oz: isAdHoc ? '0' : quote!.spot_per_oz,
           premium_type: premiumType,
           premium_value: premiumValue,
           unit_price: toDbString(unitPrice),

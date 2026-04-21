@@ -153,6 +153,10 @@ export default function NewInvoicePage() {
   // Email controls (INV-007).
   const [emailTo, setEmailTo] = useState('');
   const [saveEmailToClient, setSaveEmailToClient] = useState(true);
+  // Email popover visibility. Collapses the recipient/send controls
+  // into an "Email" footer button that opens a compact form — keeps
+  // Delete draft reachable on narrow viewports.
+  const [emailOpen, setEmailOpen] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
 
   // Void+recreate lands here with ?from=<id>. Resume-draft lands with
@@ -345,9 +349,30 @@ export default function NewInvoicePage() {
 
   // ---------- validation + payload ----------
 
-  const filledLines = lines.filter((l) => l.product_id && l.quantity > 0);
+  // A line is ready to submit when either:
+  //   (a) a catalog product is picked, OR
+  //   (b) it's "New Item" — has a custom_name AND an operator-entered
+  //       override_unit_price (the price for ad-hoc lines is
+  //       operator-priced since there's no product to quote).
+  // Either way qty must be > 0.
+  const filledLines = lines.filter((l) => {
+    if (l.quantity <= 0) return false;
+    if (l.product_id) return true;
+    return (
+      l.custom_name.trim().length > 0 && l.override_unit_price.trim().length > 0
+    );
+  });
+  // Ad-hoc lines with a name but no price (or vice-versa) — surfaced
+  // as a gentle validation hint, not a hard block since the operator
+  // may still be typing.
   const orphanedAdHoc = lines.filter(
-    (l) => !l.product_id && l.custom_name.trim().length > 0,
+    (l) =>
+      !l.product_id &&
+      (l.custom_name.trim().length > 0 ||
+        l.override_unit_price.trim().length > 0) &&
+      !(
+        l.custom_name.trim().length > 0 && l.override_unit_price.trim().length > 0
+      ),
   );
   const validPayments = payments
     .filter((p) => p.method && Number(p.amount) > 0)
@@ -367,9 +392,12 @@ export default function NewInvoicePage() {
       transacted_at: buildTransactedAt(txDate, txTime),
       line_items: filledLines.map((l) => {
         const base: Record<string, unknown> = {
-          product_id: l.product_id,
           quantity: l.quantity,
         };
+        // Only include product_id when it's a real UUID — the DTO
+        // validates as @IsOptional @IsUUID, so an empty string would
+        // fail even though "not set" is legal.
+        if (l.product_id) base.product_id = l.product_id;
         if (l.custom_name.trim()) base.custom_name = l.custom_name.trim();
         if (l.override_unit_price.trim()) {
           const n = Number(l.override_unit_price);
@@ -388,7 +416,7 @@ export default function NewInvoicePage() {
   function validate(forSave: boolean): string | null {
     if (!clientId) return 'Select a client';
     if (orphanedAdHoc.length > 0) {
-      return 'For "New item" lines, also pick a catalog product so we can snapshot the metal and weight.';
+      return 'Each "New item" line needs both a name and a unit price.';
     }
     if (filledLines.length === 0) return 'Add at least one line item';
     // Saving a draft is allowed with an empty payment section (operator
@@ -806,8 +834,15 @@ export default function NewInvoicePage() {
             )}
           </div>
 
-          {/* Order required by INV-008: Cancel · Save · Print · Create · Email+input */}
-          <div className="flex flex-wrap items-center gap-2">
+          {/* Order required by INV-008: Cancel · Save · Print · Create · Email · Delete
+              The email recipient input used to live inline here and
+              was crowding Delete off narrow screens (INV-007 fix). It
+              now opens in a popover when "Email" is clicked — same
+              pattern as the invoice detail page — so every button in
+              the rail is reachable at any viewport. Delete draft stays
+              at the far right when a draft is active so it doesn't
+              mix with the always-present primaries. */}
+          <div className="relative flex flex-wrap items-center gap-2">
             <button
               onClick={() => router.back()}
               className="rounded-md border border-ink-200 px-3 py-2 text-sm text-ink-700 hover:bg-ink-50"
@@ -835,42 +870,72 @@ export default function NewInvoicePage() {
             >
               {busy === 'create' ? 'Creating…' : 'Create'}
             </button>
-            <div className="flex items-center gap-1">
-              <input
-                type="email"
-                value={emailTo}
-                onChange={(e) => setEmailTo(e.target.value)}
-                placeholder="recipient@example.com"
-                className="input w-56 md:w-64"
-                aria-label="Email recipient"
-              />
-              <button
-                onClick={handleEmail}
-                disabled={!!busy}
-                className="rounded-md border border-ink-200 px-3 py-2 text-sm text-ink-700 hover:bg-ink-50 disabled:opacity-60"
-              >
-                {busy === 'email' ? 'Sending…' : 'Email'}
-              </button>
-            </div>
+            <button
+              onClick={() => setEmailOpen((v) => !v)}
+              disabled={!!busy}
+              className="rounded-md border border-ink-200 px-3 py-2 text-sm text-ink-700 hover:bg-ink-50 disabled:opacity-60"
+              aria-expanded={emailOpen}
+            >
+              {busy === 'email' ? 'Sending…' : emailOpen ? 'Email ▾' : 'Email'}
+            </button>
             {draftId && (
               <button
                 onClick={handleDelete}
                 disabled={!!busy}
-                className="rounded-md border border-red-200 px-3 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-60"
+                className="ml-auto rounded-md border border-red-200 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-60"
               >
                 {busy === 'delete' ? 'Deleting…' : 'Delete draft'}
               </button>
             )}
+
+            {emailOpen && (
+              <div className="absolute bottom-full right-0 z-20 mb-2 w-[320px] max-w-[calc(100vw-1rem)] rounded-md border border-ink-200 bg-white p-3 shadow-lg">
+                <label className="block">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-ink-400">
+                    Send PDF to
+                  </span>
+                  <input
+                    type="email"
+                    value={emailTo}
+                    onChange={(e) => setEmailTo(e.target.value)}
+                    placeholder="recipient@example.com"
+                    className="input mt-1 w-full"
+                    aria-label="Email recipient"
+                    autoFocus
+                  />
+                </label>
+                <label className="mt-2 flex items-start gap-2 text-xs text-ink-600">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={saveEmailToClient}
+                    onChange={(e) => setSaveEmailToClient(e.target.checked)}
+                  />
+                  Save to client record if this address is new
+                </label>
+                <div className="mt-3 flex justify-end gap-2">
+                  <button
+                    onClick={() => setEmailOpen(false)}
+                    className="rounded-md border border-ink-200 px-3 py-1.5 text-sm hover:bg-ink-50"
+                  >
+                    Close
+                  </button>
+                  <button
+                    onClick={async () => {
+                      await handleEmail();
+                      // leave popover open only on error so flash is
+                      // visible; success path resets it.
+                      if (!error) setEmailOpen(false);
+                    }}
+                    disabled={!emailTo || !!busy}
+                    className="rounded-md bg-ink-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-ink-800 disabled:opacity-60"
+                  >
+                    {busy === 'email' ? 'Sending…' : 'Send'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
-          {/* Tiny checkbox for save-as-secondary-email */}
-          <label className="ml-auto flex items-center gap-1 text-xs text-ink-500 md:ml-0">
-            <input
-              type="checkbox"
-              checked={saveEmailToClient}
-              onChange={(e) => setSaveEmailToClient(e.target.checked)}
-            />
-            Save new addresses to client record
-          </label>
         </div>
       </div>
     </PageTint>

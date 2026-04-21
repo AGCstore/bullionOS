@@ -44,8 +44,16 @@ export class PaymentEntryDto {
 }
 
 export class CreateInvoiceLineItemDto {
+  /**
+   * product_id is OPTIONAL — when absent, this is an ad-hoc line
+   * (walk-in scrap, one-off piece, custom item). Ad-hoc lines MUST
+   * also carry `custom_name` + `override_unit_price`. The service
+   * cross-validates; DTO can't express "one-of" cleanly without
+   * custom decorators.
+   */
+  @IsOptional()
   @IsUUID()
-  product_id!: string;
+  product_id?: string;
 
   @IsInt()
   @Min(1)
@@ -64,10 +72,8 @@ export class CreateInvoiceLineItemDto {
 
   /**
    * Free-form label that replaces the product name on the invoice snapshot.
-   * Use for 'New Item' walk-ins where the counter has scrap gold or a
-   * one-off piece that doesn't map cleanly to a catalogue SKU. The
-   * operator still picks a product for metal + weight snapshotting; the
-   * custom_name just reflows onto the PDF and detail view.
+   * Required when product_id is absent (ad-hoc line); optional otherwise,
+   * in which case it overrides the catalog name for this invoice only.
    */
   @IsOptional()
   @IsString()
