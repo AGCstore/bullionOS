@@ -328,11 +328,13 @@
     border-bottom: none;
 }
 
-/* Qty cells centered in their column. Only the Live Inventory widget
- * renders this class — What We Pay uses .agc-inv-col-price instead —
- * so the change is scoped to the operator-requested widget without a
- * [data-agc-widget] selector. */
-.agc-inv-wrap .agc-inv-col-qty {
+/* Qty + We Pay columns centered. Selectors intentionally include
+ * `.agc-inv-table` to outweigh the generic `.agc-inv-wrap .agc-inv-table td`
+ * rule (specificity 0,2,1) that otherwise leaves the cells left-aligned
+ * — earlier versions silently fell through because `.agc-inv-col-qty`
+ * alone (0,2,0) lost the cascade to that generic td rule.
+ * Matches both <th> and <td> so header + cells stack cleanly. */
+.agc-inv-wrap .agc-inv-table .agc-inv-col-qty {
     text-align: center;
     font-variant-numeric: tabular-nums;
     font-feature-settings: 'tnum' 1, 'lnum' 1;
@@ -341,10 +343,7 @@
     font-weight: 500;
 }
 
-/* We Pay column — centered inside its cell per operator spec, so the
- * price sits visually on the column axis rather than hugging the right
- * edge. Tabular numerals keep digits column-aligned across rows. */
-.agc-inv-wrap .agc-inv-col-price {
+.agc-inv-wrap .agc-inv-table .agc-inv-col-price {
     text-align: center;
     font-variant-numeric: tabular-nums;
     font-feature-settings: 'tnum' 1, 'lnum' 1;

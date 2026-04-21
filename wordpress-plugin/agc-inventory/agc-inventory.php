@@ -5,7 +5,7 @@
  * Description:       Live inventory and "What We Pay" widgets for Atlanta
  *                    Gold & Coin, fed by the AGC Desk API. Elementor widgets
  *                    + shortcodes, auto-refreshing during shop hours.
- * Version:           2.2.1
+ * Version:           2.2.2
  * Author:            Atlanta Gold and Coin
  * License:           Proprietary
  * Text Domain:       agc-inventory
@@ -48,7 +48,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-define( 'AGC_INV_VERSION', '2.2.1' );
+define( 'AGC_INV_VERSION', '2.2.2' );
 define( 'AGC_INV_DEFAULT_BASE', 'https://agc-api-production.up.railway.app/api/v1' );
 // Server-side transient TTL. Short enough that a show_on_website toggle
 // in AGC Desk appears on the shop's WP page within ~15s, long enough
