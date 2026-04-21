@@ -5,6 +5,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { AdjustInventoryDto } from './dto/adjust-inventory.dto';
 import { SetInventoryLocationDto } from './dto/set-location.dto';
 import { InventoryService } from './inventory.service';
+import { resolveDisplayCategory, SECTIONS } from '../common/display-category';
 
 @Controller()
 export class InventoryController {
@@ -70,7 +71,21 @@ export class InventoryController {
   @Get('public/in-stock')
   @Header('Cache-Control', 'no-store, no-cache, must-revalidate')
   @Header('Pragma', 'no-cache')
-  publicInStock() {
-    return this.service.inStock({ onlyWebsite: true });
+  async publicInStock() {
+    const rows = await this.service.inStock({ onlyWebsite: true });
+    // Tag every row with its display_category slug + label so the WP
+    // plugin can render sections matching the CRM Catalog taxonomy
+    // (e.g. 'Morgan and Peace Silver Dollars', 'US Mint Proof Gold
+    // Coins'). Tagging happens here rather than in the service because
+    // the resolver pulls from a frontend-shared lib that we keep pure.
+    const labelBySlug = new Map<string, string>(SECTIONS.map((s) => [s.id as string, s.label]));
+    return rows.map((r) => {
+      const slug = resolveDisplayCategory(r);
+      return {
+        ...r,
+        display_category: slug,
+        display_category_label: labelBySlug.get(slug) ?? 'Other',
+      };
+    });
   }
 }

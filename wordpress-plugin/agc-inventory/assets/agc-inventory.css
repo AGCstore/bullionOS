@@ -129,6 +129,81 @@
     line-height: 1;
 }
 
+/* ───────────── Toolbar (search + category chips) ─────────────
+ *
+ * Sits between the spot strip and the first section. Search filters
+ * all sections at once; chips scroll to a specific section. Both work
+ * via delegated listeners so they survive the 60s poll's innerHTML
+ * rebuild.
+ */
+
+.agc-inv-wrap .agc-inv-toolbar {
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+    margin-bottom: 1.5rem;
+}
+
+.agc-inv-wrap .agc-inv-search {
+    position: relative;
+}
+
+.agc-inv-wrap .agc-inv-search-input {
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--agc-bg-card);
+    border: 1px solid var(--agc-border);
+    border-radius: 6px;
+    padding: 0.65rem 0.9rem;
+    color: var(--agc-ink);
+    font-family: inherit;
+    font-size: 0.92rem;
+    letter-spacing: 0.005em;
+    transition: border-color 200ms ease, box-shadow 200ms ease;
+    -webkit-appearance: none;
+    appearance: none;
+}
+.agc-inv-wrap .agc-inv-search-input::placeholder {
+    color: var(--agc-muted);
+    opacity: 1;
+}
+.agc-inv-wrap .agc-inv-search-input:focus {
+    outline: none;
+    border-color: var(--agc-gold);
+    box-shadow: 0 0 0 2px rgba(212, 176, 112, 0.18);
+}
+
+.agc-inv-wrap .agc-inv-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+
+.agc-inv-wrap .agc-inv-chip {
+    font-family: inherit;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    color: var(--agc-ink);
+    background: var(--agc-bg-card);
+    border: 1px solid var(--agc-border);
+    border-radius: 999px;
+    padding: 0.35rem 0.85rem;
+    cursor: pointer;
+    transition: border-color 160ms ease, background 160ms ease,
+        color 160ms ease;
+}
+.agc-inv-wrap .agc-inv-chip:hover,
+.agc-inv-wrap .agc-inv-chip:focus-visible {
+    border-color: var(--agc-gold);
+    color: var(--agc-gold-soft);
+    background: rgba(212, 176, 112, 0.08);
+}
+.agc-inv-wrap .agc-inv-chip:focus-visible {
+    outline: 2px solid var(--agc-gold);
+    outline-offset: 2px;
+}
+
 /* ───────────── Metal-group sections ───────────── */
 
 .agc-inv-wrap .agc-inv-section {

@@ -40,6 +40,25 @@
       if (!inBusinessHours()) return;
       refresh(root, widget, action, metal);
     });
+
+    // Delegated listeners — survive the innerHTML swap on each 60s poll,
+    // so search + chip state don't need rebinding.
+    root.addEventListener('input', function (e) {
+      var input = e.target;
+      if (input && input.classList && input.classList.contains('agc-inv-search-input')) {
+        applyFilter(root, input.value);
+      }
+    });
+    root.addEventListener('click', function (e) {
+      var chip = e.target.closest ? e.target.closest('.agc-inv-chip') : null;
+      if (!chip) return;
+      var targetId = chip.getAttribute('data-agc-target');
+      if (!targetId) return;
+      var target = root.querySelector('#' + targetId);
+      if (target && target.scrollIntoView) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
   }
 
   function schedule(fn) {
@@ -126,21 +145,27 @@
   }
 
   function render(root, widget, data) {
-    var grouped = data.grouped || {};
-    // Spot strip — prepended to the rebuilt HTML so it survives the
-    // innerHTML swap below. Only rendered on What We Pay; Live Inventory
-    // skips it entirely. When the API spot call fails, renderSpotStrip
-    // returns an empty placeholder rather than leaving stale prices.
+    // Preserve the current search query across the innerHTML swap so
+    // customers aren't kicked back to an unfiltered view every 60s.
+    var priorSearch = root.querySelector('.agc-inv-search-input');
+    var priorQuery = priorSearch ? priorSearch.value : '';
+
+    var sections = Array.isArray(data.sections) ? data.sections : [];
+
+    // Spot strip (What We Pay only). Empty string on Live Inventory.
     var html =
       widget === 'what-we-pay' ? renderSpotStrip(data.spot || null) : '';
-    var order = ['gold', 'silver', 'platinum', 'palladium', 'other'];
-    for (var i = 0; i < order.length; i++) {
-      var m = order[i];
-      if (!grouped[m] || !grouped[m].length) continue;
-      html += renderSection(widget, m, grouped[m]);
+
+    // Toolbar: search + chips derived from the sections actually present.
+    html += renderToolbar(sections, widget);
+
+    for (var i = 0; i < sections.length; i++) {
+      var s = sections[i];
+      if (!s.rows || !s.rows.length) continue;
+      html += renderSection(widget, s.id, s.label, s.rows);
     }
-    if (!html) {
-      html =
+    if (sections.length === 0) {
+      html +=
         '<p class="agc-inv-empty">' +
         (widget === 'live-inventory'
           ? 'Nothing in stock right now. Call us at 404-236-9744.'
@@ -158,10 +183,49 @@
         : 'Prices are indicative; call <a href="tel:4042369744">404-236-9744</a> to schedule your appointment.') +
       '</p>';
     root.innerHTML = html;
+
+    // Restore the search input value + re-run the filter against the
+    // fresh DOM. Delegated listeners on root (see bind()) already cover
+    // the input + chip clicks, so no rebinding needed.
+    var newSearch = root.querySelector('.agc-inv-search-input');
+    if (newSearch && priorQuery) {
+      newSearch.value = priorQuery;
+      applyFilter(root, priorQuery);
+    }
   }
 
-  function renderSection(widget, metal, rows) {
-    var heading = metal.charAt(0).toUpperCase() + metal.slice(1);
+  function renderToolbar(sections, widget) {
+    var placeholder =
+      widget === 'live-inventory'
+        ? 'Search in-stock items...'
+        : 'Search what we pay...';
+    var chips = '';
+    for (var i = 0; i < sections.length; i++) {
+      var s = sections[i];
+      if (!s.rows || !s.rows.length) continue;
+      chips +=
+        '<button type="button" class="agc-inv-chip" data-agc-target="agc-section-' +
+        escapeHtml(s.id) +
+        '">' +
+        escapeHtml(s.label) +
+        '</button>';
+    }
+    var chipBlock = chips
+      ? '<div class="agc-inv-chips" role="navigation" aria-label="Jump to category">' +
+        chips +
+        '</div>'
+      : '';
+    return (
+      '<div class="agc-inv-toolbar">' +
+      '<div class="agc-inv-search"><input type="search" class="agc-inv-search-input" placeholder="' +
+      escapeHtml(placeholder) +
+      '" aria-label="Search" /></div>' +
+      chipBlock +
+      '</div>'
+    );
+  }
+
+  function renderSection(widget, slug, label, rows) {
     var isLive = widget === 'live-inventory';
     var head = isLive
       ? '<th class="agc-inv-col-item">Item</th><th class="agc-inv-col-qty">Qty</th>'
@@ -192,15 +256,65 @@
     }
     return (
       '<section class="agc-inv-section agc-inv-section--' +
-      escapeHtml(metal) +
+      escapeHtml(slug) +
+      '" id="agc-section-' +
+      escapeHtml(slug) +
       '"><h3 class="agc-inv-metal-heading">' +
-      escapeHtml(heading) +
+      escapeHtml(label) +
       '</h3><table class="agc-inv-table"><thead><tr>' +
       head +
       '</tr></thead><tbody>' +
       body +
       '</tbody></table></section>'
     );
+  }
+
+  /**
+   * Word-substring fuzzy filter. Accepts a free-form query; splits on
+   * whitespace and requires every word to appear somewhere in the
+   * item name (order-independent, case-insensitive). That's forgiving
+   * enough to tolerate shorthand ("eagle 1oz" finds "1 oz American
+   * Gold Eagle") without the overhead of a proper trigram library.
+   *
+   * Hides empty sections after filtering so chips don't link to a
+   * header above zero rows.
+   */
+  function applyFilter(root, query) {
+    var q = (query || '').toLowerCase().trim();
+    var words = q ? q.split(/\s+/) : [];
+    var sections = root.querySelectorAll('.agc-inv-section');
+    for (var i = 0; i < sections.length; i++) {
+      var sec = sections[i];
+      var rows = sec.querySelectorAll('tbody tr');
+      var visible = 0;
+      for (var j = 0; j < rows.length; j++) {
+        var name = (rows[j].querySelector('.agc-inv-name') || {}).textContent || '';
+        var lname = name.toLowerCase();
+        var match = true;
+        for (var k = 0; k < words.length; k++) {
+          if (lname.indexOf(words[k]) === -1) {
+            match = false;
+            break;
+          }
+        }
+        if (match) {
+          rows[j].style.display = '';
+          visible++;
+        } else {
+          rows[j].style.display = 'none';
+        }
+      }
+      sec.style.display = visible === 0 && words.length > 0 ? 'none' : '';
+    }
+    // Hide the chips for empty sections too, so "jump" never lands on a
+    // hidden block.
+    var chips = root.querySelectorAll('.agc-inv-chip');
+    for (var c = 0; c < chips.length; c++) {
+      var target = chips[c].getAttribute('data-agc-target');
+      var sectionEl = target ? root.querySelector('#' + target) : null;
+      chips[c].style.display =
+        sectionEl && sectionEl.style.display === 'none' ? 'none' : '';
+    }
   }
 
   /**

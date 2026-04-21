@@ -5,7 +5,7 @@
  * Description:       Live inventory and "What We Pay" widgets for Atlanta
  *                    Gold & Coin, fed by the AGC Desk API. Elementor widgets
  *                    + shortcodes, auto-refreshing during shop hours.
- * Version:           2.0.5
+ * Version:           2.1.0
  * Author:            Atlanta Gold and Coin
  * License:           Proprietary
  * Text Domain:       agc-inventory
@@ -48,7 +48,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-define( 'AGC_INV_VERSION', '2.0.5' );
+define( 'AGC_INV_VERSION', '2.1.0' );
 define( 'AGC_INV_DEFAULT_BASE', 'https://agc-api-production.up.railway.app/api/v1' );
 // Server-side transient TTL. Short enough that a show_on_website toggle
 // in AGC Desk appears on the shop's WP page within ~15s, long enough
@@ -230,12 +230,12 @@ function agc_inv_ajax_live_inventory() {
     $items = array_values( array_filter( $items, function ( $r ) {
         return isset( $r['available'] ) && intval( $r['available'] ) > 0;
     } ) );
-    $items   = agc_inv_filter_by_metal( $items, $metal );
-    $grouped = agc_inv_group_by_metal( $items );
+    $items    = agc_inv_filter_by_metal( $items, $metal );
+    $sections = agc_inv_group_by_display_category( $items );
     wp_send_json_success( [
-        'grouped' => $grouped,
-        'mode'    => 'live-inventory',
-        'updated' => current_time( 'g:i A' ),
+        'sections' => $sections,
+        'mode'     => 'live-inventory',
+        'updated'  => current_time( 'g:i A' ),
     ] );
 }
 
@@ -245,18 +245,18 @@ function agc_inv_ajax_what_we_pay() {
     if ( ! is_array( $payload ) || ! isset( $payload['items'] ) ) {
         wp_send_json_error( [ 'message' => 'unavailable' ], 502 );
     }
-    $items   = agc_inv_filter_by_metal( $payload['items'], $metal );
-    $grouped = agc_inv_group_by_metal( $items );
+    $items    = agc_inv_filter_by_metal( $payload['items'], $metal );
+    $sections = agc_inv_group_by_display_category( $items );
     // Spot feed is a second endpoint — fetching it here so the JS poller
     // can refresh both the pay-list AND the top-of-widget spot strip in
     // a single roundtrip. Cached transiently same as the pay-list (15s),
     // and non-fatal: a null spot just hides the strip until the next tick.
     $spot = agc_inv_fetch( 'public/spot' );
     wp_send_json_success( [
-        'grouped' => $grouped,
-        'mode'    => 'what-we-pay',
-        'updated' => current_time( 'g:i A' ),
-        'spot'    => is_array( $spot ) ? $spot : null,
+        'sections' => $sections,
+        'mode'     => 'what-we-pay',
+        'updated'  => current_time( 'g:i A' ),
+        'spot'     => is_array( $spot ) ? $spot : null,
     ] );
 }
 
@@ -356,18 +356,21 @@ function agc_inv_render_live_inventory( $atts ) {
     $items = array_values( array_filter( $items, function ( $r ) {
         return isset( $r['available'] ) && intval( $r['available'] ) > 0;
     } ) );
-    $items   = agc_inv_filter_by_metal( $items, $atts['metal'] );
-    $grouped = agc_inv_group_by_metal( $items );
+    $items    = agc_inv_filter_by_metal( $items, $atts['metal'] );
+    $sections = agc_inv_group_by_display_category( $items );
 
     ob_start();
     ?>
     <div class="agc-inv-wrap" data-agc-widget="live-inventory" data-agc-metal="<?php echo esc_attr( $atts['metal'] ); ?>">
+        <?php echo agc_inv_render_toolbar( $sections, 'live-inventory' ); ?>
         <?php if ( empty( $items ) ): ?>
             <p class="agc-inv-empty">Nothing in stock right now. Check back later, or call us at 404-236-9744.</p>
         <?php endif; ?>
-        <?php foreach ( $grouped as $metal => $rows ): ?>
-            <section class="agc-inv-section agc-inv-section--<?php echo esc_attr( $metal ); ?>">
-                <h3 class="agc-inv-metal-heading"><?php echo esc_html( agc_inv_pretty_metal( $metal ) ); ?></h3>
+        <?php foreach ( $sections as $s ): ?>
+            <section
+                class="agc-inv-section agc-inv-section--<?php echo esc_attr( $s['id'] ); ?>"
+                id="agc-section-<?php echo esc_attr( $s['id'] ); ?>">
+                <h3 class="agc-inv-metal-heading"><?php echo esc_html( $s['label'] ); ?></h3>
                 <table class="agc-inv-table">
                     <thead>
                         <tr>
@@ -376,7 +379,7 @@ function agc_inv_render_live_inventory( $atts ) {
                         </tr>
                     </thead>
                     <tbody>
-                        <?php foreach ( $rows as $row ): ?>
+                        <?php foreach ( $s['rows'] as $row ): ?>
                             <tr>
                                 <td class="agc-inv-col-item">
                                     <span class="agc-inv-name"><?php echo esc_html( $row['name'] ); ?></span>
@@ -407,9 +410,9 @@ function agc_inv_render_what_we_pay( $atts ) {
     if ( ! is_array( $payload ) || ! isset( $payload['items'] ) ) {
         return agc_inv_error_card( 'Live pricing is temporarily unavailable. This usually resolves within a minute.' );
     }
-    $items   = $payload['items'];
-    $items   = agc_inv_filter_by_metal( $items, $atts['metal'] );
-    $grouped = agc_inv_group_by_metal( $items );
+    $items    = $payload['items'];
+    $items    = agc_inv_filter_by_metal( $items, $atts['metal'] );
+    $sections = agc_inv_group_by_display_category( $items );
     // Spot strip data — hidden gracefully if the spot endpoint is down.
     $spot = agc_inv_fetch( 'public/spot' );
 
@@ -417,12 +420,15 @@ function agc_inv_render_what_we_pay( $atts ) {
     ?>
     <div class="agc-inv-wrap" data-agc-widget="what-we-pay" data-agc-metal="<?php echo esc_attr( $atts['metal'] ); ?>">
         <?php echo agc_inv_render_spot_strip( $spot ); ?>
+        <?php echo agc_inv_render_toolbar( $sections, 'what-we-pay' ); ?>
         <?php if ( empty( $items ) ): ?>
             <p class="agc-inv-empty">Pricing coming soon.</p>
         <?php endif; ?>
-        <?php foreach ( $grouped as $metal => $rows ): ?>
-            <section class="agc-inv-section agc-inv-section--<?php echo esc_attr( $metal ); ?>">
-                <h3 class="agc-inv-metal-heading"><?php echo esc_html( agc_inv_pretty_metal( $metal ) ); ?></h3>
+        <?php foreach ( $sections as $s ): ?>
+            <section
+                class="agc-inv-section agc-inv-section--<?php echo esc_attr( $s['id'] ); ?>"
+                id="agc-section-<?php echo esc_attr( $s['id'] ); ?>">
+                <h3 class="agc-inv-metal-heading"><?php echo esc_html( $s['label'] ); ?></h3>
                 <table class="agc-inv-table">
                     <thead>
                         <tr>
@@ -431,7 +437,7 @@ function agc_inv_render_what_we_pay( $atts ) {
                         </tr>
                     </thead>
                     <tbody>
-                        <?php foreach ( $rows as $row ): ?>
+                        <?php foreach ( $s['rows'] as $row ): ?>
                             <tr>
                                 <td class="agc-inv-col-item">
                                     <span class="agc-inv-name"><?php echo esc_html( $row['name'] ); ?></span>
@@ -531,22 +537,93 @@ function agc_inv_filter_by_metal( $items, $metal ) {
     } ) );
 }
 
-function agc_inv_group_by_metal( $items ) {
-    $order   = [ 'gold', 'silver', 'platinum', 'palladium' ];
-    $buckets = [];
-    foreach ( $order as $m ) {
-        $buckets[ $m ] = [];
+/**
+ * Section order + labels for display-category buckets — MUST match
+ * apps/web/src/lib/product-category.ts SECTIONS. The API tags each row
+ * with `display_category` (slug) + `display_category_label`; this list
+ * tells us which order to render them in and which sections to expose
+ * even when empty (currently we drop empty ones to keep the UI tight).
+ */
+function agc_inv_display_sections() {
+    return [
+        [ 'id' => 'gold_coins',          'label' => 'Gold Coins',                        'metal' => 'gold' ],
+        [ 'id' => 'us_mint_proof_gold',  'label' => 'US Mint Proof Gold Coins',          'metal' => 'gold' ],
+        [ 'id' => 'gold_bars',           'label' => 'Gold Bars',                         'metal' => 'gold' ],
+        [ 'id' => 'pre_1933_gold',       'label' => 'Pre-1933 U.S. Gold Coins',          'metal' => 'gold' ],
+        [ 'id' => 'silver_coins',        'label' => 'Silver Coins',                      'metal' => 'silver' ],
+        [ 'id' => 'morgan_peace_dollars','label' => 'Morgan and Peace Silver Dollars',   'metal' => 'silver' ],
+        [ 'id' => 'silver_generic',      'label' => 'Silver Rounds / Bars (Generic)',    'metal' => 'silver' ],
+        [ 'id' => 'silver_junk',         'label' => 'Junk Silver (90%)',                 'metal' => 'silver' ],
+        [ 'id' => 'silver_mint_sets',    'label' => 'Silver U.S. Mint Sets',             'metal' => 'silver' ],
+        [ 'id' => 'platinum_coins',      'label' => 'Platinum Coins',                    'metal' => 'platinum' ],
+        [ 'id' => 'platinum_bars',       'label' => 'Platinum Bars',                     'metal' => 'platinum' ],
+        [ 'id' => 'palladium_coins',     'label' => 'Palladium Coins',                   'metal' => 'palladium' ],
+        [ 'id' => 'palladium_bars',      'label' => 'Palladium Bars',                    'metal' => 'palladium' ],
+        [ 'id' => 'other',               'label' => 'Other',                             'metal' => 'other' ],
+    ];
+}
+
+/**
+ * Group items by their display_category slug, preserving the order in
+ * agc_inv_display_sections(). The API already tags each row. Rows
+ * missing a slug (older API versions, or bugs) fall through to 'other'.
+ */
+function agc_inv_group_by_display_category( $items ) {
+    $sections = agc_inv_display_sections();
+    $buckets  = [];
+    $labels   = [];
+    foreach ( $sections as $s ) {
+        $buckets[ $s['id'] ] = [];
+        $labels[ $s['id'] ]  = $s['label'];
     }
-    $buckets['other'] = [];
     foreach ( $items as $it ) {
-        $m = isset( $it['metal'] ) ? strtolower( $it['metal'] ) : 'other';
-        if ( ! isset( $buckets[ $m ] ) ) {
+        $slug = isset( $it['display_category'] ) ? $it['display_category'] : 'other';
+        if ( ! isset( $buckets[ $slug ] ) ) {
             $buckets['other'][] = $it;
         } else {
-            $buckets[ $m ][] = $it;
+            $buckets[ $slug ][] = $it;
         }
     }
-    return array_filter( $buckets, function ( $v ) { return ! empty( $v ); } );
+    // Keep the SECTIONS ordering but drop empties. Return as ordered
+    // list of [slug, label, rows] tuples — the renderer iterates this.
+    $out = [];
+    foreach ( $sections as $s ) {
+        if ( ! empty( $buckets[ $s['id'] ] ) ) {
+            $out[] = [
+                'id'    => $s['id'],
+                'label' => $s['label'],
+                'rows'  => $buckets[ $s['id'] ],
+            ];
+        }
+    }
+    return $out;
+}
+
+/**
+ * Toolbar — search input + clickable chips that scroll to each visible
+ * section. Rendered above the sections on both widgets. Chips are built
+ * from the list of sections actually present in the filtered response,
+ * so empty sections don't produce dead chips.
+ */
+function agc_inv_render_toolbar( $sections, $widget ) {
+    $placeholder = $widget === 'live-inventory'
+        ? 'Search in-stock items...'
+        : 'Search what we pay...';
+    $html  = '<div class="agc-inv-toolbar">';
+    $html .= '<div class="agc-inv-search">';
+    $html .= '<input type="search" class="agc-inv-search-input" placeholder="' . esc_attr( $placeholder ) . '" aria-label="Search" />';
+    $html .= '</div>';
+    if ( ! empty( $sections ) ) {
+        $html .= '<div class="agc-inv-chips" role="navigation" aria-label="Jump to category">';
+        foreach ( $sections as $s ) {
+            $html .= '<button type="button" class="agc-inv-chip" data-agc-target="agc-section-' . esc_attr( $s['id'] ) . '">';
+            $html .= esc_html( $s['label'] );
+            $html .= '</button>';
+        }
+        $html .= '</div>';
+    }
+    $html .= '</div>';
+    return $html;
 }
 
 function agc_inv_pretty_metal( $metal ) {

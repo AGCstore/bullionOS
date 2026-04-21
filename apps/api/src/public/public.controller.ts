@@ -5,6 +5,7 @@ import { PricingService } from '../pricing/pricing.service';
 import { MetalsService } from '../metals/metals.service';
 import { toDisplay } from '../common/money';
 import { PublicCacheService } from './public-cache.service';
+import { resolveDisplayCategory, SECTIONS } from '../common/display-category';
 
 interface WhatWePayRow {
   product_id: string;
@@ -16,6 +17,9 @@ interface WhatWePayRow {
   purity: string;
   buy_price: string; // what we pay per unit
   image_url: string | null;
+  /** Section slug (e.g. 'morgan_peace_dollars') + human label from SECTIONS. */
+  display_category: string;
+  display_category_label: string;
 }
 
 interface WhatWePayResponse {
@@ -114,10 +118,12 @@ export class PublicController {
     );
     const quoteByProduct = new Map(quotes.map((q) => [q.product_id, q]));
 
+    const labelBySlug = new Map<string, string>(SECTIONS.map((s) => [s.id as string, s.label]));
     const items: WhatWePayRow[] = products
       .map((p): WhatWePayRow | null => {
         const q = quoteByProduct.get(p.id);
         if (!q) return null;
+        const slug = resolveDisplayCategory(p);
         return {
           product_id: p.id,
           sku: p.sku,
@@ -128,6 +134,8 @@ export class PublicController {
           purity: p.purity,
           buy_price: toDisplay(q.buy_unit_price, 2),
           image_url: p.image_url,
+          display_category: slug,
+          display_category_label: labelBySlug.get(slug) ?? 'Other',
         };
       })
       .filter((r): r is WhatWePayRow => r !== null);

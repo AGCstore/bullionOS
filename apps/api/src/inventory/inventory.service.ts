@@ -78,10 +78,13 @@ export class InventoryService {
       Pick<
         InventoryRow,
         'product_id' | 'sku' | 'name' | 'metal' | 'category' | 'available'
-      > & { weight_troy_oz: string }
+      > & { weight_troy_oz: string; display_category_override: string | null; sort_order: number }
     >
   > {
     const onlyWebsite = opts.onlyWebsite === true;
+    // Sort by sort_order so the plugin and Catalog render in the same
+    // operator-curated sequence. Name is a secondary tie-break for rows
+    // that share an explicit sort_order.
     let q = this.db
       .selectFrom('products as p')
       .innerJoin('inventory as inv', 'inv.product_id', 'p.id')
@@ -92,10 +95,13 @@ export class InventoryService {
         'p.metal',
         'p.category',
         'p.weight_troy_oz',
+        'p.display_category_override',
+        'p.sort_order',
         sql<number>`(inv.quantity_on_hand - inv.quantity_reserved)`.as('available'),
       ])
       .where('p.is_active', '=', true)
       .where(sql<boolean>`(inv.quantity_on_hand - inv.quantity_reserved) > 0`)
+      .orderBy('p.sort_order')
       .orderBy('p.name');
     if (onlyWebsite) q = q.where('p.show_on_website', '=', true);
     return q.execute() as never;
