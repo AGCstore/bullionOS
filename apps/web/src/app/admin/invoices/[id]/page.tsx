@@ -187,6 +187,20 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <StatusPill status={data.status} />
+          {/* Draft-only "Continue editing" → resumes the wizard bound to
+              this draft via ?draftId. Without this, operators landing on
+              the detail page of a saved-but-unfinished invoice have no
+              path back to line-item editing and resort to Void & recreate
+              (which throws away numbering continuity). */}
+          {data.status === 'draft' && (
+            <Link
+              href={`/admin/invoices/new?draftId=${data.id}`}
+              className="rounded-md bg-ink-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-ink-800"
+              title="Open the invoice wizard to edit line items, quantities, and payment"
+            >
+              Continue editing
+            </Link>
+          )}
           {/* Wholesale-specific Mark Paid button (WH-002). More prominent
               than the generic "Mark paid" option in the status dropdown;
               stamps paid_by_user_id automatically via the service.

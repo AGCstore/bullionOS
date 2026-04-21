@@ -143,7 +143,23 @@ export default function InvoicesPage() {
             {displayRows.map((inv) => (
               <tr key={inv.id} className="border-t border-ink-200 hover:bg-ink-50/50">
                 <td className="px-4 py-3 font-mono">
-                  <Link href={`/admin/invoices/${inv.id}`} className="hover:underline">
+                  {/* Drafts deep-link straight into the wizard so operators
+                      can keep adding line items without detouring through
+                      the read-only detail page first. Non-drafts go to
+                      the detail page as before. */}
+                  <Link
+                    href={
+                      inv.status === 'draft'
+                        ? `/admin/invoices/new?draftId=${inv.id}`
+                        : `/admin/invoices/${inv.id}`
+                    }
+                    className="hover:underline"
+                    title={
+                      inv.status === 'draft'
+                        ? 'Resume editing this draft'
+                        : 'Open invoice details'
+                    }
+                  >
                     {inv.invoice_number}
                   </Link>
                 </td>
