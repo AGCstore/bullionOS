@@ -46,6 +46,12 @@ export class ProductsService {
           .execute();
       }
     });
+    // Without this, /public/what-we-pay and /public/in-stock keep the
+    // pre-drag order in Redis for up to 30s, which means the WordPress
+    // plugin and any other anonymous consumer briefly shows a different
+    // sequence than Catalog / Buy Sheet / In-Stock Sheet. Invalidate so
+    // the next public fetch recomputes against the new sort_order.
+    await this.cache.invalidatePricingDependent();
   }
 
   async getById(id: string): Promise<Product> {
