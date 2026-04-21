@@ -22,7 +22,7 @@ import { CSS } from '@dnd-kit/utilities';
 import {
   SECTIONS,
   METAL_GROUPS,
-  deriveDisplayCategory,
+  resolveDisplayCategory,
   compareByFamily,
   groupSectionsByMetal,
   type DisplayCategory,
@@ -112,8 +112,8 @@ export default function ProductsPage() {
     // grouped by size). Operators can still drag to override; after a
     // drag, sort_order becomes the source of truth for that section.
     const sorted = [...data].sort((a, b) => {
-      const ca = deriveDisplayCategory(a);
-      const cb = deriveDisplayCategory(b);
+      const ca = resolveDisplayCategory(a);
+      const cb = resolveDisplayCategory(b);
       // Use the SECTIONS array index to order categories consistently.
       const ia = SECTIONS.findIndex((s) => s.id === ca);
       const ib = SECTIONS.findIndex((s) => s.id === cb);
@@ -144,10 +144,15 @@ export default function ProductsPage() {
   );
 
   const sectionRows = useMemo(() => {
-    const out = new Map<DisplayCategory, Product[]>();
+    // Section map keyed on string (not DisplayCategory) because
+    // resolveDisplayCategory returns a string — which covers builtins
+    // plus admin-added custom slugs. Bucketing against the builtin
+    // SECTIONS list means custom slugs simply get no bucket, which
+    // is the right "fall off the visible list" behavior here.
+    const out = new Map<string, Product[]>();
     for (const s of SECTIONS) out.set(s.id, []);
     for (const p of visibleItems) {
-      const c = deriveDisplayCategory(p);
+      const c = resolveDisplayCategory(p);
       out.get(c)?.push(p);
     }
     return out;
@@ -166,8 +171,8 @@ export default function ProductsPage() {
     const activeProduct = items.find((p) => p.id === active.id);
     const overProduct = items.find((p) => p.id === over.id);
     if (!activeProduct || !overProduct) return;
-    const aCat = deriveDisplayCategory(activeProduct);
-    const oCat = deriveDisplayCategory(overProduct);
+    const aCat = resolveDisplayCategory(activeProduct);
+    const oCat = resolveDisplayCategory(overProduct);
     if (aCat !== oCat) return;
 
     const sectionList = sectionRows.get(aCat)!;
@@ -469,7 +474,7 @@ function SortableRow({
             validate={(v) => {
               const trimmed = v.trim();
               if (trimmed.length === 0) return 'SKU required';
-              if (!/^[A-Z0-9_-]+$/i.test(trimmed)) {
+              if (!/^[A-Z0-9._-]+$/i.test(trimmed)) {
                 return 'A–Z, 0–9, _ or -';
               }
               return null;
@@ -664,9 +669,17 @@ function DeleteButton({
       )
     )
       return;
+    // PIN gate — second wall against accidental delete-clicks during
+    // rapid catalog edits. Server re-enforces (?pin=<PIN>) so hitting
+    // the API directly without the PIN still fails.
+    const pin = prompt('Enter delete PIN:');
+    if (!pin) return;
     setBusy(true);
     try {
-      await apiFetch(`/admin/products/${productId}`, { method: 'DELETE' });
+      await apiFetch(
+        `/admin/products/${productId}?pin=${encodeURIComponent(pin.trim())}`,
+        { method: 'DELETE' },
+      );
       await Promise.all([
         qc.invalidateQueries({ queryKey: ['admin', 'products'] }),
         qc.invalidateQueries({ queryKey: ['admin', 'products', 'sheet'] }),

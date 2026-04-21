@@ -15,6 +15,7 @@
 
 export type DisplayCategory =
   | 'gold_coins'
+  | 'us_mint_proof_gold'
   | 'gold_bars'
   | 'pre_1933_gold'
   | 'silver_coins'
@@ -38,6 +39,11 @@ export interface DisplaySection {
 
 export const SECTIONS: DisplaySection[] = [
   { id: 'gold_coins', label: 'Gold Coins', metal: 'gold' },
+  {
+    id: 'us_mint_proof_gold',
+    label: 'US Mint Proof Gold Coin',
+    metal: 'gold',
+  },
   { id: 'gold_bars', label: 'Gold Bars', metal: 'gold' },
   { id: 'pre_1933_gold', label: 'Pre-1933 U.S. Gold Coins', metal: 'gold' },
   { id: 'silver_coins', label: 'Silver Coins', metal: 'silver' },
@@ -121,15 +127,28 @@ export function deriveDisplayCategory(p: {
   const m = p.metal.toLowerCase();
   const c = p.category.toLowerCase();
 
-  // Pre-1933: US legal-tender gold with a year in 1800s–1932, or a known
-  // design name. Saint-Gaudens and Indian Head are the giveaways when the
-  // item_name doesn't explicitly spell out "Pre-1933".
   if (m === 'gold') {
+    // Pre-1933: US legal-tender gold with a year in 1800s–1932, or a
+    // known design name. Saint-Gaudens and Indian Head are the
+    // giveaways when item_name doesn't explicitly spell out "Pre-1933".
     if (
-      /pre.?1933|saint.?gaudens|indian.head|liberty head/.test(n) ||
+      // "St. Gaudens" (with period + space) and "Saint-Gaudens" both
+      // accepted — the product name usage varies across imports.
+      /pre.?1933|saint.?gaudens|st\.?\s*gaudens|indian.head|liberty head/.test(n) ||
       /\b18\d{2}\b|\b19[0-2]\d\b|\b193[0-2]\b/.test(n)
     ) {
       return 'pre_1933_gold';
+    }
+    // US Mint proof gold coins — modern American Eagle / Buffalo /
+    // commemorative proofs. Detected by "Proof" in the name plus a
+    // US-minted giveaway token. Non-US proofs (if any are ever
+    // added) keep falling through to gold_coins since the
+    // classification here is about whose mint struck it.
+    if (
+      /\bproof\b/.test(n) &&
+      /\b(american|u\.s\.|us\s|first\s+spouse|modern\s+commem)/.test(n)
+    ) {
+      return 'us_mint_proof_gold';
     }
     if (c === 'bar' || /\bbar\b/.test(n)) return 'gold_bars';
     return 'gold_coins';

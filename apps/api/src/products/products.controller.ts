@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   HttpCode,
   Inject,
@@ -271,9 +272,26 @@ export class AdminProductsController {
     return this.products.update(id, dto);
   }
 
+  /**
+   * Soft-delete a product. PIN-gated (0424) to prevent accidental
+   * drag-and-click deletions during rapid catalog edits. The PIN is
+   * short and intentionally memorable — not a cryptographic control,
+   * just a "are you sure?" wall that's stronger than a confirm()
+   * dialog. The check mirrors what the UI already enforces; we
+   * validate here too so a direct API call can't bypass.
+   */
   @Delete(':id')
   @HttpCode(204)
-  async remove(@Param('id', new ParseUUIDPipe()) id: string) {
+  async remove(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Query('pin') pin?: string,
+  ) {
+    const expected = process.env.PRODUCT_DELETE_PIN || '0424';
+    if (!pin || pin.trim() !== expected) {
+      throw new ForbiddenException(
+        'Delete PIN required. Ask an admin if you don’t have it.',
+      );
+    }
     await this.products.delete(id);
   }
 }

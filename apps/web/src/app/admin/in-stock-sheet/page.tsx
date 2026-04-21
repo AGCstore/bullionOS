@@ -10,7 +10,7 @@ import type { SheetRow } from '@/lib/sheet-types';
 import {
   SECTIONS,
   METAL_GROUPS,
-  deriveDisplayCategory,
+  resolveDisplayCategory,
   groupSectionsByMetal,
   type DisplayCategory,
 } from '@/lib/product-category';
@@ -71,7 +71,7 @@ export default function InStockSheetPage() {
     for (const row of filtered) {
       const enriched: EnrichedSheet = {
         ...row,
-        displayCategory: deriveDisplayCategory(row),
+        displayCategory: resolveDisplayCategory(row) as DisplayCategory,
       };
       out.get(enriched.displayCategory)?.push(enriched);
     }

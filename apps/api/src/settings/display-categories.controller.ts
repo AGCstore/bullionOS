@@ -198,6 +198,7 @@ export class DisplayCategoriesController {
  */
 const BUILTIN_SLUGS = new Set([
   'gold_coins',
+  'us_mint_proof_gold',
   'gold_bars',
   'pre_1933_gold',
   'silver_coins',

@@ -261,7 +261,8 @@ export class ProductsImportService {
 
   private validate(row: Row): string | null {
     if (!row.sku) return 'sku is required';
-    if (!/^[A-Z0-9_-]+$/i.test(row.sku)) return 'sku must be alphanumeric with - or _';
+    if (!/^[A-Z0-9._-]+$/i.test(row.sku))
+      return 'sku must be alphanumeric with . - or _';
     if (!row.name) return 'name is required';
     if (!row.metal || !ALLOWED_METALS.has(row.metal.toLowerCase() as Metal)) {
       return `metal must be one of ${[...ALLOWED_METALS].join(', ')}`;

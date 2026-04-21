@@ -15,7 +15,9 @@ export class CreateProductDto {
   @IsString()
   @MinLength(1)
   @MaxLength(64)
-  @Matches(/^[A-Z0-9_-]+$/, { message: 'sku must be uppercase alphanumeric with - or _' })
+  @Matches(/^[A-Z0-9._-]+$/, {
+    message: 'sku must be uppercase alphanumeric with . - or _',
+  })
   sku!: string;
 
   @IsString()
