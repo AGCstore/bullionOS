@@ -77,6 +77,34 @@ export class KpiController {
     // Build the bucket series server-side so empty periods still render as
     // zero-height bars on the chart. `generate_series` is the right tool —
     // keeps the response a dense N-row array regardless of data density.
+    //
+    // Manual KPI entries (migration 027) are merged in as a second
+    // row-source for the period bucket. We only include them when the
+    // requested period is monthly-or-coarser: manual entries are
+    // stored at month granularity (bucket_month = first-of-month),
+    // so surfacing them at day/week level would make the numbers
+    // appear to spike on the first of each month and read as bugs.
+    // Daily/weekly views stay strictly live-data to avoid that.
+    const includeManual = period === 'month' || period === 'quarter' || period === 'year';
+    const manualCte = includeManual
+      ? sql`
+          UNION ALL
+          SELECT
+            date_trunc(${period}, m.bucket_month::timestamp AT TIME ZONE 'America/New_York')
+              AS bucket_start,
+            NULL::text AS type,
+            (
+              CASE
+                WHEN m.category = 'wholesale' THEN 'wholesaler'
+                ELSE 'retail'
+              END
+            )::text AS client_type,
+            m.amount::numeric AS total,
+            m.category AS manual_category
+          FROM kpi_manual_entries m
+        `
+      : sql``;
+
     const rows = await sql<{
       bucket_start: Date;
       purchases: string;
@@ -96,21 +124,32 @@ export class KpiController {
           date_trunc(${period}, (i.created_at AT TIME ZONE 'America/New_York')) AS bucket_start,
           i.type,
           c.client_type,
-          i.total::numeric AS total
+          i.total::numeric AS total,
+          NULL::text AS manual_category
         FROM invoices i
         INNER JOIN clients c ON c.id = i.client_id
         WHERE i.status IN ('paid','shipped')
+        ${manualCte}
       )
       SELECT
         s.bucket_start,
         COALESCE(SUM(
-          CASE WHEN e.type = 'buy' AND e.client_type = 'retail' THEN e.total END
+          CASE
+            WHEN e.manual_category = 'purchases' THEN e.total
+            WHEN e.type = 'buy' AND e.client_type = 'retail' THEN e.total
+          END
         ), 0)::text AS purchases,
         COALESCE(SUM(
-          CASE WHEN e.type = 'sell' AND e.client_type = 'retail' THEN e.total END
+          CASE
+            WHEN e.manual_category = 'sales' THEN e.total
+            WHEN e.type = 'sell' AND e.client_type = 'retail' THEN e.total
+          END
         ), 0)::text AS sales,
         COALESCE(SUM(
-          CASE WHEN e.client_type = 'wholesaler' THEN e.total END
+          CASE
+            WHEN e.manual_category = 'wholesale' THEN e.total
+            WHEN e.client_type = 'wholesaler' AND e.manual_category IS NULL THEN e.total
+          END
         ), 0)::text AS wholesale
       FROM series s
       LEFT JOIN eligible e ON e.bucket_start = s.bucket_start

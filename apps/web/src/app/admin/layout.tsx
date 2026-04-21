@@ -82,6 +82,10 @@ const NAV_ITEMS: NavEntry[] = [
       { href: '/admin/categories', label: 'Categories' },
       { href: '/admin/integrations', label: 'Integrations' },
       { href: '/admin/backups', label: 'Backups' },
+      // Historical KPI totals from before AGC Desk went live; drives
+      // the dashboard 12-month chart and KPI timeline for
+      // month/quarter/year views.
+      { href: '/admin/settings/kpi-manual', label: 'KPI history' },
     ],
   },
 ];
