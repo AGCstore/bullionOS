@@ -166,13 +166,36 @@ export class ProductsService {
    * migrations 010 + 012) so the row can disappear without orphaning
    * invoice lines or movement history. Use this when a product was
    * created in error and shouldn't even exist in the "inactive" bucket.
+   *
+   * deal_requests has a check constraint requiring either product_id
+   * or product_description to be non-null; when the FK sets product_id
+   * NULL, a request with no description would otherwise fail the check
+   * and abort the whole delete. Backfill product_description first so
+   * the request row keeps its semantic content after the product row
+   * is gone.
    */
   async deleteHard(id: string): Promise<void> {
-    const r = await this.db
-      .deleteFrom('products')
-      .where('id', '=', id)
-      .executeTakeFirst();
-    if (Number(r.numDeletedRows) === 0) throw new NotFoundException('Product not found');
+    await this.db.transaction().execute(async (trx) => {
+      const prod = await trx
+        .selectFrom('products')
+        .select(['sku', 'name'])
+        .where('id', '=', id)
+        .executeTakeFirst();
+      if (!prod) throw new NotFoundException('Product not found');
+
+      await trx
+        .updateTable('deal_requests')
+        .set({ product_description: `${prod.sku} — ${prod.name}` })
+        .where('product_id', '=', id)
+        .where('product_description', 'is', null)
+        .execute();
+
+      const r = await trx
+        .deleteFrom('products')
+        .where('id', '=', id)
+        .executeTakeFirst();
+      if (Number(r.numDeletedRows) === 0) throw new NotFoundException('Product not found');
+    });
     await this.cache.invalidatePricingDependent();
   }
 }
