@@ -5,7 +5,7 @@
  * Description:       Live inventory and "What We Pay" widgets for Atlanta
  *                    Gold & Coin, fed by the AGC Desk API. Elementor widgets
  *                    + shortcodes, auto-refreshing during shop hours.
- * Version:           2.6.0
+ * Version:           2.6.1
  * Author:            Atlanta Gold and Coin
  * License:           Proprietary
  * Text Domain:       agc-inventory
@@ -48,7 +48,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-define( 'AGC_INV_VERSION', '2.6.0' );
+define( 'AGC_INV_VERSION', '2.6.1' );
 define( 'AGC_INV_DEFAULT_BASE', 'https://agc-api-production.up.railway.app/api/v1' );
 // Server-side transient TTL. Short enough that a show_on_website toggle
 // in AGC Desk appears on the shop's WP page within ~15s, long enough
@@ -78,6 +78,13 @@ add_action( 'admin_init', function () {
     register_setting( 'agc_inv_settings', 'agc_inv_base', [
         'sanitize_callback' => 'esc_url_raw',
     ] );
+    // Sitewide schedule-drawer toggle. Stored as '1' (on) or '' (off).
+    register_setting( 'agc_inv_settings', 'agc_inv_sitewide_drawer', [
+        'sanitize_callback' => function ( $v ) { return $v === '1' ? '1' : ''; },
+    ] );
+    register_setting( 'agc_inv_settings', 'agc_inv_sitewide_drawer_form_id', [
+        'sanitize_callback' => function ( $v ) { return (string) absint( $v ) ?: '2'; },
+    ] );
 } );
 
 function agc_inv_render_settings_page() {
@@ -105,6 +112,36 @@ function agc_inv_render_settings_page() {
                             (<code><?php echo esc_html( AGC_INV_DEFAULT_BASE ); ?></code>).
                             When the field is empty, the plugin follows whatever default
                             is compiled in — makes host migrations one-line changes.
+                        </p>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><label for="agc_inv_sitewide_drawer">Sitewide schedule drawer</label></th>
+                    <td>
+                        <label>
+                            <input type="checkbox"
+                                name="agc_inv_sitewide_drawer"
+                                id="agc_inv_sitewide_drawer"
+                                value="1"
+                                <?php checked( '1', get_option( 'agc_inv_sitewide_drawer', '' ) ); ?> />
+                            Show the <strong>Schedule an Appointment</strong> pill on every front-end page.
+                        </label>
+                        <p class="description">
+                            When on, the pill + slide-in drawer appear on every page of
+                            the shop automatically — no shortcode needed. Pages that
+                            already have <code>[agc_schedule_drawer]</code> or one of
+                            the inventory widgets (which embed their own drawer) are
+                            detected and skipped, so you never get a duplicate.
+                        </p>
+                        <p style="margin-top:10px;">
+                            <label for="agc_inv_sitewide_drawer_form_id">Gravity Form id:&nbsp;</label>
+                            <input type="number"
+                                name="agc_inv_sitewide_drawer_form_id"
+                                id="agc_inv_sitewide_drawer_form_id"
+                                min="1"
+                                value="<?php echo esc_attr( get_option( 'agc_inv_sitewide_drawer_form_id', '2' ) ); ?>"
+                                class="small-text" />
+                            <span class="description">(default <code>2</code>)</span>
                         </p>
                     </td>
                 </tr>
@@ -436,6 +473,33 @@ add_shortcode( 'agc_schedule_drawer', function ( $atts ) {
         ]
     );
 } );
+
+/**
+ * Sitewide drawer injection.
+ *
+ * When the 'agc_inv_sitewide_drawer' option is on, hook wp_footer and
+ * render the drawer there so every front-end page has the pill + form
+ * without editing each page individually.
+ *
+ * Dedupe is handled by agc_inv_render_schedule_drawer() itself — it
+ * tracks render state across calls within the same request — so pages
+ * that already embed the drawer via a widget or the [agc_schedule_drawer]
+ * shortcode will skip this injection automatically.
+ *
+ * Priority 20 (> default 10) so it runs after shortcodes in the page
+ * body have fired, keeping the first-call-wins dedupe predictable.
+ */
+add_action( 'wp_footer', function () {
+    if ( is_admin() ) return;
+    if ( get_option( 'agc_inv_sitewide_drawer', '' ) !== '1' ) return;
+    $form_id = (string) absint( get_option( 'agc_inv_sitewide_drawer_form_id', '2' ) );
+    if ( $form_id === '0' ) $form_id = '2';
+    // Enqueue the widget bundle so the drawer styles + JS land on
+    // pages that don't host any inventory widget.
+    wp_enqueue_style( 'agc-inv' );
+    wp_enqueue_script( 'agc-inv' );
+    echo agc_inv_render_schedule_drawer( $form_id );
+}, 20 );
 
 // ─── Renderers ─────────────────────────────────────────────────────────────
 
@@ -838,6 +902,17 @@ function agc_inv_render_hero( $title, $subtitle ) {
  * guards against duplicate drawer nodes by id.
  */
 function agc_inv_render_schedule_drawer( $form_id, $opts = [] ) {
+    // Dedupe: the drawer markup includes a fixed id='agc-drawer' + a single
+    // delegated click handler. A second render on the same page creates
+    // duplicate nodes that the JS ignores but that still bloat the DOM
+    // and the iPhone accessibility tree. Track across calls so widget
+    // embeds + shortcode + sitewide footer injection all cooperate.
+    static $rendered = false;
+    if ( $rendered ) {
+        return '';
+    }
+    $rendered = true;
+
     $form_id = absint( $form_id ) ?: 2;
     $title    = isset( $opts['title'] ) && $opts['title'] !== ''
         ? $opts['title']
