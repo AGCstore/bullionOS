@@ -584,45 +584,35 @@
  * a dark navy band with gold accents for brand continuity.
  * ═════════════════════════════════════════════════════════════════ */
 
-/* Vertical pill pinned to the RIGHT-MIDDLE of the viewport. Stays
- * parked there while the page scrolls. Label reads bottom-to-top so
- * the tab itself is narrow; on phones (<=520px) it collapses to an
- * icon-only pill. */
+/* Schedule pill — two responsive modes:
+ *   Desktop (≥521px): vertical pill pinned to the right-middle of the
+ *     viewport. Label ("Schedule an Appointment") reads bottom-to-top,
+ *     rotated 180° so the pill itself stays narrow. Subtle gold halo
+ *     pulses on a slow loop to draw the eye without nagging.
+ *   Mobile (≤520px): 60×60 circular FAB anchored to the bottom-right
+ *     corner, in the thumb-reach zone. Label hides, icon stays.
+ */
 .agc-drawer-fab {
     position: fixed;
-    right: 0;
-    top: 50%;
-    transform: translateY(-50%);
     z-index: 2147483640;
     display: inline-flex;
-    flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 8px;
-    padding: 18px 11px;
-    border-radius: 12px 0 0 12px;
     background: linear-gradient(180deg, #e8d4a0 0%, #d4b070 45%, #b8965e 100%);
     color: #1d2327;
     font-family: 'Instrument Sans', system-ui, -apple-system, sans-serif;
-    font-size: 12px;
     font-weight: 700;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
     border: none;
     cursor: pointer;
-    box-shadow:
-        -6px 10px 28px rgba(0, 0, 0, 0.22),
-        0 1px 0 rgba(255, 255, 255, 0.35) inset;
-    transition: transform 180ms cubic-bezier(0.2, 0.8, 0.3, 1),
-        box-shadow 180ms ease, padding 180ms ease;
     text-decoration: none;
-}
-.agc-drawer-fab:hover {
-    transform: translateY(-50%) translateX(-3px);
+    /* Layered shadow lifts the pill off the page: deep drop + soft
+     * gold halo + inner highlight. */
     box-shadow:
-        -10px 14px 32px rgba(0, 0, 0, 0.28),
-        0 1px 0 rgba(255, 255, 255, 0.45) inset;
-    color: #1d2327;
+        -6px 10px 28px rgba(0, 0, 0, 0.28),
+        0 0 0 4px rgba(212, 176, 112, 0.12),
+        0 1px 0 rgba(255, 255, 255, 0.4) inset;
+    transition: transform 200ms cubic-bezier(0.2, 0.8, 0.3, 1),
+        box-shadow 200ms ease, background 200ms ease;
 }
 .agc-drawer-fab:focus-visible {
     outline: 2px solid #1d2327;
@@ -632,20 +622,92 @@
     flex-shrink: 0;
     display: block;
 }
-/* Vertical text — bottom-to-top so it reads up the pill. */
-.agc-drawer-fab-label {
-    writing-mode: vertical-rl;
-    transform: rotate(180deg);
-    line-height: 1;
-    font-variant-numeric: tabular-nums;
-    font-weight: 700;
+
+/* Desktop pill: vertical, right-middle, glows gently */
+@media (min-width: 521px) {
+    .agc-drawer-fab {
+        right: 0;
+        top: 50%;
+        transform: translateY(-50%);
+        flex-direction: column;
+        gap: 10px;
+        padding: 20px 13px;
+        border-radius: 14px 0 0 14px;
+        font-size: 12.5px;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        animation: agc-fab-halo 2.8s cubic-bezier(0.2, 0.8, 0.3, 1) infinite;
+    }
+    .agc-drawer-fab:hover {
+        transform: translateY(-50%) translateX(-4px);
+        box-shadow:
+            -12px 16px 36px rgba(0, 0, 0, 0.36),
+            0 0 0 5px rgba(212, 176, 112, 0.22),
+            0 1px 0 rgba(255, 255, 255, 0.5) inset;
+        background: linear-gradient(180deg, #f0dba6 0%, #dcb874 45%, #c09d66 100%);
+        color: #1d2327;
+    }
+    .agc-drawer-fab-label {
+        writing-mode: vertical-rl;
+        transform: rotate(180deg);
+        line-height: 1;
+        font-variant-numeric: tabular-nums;
+        font-weight: 800;
+    }
+    @keyframes agc-fab-halo {
+        0%, 100% {
+            box-shadow:
+                -6px 10px 28px rgba(0, 0, 0, 0.28),
+                0 0 0 4px rgba(212, 176, 112, 0.12),
+                0 1px 0 rgba(255, 255, 255, 0.4) inset;
+        }
+        50% {
+            box-shadow:
+                -6px 10px 28px rgba(0, 0, 0, 0.28),
+                0 0 0 10px rgba(212, 176, 112, 0),
+                0 1px 0 rgba(255, 255, 255, 0.4) inset;
+        }
+    }
+    @media (prefers-reduced-motion: reduce) {
+        .agc-drawer-fab { animation: none; }
+    }
 }
+
+/* Mobile FAB: circular, bottom-right (thumb zone), same pulse */
 @media (max-width: 520px) {
     .agc-drawer-fab {
-        padding: 12px 10px;
-        border-radius: 12px 0 0 12px;
+        right: 18px;
+        bottom: calc(18px + env(safe-area-inset-bottom, 0));
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        padding: 0;
+        animation: agc-fab-pulse 2.4s cubic-bezier(0.2, 0.8, 0.3, 1) infinite;
+    }
+    .agc-drawer-fab:hover,
+    .agc-drawer-fab:active {
+        transform: translateY(-2px);
+        background: linear-gradient(180deg, #f0dba6 0%, #dcb874 45%, #c09d66 100%);
+        color: #1d2327;
     }
     .agc-drawer-fab-label { display: none; }
+    @keyframes agc-fab-pulse {
+        0%, 100% {
+            box-shadow:
+                0 8px 22px rgba(0, 0, 0, 0.28),
+                0 0 0 0 rgba(212, 176, 112, 0.6),
+                0 1px 0 rgba(255, 255, 255, 0.4) inset;
+        }
+        50% {
+            box-shadow:
+                0 8px 22px rgba(0, 0, 0, 0.28),
+                0 0 0 14px rgba(212, 176, 112, 0),
+                0 1px 0 rgba(255, 255, 255, 0.4) inset;
+        }
+    }
+    @media (prefers-reduced-motion: reduce) {
+        .agc-drawer-fab { animation: none; }
+    }
 }
 
 .agc-drawer-overlay {

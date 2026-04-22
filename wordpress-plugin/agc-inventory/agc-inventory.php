@@ -5,7 +5,7 @@
  * Description:       Live inventory and "What We Pay" widgets for Atlanta
  *                    Gold & Coin, fed by the AGC Desk API. Elementor widgets
  *                    + shortcodes, auto-refreshing during shop hours.
- * Version:           2.5.1
+ * Version:           2.6.0
  * Author:            Atlanta Gold and Coin
  * License:           Proprietary
  * Text Domain:       agc-inventory
@@ -48,7 +48,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-define( 'AGC_INV_VERSION', '2.5.1' );
+define( 'AGC_INV_VERSION', '2.6.0' );
 define( 'AGC_INV_DEFAULT_BASE', 'https://agc-api-production.up.railway.app/api/v1' );
 // Server-side transient TTL. Short enough that a show_on_website toggle
 // in AGC Desk appears on the shop's WP page within ~15s, long enough
@@ -398,6 +398,43 @@ add_shortcode( 'agc_buy_rates_page', function ( $atts ) {
         'agc_buy_rates_page'
     );
     return agc_inv_render_buy_rates_page( $atts );
+} );
+
+/**
+ * Standalone schedule drawer — pill pinned to the right-middle of the
+ * viewport (bottom-right circular FAB on phones), wraps a Gravity Form
+ * in a navy-themed slide-in drawer.
+ *
+ * Drop this shortcode on any page to get the same drawer that ships
+ * inside the Live Inventory and What We Pay widgets, without rendering
+ * the widget body.
+ *
+ *   [agc_schedule_drawer]                            — form_id=2, default copy
+ *   [agc_schedule_drawer form_id="3"]                — different Gravity Form
+ *   [agc_schedule_drawer title="Book a visit"
+ *                        subtitle="Private consult." ]— custom header copy
+ */
+add_shortcode( 'agc_schedule_drawer', function ( $atts ) {
+    $atts = shortcode_atts(
+        [
+            'form_id'  => '2',
+            'title'    => 'Schedule an Appointment',
+            'subtitle' => 'Meet with a specialist to discuss buying, selling, or appraising your precious metals.',
+        ],
+        $atts,
+        'agc_schedule_drawer'
+    );
+    // Drawer CSS + JS live in the main inventory bundle, so enqueue it
+    // even though the widget body isn't rendering here.
+    wp_enqueue_style( 'agc-inv' );
+    wp_enqueue_script( 'agc-inv' );
+    return agc_inv_render_schedule_drawer(
+        $atts['form_id'],
+        [
+            'title'    => $atts['title'],
+            'subtitle' => $atts['subtitle'],
+        ]
+    );
 } );
 
 // ─── Renderers ─────────────────────────────────────────────────────────────
@@ -800,8 +837,14 @@ function agc_inv_render_hero( $title, $subtitle ) {
  * button close it. Multiple widgets on the same page is fine — the JS
  * guards against duplicate drawer nodes by id.
  */
-function agc_inv_render_schedule_drawer( $form_id ) {
+function agc_inv_render_schedule_drawer( $form_id, $opts = [] ) {
     $form_id = absint( $form_id ) ?: 2;
+    $title    = isset( $opts['title'] ) && $opts['title'] !== ''
+        ? $opts['title']
+        : 'Schedule an Appointment';
+    $subtitle = isset( $opts['subtitle'] ) && $opts['subtitle'] !== ''
+        ? $opts['subtitle']
+        : 'Meet with a specialist to discuss buying, selling, or appraising your precious metals.';
     // If Gravity Forms isn't active, do_shortcode returns the raw
     // [gravityform ...] text which looks broken. Degrade gracefully
     // to a simple "call us" message so the drawer still feels finished.
@@ -815,14 +858,14 @@ function agc_inv_render_schedule_drawer( $form_id ) {
     // nodes remain; the others are a no-op.
     ob_start();
     ?>
-    <button type="button" class="agc-drawer-fab" data-agc-buy-open="1" aria-label="Schedule appointment">
-        <svg class="agc-drawer-fab-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <button type="button" class="agc-drawer-fab" data-agc-buy-open="1" aria-label="Schedule an appointment">
+        <svg class="agc-drawer-fab-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
             <line x1="16" y1="2" x2="16" y2="6"></line>
             <line x1="8" y1="2" x2="8" y2="6"></line>
             <line x1="3" y1="10" x2="21" y2="10"></line>
         </svg>
-        <span class="agc-drawer-fab-label">Schedule</span>
+        <span class="agc-drawer-fab-label">Schedule an Appointment</span>
     </button>
     <div class="agc-drawer-overlay" data-agc-buy-overlay hidden></div>
     <aside class="agc-drawer" id="agc-drawer" aria-hidden="true" aria-labelledby="agc-drawer-title" data-agc-buy-drawer>
@@ -838,8 +881,8 @@ function agc_inv_render_schedule_drawer( $form_id ) {
                     </svg>
                     Atlanta Gold &amp; Coin
                 </div>
-                <h2 id="agc-drawer-title">Schedule an Appointment</h2>
-                <p>Meet with a specialist to discuss buying, selling, or appraising your precious metals.</p>
+                <h2 id="agc-drawer-title"><?php echo esc_html( $title ); ?></h2>
+                <p><?php echo esc_html( $subtitle ); ?></p>
             </div>
             <button type="button" class="agc-drawer-close" data-agc-buy-close="1" aria-label="Close appointment form">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
