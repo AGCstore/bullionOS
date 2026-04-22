@@ -106,6 +106,11 @@ export class InvoicesService {
       type?: InvoiceType;
       /** 'wholesaler' or 'retail' — joins clients to filter by segment. */
       client_type?: 'retail' | 'wholesaler';
+      /** Include clients flagged exclude_from_reports. Default false
+       *  (filter them out). Set true only when drilling into a specific
+       *  client — e.g. the client detail page — where hiding invoices
+       *  from the client they belong to would be confusing. */
+      includeExcluded?: boolean;
     } = {},
   ): Promise<Array<Invoice & { client_name: string; client_type: string }>> {
     // Include client name + type with the invoice so the tab'd list view
@@ -126,6 +131,12 @@ export class InvoicesService {
     if (opts.status) q = q.where('i.status', '=', opts.status);
     if (opts.type) q = q.where('i.type', '=', opts.type);
     if (opts.client_type) q = q.where('c.client_type', '=', opts.client_type);
+    // Global list views hide "excluded" clients' invoices by default —
+    // owner/test clients stay out of revenue + AR surfaces. Passing
+    // includeExcluded=true or clientId bypasses the filter.
+    if (!opts.includeExcluded && !opts.clientId) {
+      q = q.where('c.exclude_from_reports', '=', false);
+    }
     return q.execute() as unknown as Promise<
       Array<Invoice & { client_name: string; client_type: string }>
     >;
@@ -970,6 +981,10 @@ export class InvoicesService {
         ),
       ])
       .where('c.client_type', '=', 'wholesaler')
+      // Skip invoices against clients flagged exclude_from_reports —
+      // same gate as the Invoices list + KPI rollup. Keeps owner/test
+      // transactions out of AR.
+      .where('c.exclude_from_reports', '=', false)
       // Outstanding = finalized OR shipped, but not yet paid. Wholesale
       // routinely ships before payment lands, so 'shipped' must stay on
       // the receivables list until Mark Paid fires. Guarded by

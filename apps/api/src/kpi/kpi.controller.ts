@@ -134,6 +134,10 @@ export class KpiController {
         FROM invoices i
         INNER JOIN clients c ON c.id = i.client_id
         WHERE i.status IN ('paid','shipped')
+          -- Exclude invoices against reports-opted-out clients (owner
+          -- test accounts, internal transfers). Flag lives on clients;
+          -- see migration 030.
+          AND c.exclude_from_reports = false
         ${manualCte}
       )
       SELECT

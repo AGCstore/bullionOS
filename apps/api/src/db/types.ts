@@ -147,6 +147,10 @@ export interface ClientsTable {
   /** Free-form marketing source (migration 014). */
   heard_from: string | null;
   client_type: ColumnType<ClientType, ClientType | undefined, ClientType>;
+  /** Migration 030: when true, this client's invoices are omitted from
+   *  aggregate views (Invoices list, KPI rollups, Wholesale AR). Used
+   *  for owner/test clients whose activity shouldn't skew revenue. */
+  exclude_from_reports: ColumnType<boolean, boolean | undefined, boolean>;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
   // Postgres GENERATED column (migration 006, rebuilt in 020 to include
