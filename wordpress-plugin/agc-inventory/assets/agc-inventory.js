@@ -280,12 +280,18 @@
   }
 
   /**
-   * Premium = how far our buy price sits from melt value. Positive = we
-   * pay MORE than melt (typical for small fractionals + semi-numismatics),
-   * negative = we pay BELOW melt (generic bullion). Shown as dollar
-   * amount with percent subtitle; computed purely client-side from the
-   * already-fetched spot + per-row weight/purity, so the premium never
-   * travels through the public API payload.
+   * Premium = what we pay as a share of melt. Per operator spec:
+   *   - Show ONLY the percent (no dollar figure)
+   *   - Show the actual share ("96.25%") not the delta off melt
+   *     ("-3.75%"). Operators read the share form faster.
+   *
+   * Color code: green when we're paying AT OR ABOVE melt (>= 100),
+   * red when below melt, grey exactly at 100%. Keeps the visual
+   * semantics without any dollar math.
+   *
+   * Math is purely client-side from the already-fetched spot +
+   * per-row weight/purity — premium data never travels through the
+   * public API payload, so a customer snooping devtools sees nothing.
    */
   function renderPremiumCell(r, spot) {
     if (!spot) return '<span class="agc-inv-premium-na">—</span>';
@@ -298,26 +304,19 @@
     if (!(melt > 0) || !(buy > 0)) {
       return '<span class="agc-inv-premium-na">—</span>';
     }
-    var delta = buy - melt;
-    var pct = (delta / melt) * 100;
-    var sign = delta >= 0 ? '+' : '-';
+    var pct = (buy / melt) * 100;
     var cls =
-      delta > 0
+      pct > 100
         ? 'agc-inv-premium--over'
-        : delta < 0
+        : pct < 100
         ? 'agc-inv-premium--under'
         : 'agc-inv-premium--flat';
     return (
       '<span class="agc-inv-premium ' +
       cls +
-      '"><span class="agc-inv-premium-dollar">' +
-      sign +
-      '$' +
-      formatMoney(Math.abs(delta)) +
-      '</span><span class="agc-inv-premium-pct">' +
-      sign +
-      Math.abs(pct).toFixed(2) +
-      '%</span></span>'
+      '">' +
+      pct.toFixed(2) +
+      '% of spot</span>'
     );
   }
 

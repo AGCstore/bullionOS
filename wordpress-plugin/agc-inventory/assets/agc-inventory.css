@@ -364,31 +364,19 @@
     display: table-cell;
 }
 .agc-inv-wrap .agc-inv-premium {
-    display: inline-flex;
-    flex-direction: column;
-    align-items: center;
-    line-height: 1.15;
-    gap: 1px;
-}
-.agc-inv-wrap .agc-inv-premium-dollar {
+    display: inline-block;
     font-weight: 600;
-    font-size: 0.88rem;
+    font-size: 0.9rem;
+    line-height: 1.15;
+    white-space: nowrap;
 }
-.agc-inv-wrap .agc-inv-premium-pct {
-    font-weight: 500;
-    font-size: 0.72rem;
-    opacity: 0.78;
-}
-.agc-inv-wrap .agc-inv-premium--over .agc-inv-premium-dollar,
-.agc-inv-wrap .agc-inv-premium--over .agc-inv-premium-pct {
+.agc-inv-wrap .agc-inv-premium--over {
     color: var(--agc-up);
 }
-.agc-inv-wrap .agc-inv-premium--under .agc-inv-premium-dollar,
-.agc-inv-wrap .agc-inv-premium--under .agc-inv-premium-pct {
+.agc-inv-wrap .agc-inv-premium--under {
     color: var(--agc-down);
 }
-.agc-inv-wrap .agc-inv-premium--flat .agc-inv-premium-dollar,
-.agc-inv-wrap .agc-inv-premium--flat .agc-inv-premium-pct {
+.agc-inv-wrap .agc-inv-premium--flat {
     color: var(--agc-muted);
 }
 .agc-inv-wrap .agc-inv-premium-na {
@@ -1085,11 +1073,8 @@ body.agc-drawer-locked {
         padding-left: 0.35rem;
         padding-right: 0.35rem;
     }
-    .agc-inv-wrap .agc-inv-premium-dollar {
+    .agc-inv-wrap .agc-inv-premium {
         font-size: 0.78rem;
-    }
-    .agc-inv-wrap .agc-inv-premium-pct {
-        font-size: 0.66rem;
     }
     /* OOS heading wraps its count onto a second line cleanly. */
     .agc-inv-oos-heading {

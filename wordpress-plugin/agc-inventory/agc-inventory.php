@@ -5,7 +5,7 @@
  * Description:       Live inventory and "What We Pay" widgets for Atlanta
  *                    Gold & Coin, fed by the AGC Desk API. Elementor widgets
  *                    + shortcodes, auto-refreshing during shop hours.
- * Version:           2.5.0
+ * Version:           2.5.1
  * Author:            Atlanta Gold and Coin
  * License:           Proprietary
  * Text Domain:       agc-inventory
@@ -48,7 +48,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-define( 'AGC_INV_VERSION', '2.5.0' );
+define( 'AGC_INV_VERSION', '2.5.1' );
 define( 'AGC_INV_DEFAULT_BASE', 'https://agc-api-production.up.railway.app/api/v1' );
 // Server-side transient TTL. Short enough that a show_on_website toggle
 // in AGC Desk appears on the shop's WP page within ~15s, long enough
@@ -694,10 +694,11 @@ function agc_inv_render_buy_rates_page( $atts ) {
 }
 
 /**
- * Server-side twin of the JS renderPremiumCell — computes buy premium
- * (buy_price − melt_value) and emits dollar + percent, colored green
- * over melt / red under melt. Cell is always rendered; visibility is
- * toggled client-side by the operator's hero double-click.
+ * Server-side twin of the JS renderPremiumCell — emits buy price as
+ * a share of melt ('96.25% of spot'). No dollar figure; no delta.
+ * Colored green at/above 100%, red below, grey exactly at 100.
+ * Cell is always rendered; visibility is toggled client-side by the
+ * operator's hero double-click.
  */
 function agc_inv_render_premium_cell( $row, $spot ) {
     if ( ! is_array( $spot ) ) {
@@ -712,15 +713,12 @@ function agc_inv_render_premium_cell( $row, $spot ) {
     if ( $melt <= 0 || $buy <= 0 ) {
         return '<span class="agc-inv-premium-na">&mdash;</span>';
     }
-    $delta = $buy - $melt;
-    $pct   = ( $delta / $melt ) * 100;
-    $sign  = $delta >= 0 ? '+' : '-';
-    $cls   = $delta > 0
+    $pct = ( $buy / $melt ) * 100;
+    $cls = $pct > 100
         ? 'agc-inv-premium--over'
-        : ( $delta < 0 ? 'agc-inv-premium--under' : 'agc-inv-premium--flat' );
+        : ( $pct < 100 ? 'agc-inv-premium--under' : 'agc-inv-premium--flat' );
     return '<span class="agc-inv-premium ' . esc_attr( $cls ) . '">'
-        . '<span class="agc-inv-premium-dollar">' . esc_html( $sign . '$' . number_format( abs( $delta ), 2 ) ) . '</span>'
-        . '<span class="agc-inv-premium-pct">' . esc_html( $sign . number_format( abs( $pct ), 2 ) . '%' ) . '</span>'
+        . esc_html( number_format( $pct, 2 ) . '% of spot' )
         . '</span>';
 }
 
