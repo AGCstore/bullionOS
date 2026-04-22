@@ -5,7 +5,7 @@
  * Description:       Live inventory and "What We Pay" widgets for Atlanta
  *                    Gold & Coin, fed by the AGC Desk API. Elementor widgets
  *                    + shortcodes, auto-refreshing during shop hours.
- * Version:           2.6.1
+ * Version:           2.6.2
  * Author:            Atlanta Gold and Coin
  * License:           Proprietary
  * Text Domain:       agc-inventory
@@ -48,7 +48,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-define( 'AGC_INV_VERSION', '2.6.1' );
+define( 'AGC_INV_VERSION', '2.6.2' );
 define( 'AGC_INV_DEFAULT_BASE', 'https://agc-api-production.up.railway.app/api/v1' );
 // Server-side transient TTL. Short enough that a show_on_website toggle
 // in AGC Desk appears on the shop's WP page within ~15s, long enough
@@ -118,7 +118,21 @@ function agc_inv_render_settings_page() {
                 <tr>
                     <th scope="row"><label for="agc_inv_sitewide_drawer">Sitewide schedule drawer</label></th>
                     <td>
+                        <?php $is_on = get_option( 'agc_inv_sitewide_drawer', '' ) === '1'; ?>
+                        <p style="margin:0 0 10px;">
+                            Status:
+                            <?php if ( $is_on ): ?>
+                                <strong style="color:#137333;">● ON — drawer renders on every page</strong>
+                            <?php else: ?>
+                                <strong style="color:#c00;">● OFF — drawer only shows on pages with the shortcode or widget</strong>
+                            <?php endif; ?>
+                        </p>
                         <label>
+                            <!-- Hidden sentinel so unchecking the box actually submits
+                                 a value. Without this, WordPress's options.php never
+                                 sees an unchecked checkbox and the option stays on
+                                 whatever it was. -->
+                            <input type="hidden" name="agc_inv_sitewide_drawer" value="" />
                             <input type="checkbox"
                                 name="agc_inv_sitewide_drawer"
                                 id="agc_inv_sitewide_drawer"
@@ -132,6 +146,11 @@ function agc_inv_render_settings_page() {
                             already have <code>[agc_schedule_drawer]</code> or one of
                             the inventory widgets (which embed their own drawer) are
                             detected and skipped, so you never get a duplicate.
+                            <br /><em>If you save this box checked but still don't see
+                            the pill on your pages, check for a page-cache plugin
+                            (WP Rocket, LiteSpeed, W3 Total Cache) — flush its cache
+                            after saving. Themes with custom footers need to call
+                            <code>wp_footer()</code>; check your theme settings.</em>
                         </p>
                         <p style="margin-top:10px;">
                             <label for="agc_inv_sitewide_drawer_form_id">Gravity Form id:&nbsp;</label>
@@ -489,15 +508,42 @@ add_shortcode( 'agc_schedule_drawer', function ( $atts ) {
  * Priority 20 (> default 10) so it runs after shortcodes in the page
  * body have fired, keeping the first-call-wins dedupe predictable.
  */
-add_action( 'wp_footer', function () {
+/**
+ * Sitewide drawer — TWO hooks so assets and markup both land cleanly:
+ *
+ *   1. wp_enqueue_scripts (early, before <head> closes) — queues the
+ *      agc-inv CSS + JS so they're in the document. Enqueuing inside
+ *      wp_footer is too late for some themes that have already flushed
+ *      wp_head-linked stylesheets.
+ *
+ *   2. wp_footer (late, just before </body>) — actually emits the
+ *      drawer + FAB markup. Priority 20 so body shortcodes fire first
+ *      and their render call claims the dedupe slot.
+ *
+ * Both hooks read the same option so they agree on whether to act.
+ */
+add_action( 'wp_enqueue_scripts', function () {
     if ( is_admin() ) return;
     if ( get_option( 'agc_inv_sitewide_drawer', '' ) !== '1' ) return;
-    $form_id = (string) absint( get_option( 'agc_inv_sitewide_drawer_form_id', '2' ) );
-    if ( $form_id === '0' ) $form_id = '2';
-    // Enqueue the widget bundle so the drawer styles + JS land on
-    // pages that don't host any inventory widget.
     wp_enqueue_style( 'agc-inv' );
     wp_enqueue_script( 'agc-inv' );
+}, 20 );
+
+add_action( 'wp_footer', function () {
+    if ( is_admin() ) {
+        return;
+    }
+    if ( get_option( 'agc_inv_sitewide_drawer', '' ) !== '1' ) {
+        // HTML comment so operators doing View Source can tell the hook
+        // fired but the setting is OFF — distinguishes 'hook not
+        // running at all' (theme doesn't call wp_footer) from 'setting
+        // is off'.
+        echo "\n<!-- AGC sitewide drawer: OFF (enable in Settings → AGC Inventory) -->\n";
+        return;
+    }
+    $form_id = (string) absint( get_option( 'agc_inv_sitewide_drawer_form_id', '2' ) );
+    if ( $form_id === '0' ) $form_id = '2';
+    echo "\n<!-- AGC sitewide drawer: ON -->\n";
     echo agc_inv_render_schedule_drawer( $form_id );
 }, 20 );
 
