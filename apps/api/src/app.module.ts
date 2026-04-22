@@ -28,6 +28,7 @@ import { MessagesModule } from './messages/messages.module';
 import { CryptoModule } from './crypto/crypto.module';
 import { IntegrationsModule } from './integrations/integrations.module';
 import { KpiModule } from './kpi/kpi.module';
+import { HistoricalInvoicesModule } from './historical-invoices/historical-invoices.module';
 import { BackupsModule } from './backups/backups.module';
 import { OcrModule } from './ocr/ocr.module';
 import { CalendarModule } from './calendar/calendar.module';
@@ -93,6 +94,7 @@ import { AllExceptionsFilter } from './common/filters/http-exception.filter';
     CryptoModule,
     IntegrationsModule,
     KpiModule,
+    HistoricalInvoicesModule,
     BackupsModule,
     OcrModule,
     CalendarModule,

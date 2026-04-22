@@ -425,6 +425,27 @@ export interface RestockSubscriptionsTable {
 export type RestockSubscription = Selectable<RestockSubscriptionsTable>;
 export type NewRestockSubscription = Insertable<RestockSubscriptionsTable>;
 
+// ===== Historical invoices (migration 031) =====
+
+export interface HistoricalInvoicesTable {
+  id: Generated<string>;
+  /** Date the original past-system invoice was written (YYYY-MM-DD). */
+  date: ColumnType<Date, Date | string, Date | string>;
+  type: 'buy' | 'sell';
+  amount: Numeric;
+  is_wholesale: ColumnType<boolean, boolean | undefined, boolean>;
+  client_id: string | null;
+  client_name: string | null;
+  reference: string | null;
+  notes: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+  created_by_user_id: string | null;
+}
+export type HistoricalInvoice = Selectable<HistoricalInvoicesTable>;
+export type NewHistoricalInvoice = Insertable<HistoricalInvoicesTable>;
+export type HistoricalInvoiceUpdate = Updateable<HistoricalInvoicesTable>;
+
 // ===== Database root =====
 export interface DB {
   users: UsersTable;
@@ -456,6 +477,7 @@ export interface DB {
   kpi_manual_entries: KpiManualEntriesTable;
   client_attachments: ClientAttachmentsTable;
   restock_subscriptions: RestockSubscriptionsTable;
+  historical_invoices: HistoricalInvoicesTable;
 }
 
 // ===== Calendar bookings (migration 023) =====

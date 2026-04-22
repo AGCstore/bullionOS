@@ -103,6 +103,11 @@ const NAV_ITEMS: NavEntry[] = [
       // the dashboard 12-month chart and KPI timeline for
       // month/quarter/year views.
       { href: '/admin/settings/kpi-manual', label: 'KPI history' },
+      // Day-granular reconciliation of past-system invoices. Feeds
+      // the same KPI rollup as KPI history but per-invoice rather
+      // than per-month — used when the accountant wants to book
+      // prior-month invoices one at a time from QuickBooks / old POS.
+      { href: '/admin/historical-invoices', label: 'Historical invoices' },
       // Editable copy for every system-sent email (invoice emails,
       // etc.). Text-only, with {{variable}} substitution.
       { href: '/admin/settings/email-templates', label: 'Email templates' },

@@ -110,6 +110,24 @@ export class KpiController {
         `
       : sql``;
 
+    // Historical invoices (migration 031) are DAY-granular so they
+    // surface correctly at every zoom — day, week, month, quarter,
+    // year. Type is 'buy' / 'sell' same as live invoices; is_wholesale
+    // drives the wholesale subtotal (we synthesize client_type as
+    // 'wholesaler' when it's set so the CASE-arms downstream treat
+    // it the same as a live wholesale invoice).
+    const historicalCte = sql`
+      UNION ALL
+      SELECT
+        date_trunc(${period}, h.date::timestamp AT TIME ZONE 'America/New_York')
+          AS bucket_start,
+        h.type,
+        (CASE WHEN h.is_wholesale THEN 'wholesaler' ELSE 'retail' END)::text AS client_type,
+        h.amount::numeric AS total,
+        NULL::text AS manual_category
+      FROM historical_invoices h
+    `;
+
     const rows = await sql<{
       bucket_start: Date;
       purchases: string;
@@ -139,6 +157,7 @@ export class KpiController {
           -- see migration 030.
           AND c.exclude_from_reports = false
         ${manualCte}
+        ${historicalCte}
       )
       SELECT
         s.bucket_start,
