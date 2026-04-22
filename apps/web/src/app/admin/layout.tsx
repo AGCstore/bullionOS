@@ -80,14 +80,14 @@ const NAV_ITEMS: NavEntry[] = [
     ],
   },
   { href: '/admin/shipments', label: 'Shipments' },
-  // Catalog parent groups the three pricing / stock views that all
-  // read the same sheet payload. Parent route is still the Catalog
-  // (drag-reorder surface); children are the printable sheets.
+  // Price Sheet is a top-level tab — it's the single most-frequented
+  // counter page, so burying it under Catalog costs an extra click
+  // every quote. Catalog keeps the two less-used sheet siblings.
+  { href: '/admin/pricesheet', label: 'Price Sheet' },
   {
     href: '/admin/products',
     label: 'Catalog',
     children: [
-      { href: '/admin/pricesheet', label: 'Price Sheet' },
       { href: '/admin/in-stock-sheet', label: 'In Stock Sheet' },
       { href: '/admin/buy-sheet', label: 'What We Pay' },
     ],
