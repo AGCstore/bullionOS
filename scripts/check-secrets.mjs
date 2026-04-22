@@ -31,6 +31,14 @@ const RULES = [
   // UPS / FedEx-style: 48+ char mixed-case alnum that looks like a credential.
   // Only matches when clearly marked as a secret, to avoid false positives on hashes.
   ['Generic long secret',       /\b(?:client[_-]?secret|api[_-]?secret|auth[_-]?token|password)["'\s:=]+[A-Za-z0-9]{32,}\b/gi],
+  // Database connection URIs with an inline password. Added after the
+  // April 2026 Railway credential leak — the prior ruleset required a
+  // `password` keyword near the secret, which `postgres:XYZ@host` does
+  // not have. `[^<@\s*]` as the first post-colon char excludes common
+  // placeholder shapes like `<password>`, `*****`, and `... `.
+  ['Postgres URI with password', /\bpostgres(?:ql)?:\/\/[A-Za-z0-9_-]+:[^<@\s*][^@\s]{6,}@/g],
+  ['MySQL URI with password',   /\bmysql:\/\/[A-Za-z0-9_-]+:[^<@\s*][^@\s]{6,}@/g],
+  ['Redis URI with password',   /\brediss?:\/\/[A-Za-z0-9_-]+:[^<@\s*][^@\s]{6,}@/g],
 ];
 
 // Files we never want to scan (binary blobs, lockfiles, vendored code).
@@ -49,6 +57,19 @@ const ALLOWED_HASHES = new Set([
   // bcrypt dummy hash used for timing-safe login compare
   '$2b$12$invalidsaltinvalidsaltinvalid.DummyHashForTimingOnly',
 ]);
+
+// Substrings that, if present anywhere in a match, mark it as a known
+// dummy credential rather than a real leak. Covers dev fixtures that
+// legitimately appear in .env.example, CI config, smoke tests, etc.
+// Keep the list tight — anything added here becomes a permanent
+// blind spot for this regex family.
+const ALLOWED_SUBSTRINGS = [
+  'agc_dev_password',
+  'agc_dev_db',
+  'localhost',
+  '127.0.0.1',
+  'ci-dummy',
+];
 
 function getStagedFiles() {
   const out = execSync('git diff --cached --name-only --diff-filter=ACM', {
@@ -75,6 +96,7 @@ function scan() {
       for (const match of content.matchAll(pattern)) {
         const snippet = match[0];
         if (ALLOWED_HASHES.has(snippet)) continue;
+        if (ALLOWED_SUBSTRINGS.some((s) => snippet.includes(s))) continue;
         // Mask the middle of the match so the hook output doesn't leak it
         // further (terminal scrollback, CI logs).
         const masked =

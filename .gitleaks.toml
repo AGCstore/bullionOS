@@ -1,0 +1,79 @@
+# Gitleaks config for agc-crm.
+#
+# This is the CI secret-scan layer. Runs in
+# .github/workflows/secret-scan.yml on every push + PR and fails the
+# build if any known credential pattern slips through. The local
+# pre-commit hook is a separate, zero-dep Node script at
+# scripts/check-secrets.mjs — intentionally doesn't require gitleaks
+# to be installed on every contributor's machine.
+#
+# Principles:
+#   - Start from the built-in gitleaks ruleset (covers Stripe, AWS, GCP,
+#     Slack, Twilio, GitHub tokens, JWTs, SSH keys, and more).
+#   - Add custom rules for the shapes already in this repo's ecosystem:
+#     Postgres / MySQL / Redis connection URIs with inline passwords.
+#   - Allowlist the known-safe dummy credentials in CI config + .env.example
+#     so the scanner doesn't cry wolf on every commit.
+
+[extend]
+# Pull in gitleaks' default rule library. Keeps the config short while
+# still catching ~80 vendor-specific secret patterns out of the box.
+useDefault = true
+
+# ─── Custom rules ────────────────────────────────────────────────────────
+
+[[rules]]
+id = "postgres-uri-with-password"
+description = "PostgreSQL connection URI with inline password"
+# Matches: postgres(ql)?://user:password@host... — password portion
+# must be non-empty and not a placeholder like <password> or *****.
+regex = '''postgres(?:ql)?://[a-zA-Z0-9_-]+:[^<@\s*][^@\s]*@'''
+tags = ["database", "credential"]
+
+[[rules]]
+id = "mysql-uri-with-password"
+description = "MySQL connection URI with inline password"
+regex = '''mysql://[a-zA-Z0-9_-]+:[^<@\s*][^@\s]*@'''
+tags = ["database", "credential"]
+
+[[rules]]
+id = "redis-uri-with-password"
+description = "Redis connection URI with inline password"
+# rediss? covers both redis:// and rediss:// (TLS). Matches the
+# "user:pass@" prefix; bare `redis://host:port` with no auth slips
+# past intentionally since that's the dev-default shape.
+regex = '''rediss?://[a-zA-Z0-9_-]+:[^<@\s*][^@\s]*@'''
+tags = ["cache", "credential"]
+
+# ─── Allowlists ──────────────────────────────────────────────────────────
+#
+# Known-safe files / patterns the default rules would otherwise flag.
+
+[allowlist]
+description = "Globally-allowed paths + dummy credential patterns"
+
+# Files that intentionally contain placeholder credentials.
+paths = [
+  '''(.*\.env\.example)''',
+  '''apps/api/\.env\.example''',
+  '''\.github/workflows/ci\.yml''',
+  '''\.gitleaks\.toml''',
+  # Historical handoff docs use placeholder strings like `<password>`
+  # which our regex already rejects, but explicitly allowlist them so
+  # a future edit can't accidentally slip through.
+  '''docs/SESSION_HANDOFF\.md''',
+  '''docs/SESSION_HANDOFF_.*\.md''',
+  '''docs/SESSION_LOG\.md''',
+]
+
+# Dummy values used across the repo's examples + CI matrix. Extend
+# cautiously — anything added here becomes a permanent blind spot.
+regexes = [
+  # Explicit dev/test fixtures
+  '''agc_dev_password''',
+  '''ci-dummy(?:-[a-z0-9-]+)?''',
+  # Generic "replace me" placeholders
+  '''<(?:password|secret|your[-_]?\w*)>''',
+  '''your[-_](?:password|secret|api[-_]?key|token)''',
+  '''change[-_]?me(?:[-_]?\w+)?''',
+]
