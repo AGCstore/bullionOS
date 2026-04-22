@@ -385,6 +385,41 @@ function SheetRowView({
               inputClassName="w-20"
             />
           </span>
+          {/* AGW / ASW — metal content per unit, derived as weight × purity
+              but editable directly. On save we PATCH metal_content_troy_oz;
+              the server holds gross weight constant and back-solves purity
+              so the displayed number sticks. Label swaps by metal so it
+              reads the way operators talk about it. */}
+          <span className="ml-2">
+            · {metalContentLabel(row.metal)}{' '}
+            <InlineField
+              value={String(
+                Number(row.weight_troy_oz) * Number(row.purity),
+              )}
+              onSave={async (next) => {
+                await savePatch(row.product_id, qc, {
+                  metal_content_troy_oz: Number(next),
+                });
+                onEdited();
+              }}
+              type="number"
+              step="0.0001"
+              min={0.0001}
+              max={100000}
+              ariaLabel={`${metalContentLabel(row.metal)} (metal content, troy oz)`}
+              format={(v) => Number(v).toFixed(4)}
+              validate={(v) => {
+                const n = Number(v);
+                if (!Number.isFinite(n) || n <= 0) return '> 0 required';
+                const w = Number(row.weight_troy_oz);
+                if (w > 0 && n / w > 1) {
+                  return `cannot exceed gross weight ${w}`;
+                }
+                return null;
+              }}
+              inputClassName="w-24"
+            />
+          </span>
         </div>
       </td>
       <td className="px-4 py-3 text-right font-mono font-semibold">
@@ -584,4 +619,25 @@ function timeSince(iso: string): string {
   if (diff < 60) return `${diff}s ago`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   return new Date(iso).toLocaleTimeString();
+}
+
+/**
+ * Operator-facing label for the metal-content field. Gold dealers say
+ * 'AGW' (Actual Gold Weight), silver dealers say 'ASW'. Platinum and
+ * palladium don't have a universal abbreviation, so we fall back to
+ * 'content' — still unambiguous in context.
+ */
+function metalContentLabel(metal: string): string {
+  switch ((metal || '').toLowerCase()) {
+    case 'gold':
+      return 'AGW';
+    case 'silver':
+      return 'ASW';
+    case 'platinum':
+      return 'APW';
+    case 'palladium':
+      return 'APdW';
+    default:
+      return 'content';
+  }
 }

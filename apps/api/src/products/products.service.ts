@@ -98,9 +98,35 @@ export class ProductsService {
   async update(id: string, dto: UpdateProductDto): Promise<Product> {
     const existing = await this.getById(id);
 
-    const weight = dto.weight_troy_oz ?? Number(existing.weight_troy_oz);
-    const purity = dto.purity ?? Number(existing.purity);
-    const content = d(weight).times(d(purity));
+    // Content-driven edit: if metal_content_troy_oz was patched without
+    // an explicit purity/weight, hold gross weight constant and
+    // back-solve purity so the new content value sticks. This is the
+    // path the In-Stock Sheet's inline AGW/ASW editor uses.
+    let weight = dto.weight_troy_oz ?? Number(existing.weight_troy_oz);
+    let purity = dto.purity ?? Number(existing.purity);
+    let contentOverride: number | undefined;
+    if (
+      dto.metal_content_troy_oz !== undefined &&
+      dto.weight_troy_oz === undefined &&
+      dto.purity === undefined
+    ) {
+      contentOverride = dto.metal_content_troy_oz;
+      if (weight <= 0) {
+        throw new BadRequestException(
+          'Cannot edit metal content on a product with zero gross weight',
+        );
+      }
+      purity = contentOverride / weight;
+      if (!(purity > 0) || purity > 1) {
+        throw new BadRequestException(
+          `Derived purity (${purity.toFixed(6)}) is outside 0–1. ` +
+            `Either adjust gross weight first, or edit weight + purity directly.`,
+        );
+      }
+    }
+    const content = contentOverride !== undefined
+      ? d(contentOverride)
+      : d(weight).times(d(purity));
 
     let row: Product | undefined;
     try {
@@ -113,7 +139,13 @@ export class ProductsService {
           ...(dto.category !== undefined && { category: dto.category }),
           ...(dto.weight_troy_oz !== undefined && { weight_troy_oz: toDbString(dto.weight_troy_oz) }),
           ...(dto.purity !== undefined && { purity: toDbString(dto.purity) }),
-          ...((dto.weight_troy_oz !== undefined || dto.purity !== undefined) && {
+          // When the operator edits metal_content directly, write the
+          // back-solved purity (derived above) so weight × purity still
+          // equals the typed-in content.
+          ...(contentOverride !== undefined && { purity: toDbString(purity) }),
+          ...((dto.weight_troy_oz !== undefined ||
+            dto.purity !== undefined ||
+            contentOverride !== undefined) && {
             metal_content_troy_oz: toDbString(content),
           }),
           ...(dto.description !== undefined && { description: dto.description }),
