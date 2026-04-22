@@ -336,7 +336,7 @@ function PriceRow({
         {buyPct !== null ? (
           <>
             <div className="font-mono font-semibold text-red-700">
-              {buyPct.toFixed(1)}% of spot
+              {buyPct.toFixed(2)}% of spot
             </div>
             <div className="font-mono text-[11px] text-red-500/80">
               {row.buy_price !== null
