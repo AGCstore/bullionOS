@@ -130,7 +130,7 @@ export default function PriceSheetPage() {
       </div>
 
       <div className="mt-6 overflow-x-auto rounded-xl border border-ink-200 bg-white">
-        <table className="w-full min-w-[680px] text-sm">
+        <table className="w-full min-w-[920px] text-sm">
           <thead className="bg-ink-50 text-left text-xs uppercase tracking-wide text-ink-400">
             <tr>
               <th className="w-8 px-2 py-3" />
@@ -138,12 +138,21 @@ export default function PriceSheetPage() {
               {/* Column tints match the semantic side:
                   - We pay = money going out to the customer → red tint
                   - We sell = money coming in from the customer → green tint
-                  Kept subtle so the numbers still lead the column. */}
+                  Kept subtle so the numbers still lead the column.
+                  Two premium columns bookend the price pair:
+                    Buy premium   (how much below melt we buy)   — red
+                    Sell premium  (how much above melt we sell)  — green */}
+              <th className="bg-red-50/40 px-4 py-3 text-right text-red-600/80">
+                Buy premium
+              </th>
               <th className="bg-red-50/70 px-4 py-3 text-right text-red-700">
                 We pay
               </th>
               <th className="bg-green-50/70 px-4 py-3 text-right text-green-700">
                 We sell
+              </th>
+              <th className="bg-green-50/40 px-4 py-3 text-right text-green-600/80">
+                Sell premium
               </th>
             </tr>
           </thead>
@@ -160,7 +169,7 @@ export default function PriceSheetPage() {
                 {isLoading && (
                   <tr>
                     <td
-                      colSpan={4}
+                      colSpan={6}
                       className="px-4 py-10 text-center text-sm text-ink-400"
                     >
                       Loading…
@@ -170,7 +179,7 @@ export default function PriceSheetPage() {
                 {!isLoading && filtered.length === 0 && (
                   <tr>
                     <td
-                      colSpan={4}
+                      colSpan={6}
                       className="px-4 py-10 text-center text-sm text-ink-400"
                     >
                       {search.trim()
@@ -244,6 +253,22 @@ function PriceRow({
     meltValue > 0 && row.sell_price !== null
       ? Number(row.sell_price) - meltValue
       : null;
+  // Buy premium = what we pay BELOW melt. Positive = discount to melt
+  // (typical for generic bullion), negative = we're paying above melt
+  // (sometimes happens for semi-numismatic where the numismatic spread
+  // drags buys up).
+  const buyUnderSpot =
+    meltValue > 0 && row.buy_price !== null
+      ? meltValue - Number(row.buy_price)
+      : null;
+  const buyUnderPct =
+    buyUnderSpot !== null && meltValue > 0
+      ? (buyUnderSpot / meltValue) * 100
+      : null;
+  const sellOverPct =
+    sellOverSpot !== null && meltValue > 0
+      ? (sellOverSpot / meltValue) * 100
+      : null;
 
   return (
     <tr
@@ -273,6 +298,28 @@ function PriceRow({
           <span className="ml-2 capitalize">{row.metal}</span>
         </div>
       </td>
+      {/* Buy premium — sits LEFT of We pay. Dollar amount leading,
+          percent as subtitle. Signed: positive = buying below melt. */}
+      <td className="bg-red-50/20 px-4 py-3 text-right">
+        {buyUnderSpot !== null ? (
+          <>
+            <div className="font-mono font-semibold text-red-700/80">
+              {buyUnderSpot >= 0
+                ? `-$${buyUnderSpot.toFixed(2)}`
+                : `+$${Math.abs(buyUnderSpot).toFixed(2)}`}
+            </div>
+            {buyUnderPct !== null && (
+              <div className="font-mono text-[11px] text-red-500/70">
+                {buyUnderPct >= 0
+                  ? `${buyUnderPct.toFixed(2)}% off spot`
+                  : `${Math.abs(buyUnderPct).toFixed(2)}% over spot`}
+              </div>
+            )}
+          </>
+        ) : (
+          <span className="text-ink-300">—</span>
+        )}
+      </td>
       <td className="bg-red-50/40 px-4 py-3 text-right">
         <div className="font-mono font-semibold text-red-700">
           {row.buy_price !== null
@@ -297,6 +344,29 @@ function PriceRow({
               ? `+$${sellOverSpot.toFixed(2)} over spot`
               : `-$${Math.abs(sellOverSpot).toFixed(2)} under spot`}
           </div>
+        )}
+      </td>
+      {/* Sell premium — sits RIGHT of We sell. Dollar amount only per
+          operator spec; percent subtitle added so the two premium
+          columns visually balance. */}
+      <td className="bg-green-50/20 px-4 py-3 text-right">
+        {sellOverSpot !== null ? (
+          <>
+            <div className="font-mono font-semibold text-green-700/80">
+              {sellOverSpot >= 0
+                ? `+$${sellOverSpot.toFixed(2)}`
+                : `-$${Math.abs(sellOverSpot).toFixed(2)}`}
+            </div>
+            {sellOverPct !== null && (
+              <div className="font-mono text-[11px] text-green-600/70">
+                {sellOverPct >= 0
+                  ? `+${sellOverPct.toFixed(2)}% over spot`
+                  : `-${Math.abs(sellOverPct).toFixed(2)}% under spot`}
+              </div>
+            )}
+          </>
+        ) : (
+          <span className="text-ink-300">—</span>
         )}
       </td>
     </tr>
