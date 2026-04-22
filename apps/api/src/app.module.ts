@@ -32,6 +32,7 @@ import { HistoricalInvoicesModule } from './historical-invoices/historical-invoi
 import { BackupsModule } from './backups/backups.module';
 import { OcrModule } from './ocr/ocr.module';
 import { CalendarModule } from './calendar/calendar.module';
+import { RestockModule } from './restock/restock.module';
 import { HealthController } from './health/health.controller';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
@@ -80,9 +81,15 @@ import { AllExceptionsFilter } from './common/filters/http-exception.filter';
     PricingModule,
     ProductsModule,
     ClientsModule,
+    // SettingsModule + EmailModule before InvoicesModule/InventoryModule
+    // so RestockModule can pull its deps; InventoryService injects
+    // RestockService, so RestockModule must be instantiable before
+    // InventoryModule's provider graph resolves.
+    EmailModule,
+    SettingsModule,
+    RestockModule,
     InvoicesModule,
     PublicModule,
-    EmailModule,
     NotificationsModule,
     DealRequestsModule,
     DailyUpdatesModule,
@@ -99,7 +106,6 @@ import { AllExceptionsFilter } from './common/filters/http-exception.filter';
     OcrModule,
     CalendarModule,
     ClientPortalModule,
-    SettingsModule,
   ],
   controllers: [HealthController],
   providers: [

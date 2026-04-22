@@ -115,6 +115,29 @@ const EMAIL_TEMPLATE_REGISTRY: Array<{
       { key: 'company_name', description: 'Your branded company name' },
     ],
   },
+  {
+    slug: 'restock_back_in_stock',
+    label: 'Back-in-stock notification',
+    description:
+      'Sent to anonymous subscribers who clicked "Notify me when back in stock" on the public shop widget. One email per (product, email) pair — the first fire stamps notified_at so the same person never gets double-emailed for the same product. Include {{unsubscribe_url}} somewhere visible; CAN-SPAM + common decency.',
+    default_subject: '{{product_name}} is back in stock at {{company_name}}',
+    default_body:
+      'Hi,\n\n' +
+      "{{product_name}} is back in stock at {{company_name}}. You signed up to be notified when it returned.\n\n" +
+      'Shop now: {{shop_url}}\n\n' +
+      'Quantities can move fast — first-come, first-served.\n\n' +
+      '— {{company_name}}\n' +
+      '{{company_phone}}\n\n' +
+      'No longer interested? Unsubscribe: {{unsubscribe_url}}',
+    variables: [
+      { key: 'product_name', description: 'The product that just came back in stock' },
+      { key: 'product_sku', description: 'Operator-facing SKU, e.g. "AU-EAGLE-1OZ"' },
+      { key: 'shop_url', description: 'Homepage of the public shop (branding.website)' },
+      { key: 'unsubscribe_url', description: 'One-click unsubscribe link keyed to this subscriber' },
+      { key: 'company_name', description: 'Your branded company name' },
+      { key: 'company_phone', description: 'Your branded phone number' },
+    ],
+  },
 ];
 
 // Same mime + magic-byte validation for both logo and favicon. 1 MB max —

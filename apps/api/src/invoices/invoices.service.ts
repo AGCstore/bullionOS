@@ -22,6 +22,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { EmailService } from '../email/email.service';
 import { SettingsService } from '../settings/settings.service';
+import { RestockService } from '../restock/restock.service';
 import { InvoicePdfService } from './invoice-pdf.service';
 import type { CreateInvoiceDto } from './dto/create-invoice.dto';
 
@@ -52,6 +53,7 @@ export class InvoicesService {
     private readonly email: EmailService,
     private readonly pdf: InvoicePdfService,
     private readonly settings: SettingsService,
+    private readonly restock: RestockService,
   ) {}
 
   /** Resolve the client record owned by the given user. Throws if none. */
@@ -602,95 +604,115 @@ export class InvoicesService {
       | { kind: 'reverse_consume' }
       | null = this.classifyInventoryAction(current.type, current.status, status);
 
-    const updated = await this.db.transaction().execute(async (trx) => {
-      const updatedRow = await trx
-        .updateTable('invoices')
-        .set(patch)
-        .where('id', '=', id)
-        .returningAll()
-        .executeTakeFirstOrThrow();
+    const { updatedRow: updated, restockProductIds } = await this.db
+      .transaction()
+      .execute(async (trx) => {
+        const updatedRow = await trx
+          .updateTable('invoices')
+          .set(patch)
+          .where('id', '=', id)
+          .returningAll()
+          .executeTakeFirstOrThrow();
 
-      if (inventoryAction) {
-        const lines = await trx
-          .selectFrom('invoice_line_items')
-          .select(['product_id', 'quantity', 'unit_price'])
-          .where('invoice_id', '=', id)
-          .execute();
+        // Products whose available-on-shelf transitioned from ≤ 0
+        // to > 0 during this status change. Collected inside the trx
+        // and drained after commit so the back-in-stock notifier
+        // reads committed state (never dirty, never racing).
+        const restockProductIds: string[] = [];
 
-        for (const line of lines) {
-          if (!line.product_id) continue; // product was deleted; nothing to move
-          switch (inventoryAction.kind) {
-            case 'purchase':
-              await this.inventory.applyMovement(trx, {
-                product_id: line.product_id,
-                delta: line.quantity,
-                reason: 'purchase',
-                unit_cost: line.unit_price,
-                invoice_id: id,
-                actor_user_id: actor.id,
-              });
-              break;
-            case 'reserve':
-              await this.inventory.reserveFor(trx, {
-                product_id: line.product_id,
-                qty: line.quantity,
-                invoice_id: id,
-                actor_user_id: actor.id,
-                force: forceOversell,
-              });
-              break;
-            case 'consume':
-              await this.inventory.consumeReservationFor(trx, {
-                product_id: line.product_id,
-                qty: line.quantity,
-                invoice_id: id,
-                actor_user_id: actor.id,
-                force: forceOversell,
-              });
-              break;
-            case 'release':
-              await this.inventory.releaseReservationFor(trx, {
-                product_id: line.product_id,
-                qty: line.quantity,
-                invoice_id: id,
-                actor_user_id: actor.id,
-              });
-              break;
-            case 'reverse_consume':
-              // Undo a prior paid-time deduction (return flow on a walk-in
-              // sale that was already consumed). reserved_delta stays 0 —
-              // the reservation was cleared at the same time we deducted.
-              await this.inventory.applyMovement(trx, {
-                product_id: line.product_id,
-                delta: line.quantity,
-                reserved_delta: 0,
-                reason: 'return',
-                invoice_id: id,
-                actor_user_id: actor.id,
-              });
-              break;
+        if (inventoryAction) {
+          const lines = await trx
+            .selectFrom('invoice_line_items')
+            .select(['product_id', 'quantity', 'unit_price'])
+            .where('invoice_id', '=', id)
+            .execute();
+
+          for (const line of lines) {
+            if (!line.product_id) continue; // product was deleted; nothing to move
+            let result: { became_available: boolean } = { became_available: false };
+            switch (inventoryAction.kind) {
+              case 'purchase':
+                result = await this.inventory.applyMovement(trx, {
+                  product_id: line.product_id,
+                  delta: line.quantity,
+                  reason: 'purchase',
+                  unit_cost: line.unit_price,
+                  invoice_id: id,
+                  actor_user_id: actor.id,
+                });
+                break;
+              case 'reserve':
+                result = await this.inventory.reserveFor(trx, {
+                  product_id: line.product_id,
+                  qty: line.quantity,
+                  invoice_id: id,
+                  actor_user_id: actor.id,
+                  force: forceOversell,
+                });
+                break;
+              case 'consume':
+                result = await this.inventory.consumeReservationFor(trx, {
+                  product_id: line.product_id,
+                  qty: line.quantity,
+                  invoice_id: id,
+                  actor_user_id: actor.id,
+                  force: forceOversell,
+                });
+                break;
+              case 'release':
+                result = await this.inventory.releaseReservationFor(trx, {
+                  product_id: line.product_id,
+                  qty: line.quantity,
+                  invoice_id: id,
+                  actor_user_id: actor.id,
+                });
+                break;
+              case 'reverse_consume':
+                // Undo a prior paid-time deduction (return flow on a walk-in
+                // sale that was already consumed). reserved_delta stays 0 —
+                // the reservation was cleared at the same time we deducted.
+                result = await this.inventory.applyMovement(trx, {
+                  product_id: line.product_id,
+                  delta: line.quantity,
+                  reserved_delta: 0,
+                  reason: 'return',
+                  invoice_id: id,
+                  actor_user_id: actor.id,
+                });
+                break;
+            }
+            if (result.became_available) {
+              restockProductIds.push(line.product_id);
+            }
           }
         }
-      }
 
-      await trx
-        .insertInto('audit_logs')
-        .values({
-          actor_user_id: actor.id,
-          action: `invoice.status.${status}`,
-          entity_type: 'invoice',
-          entity_id: id,
-          metadata: sql`${JSON.stringify({
-            from: current.status,
-            to: status,
-            inventory_action: inventoryAction?.kind ?? null,
-            force_oversell: forceOversell || undefined,
-          })}::jsonb`,
-        })
-        .execute();
+        await trx
+          .insertInto('audit_logs')
+          .values({
+            actor_user_id: actor.id,
+            action: `invoice.status.${status}`,
+            entity_type: 'invoice',
+            entity_id: id,
+            metadata: sql`${JSON.stringify({
+              from: current.status,
+              to: status,
+              inventory_action: inventoryAction?.kind ?? null,
+              force_oversell: forceOversell || undefined,
+            })}::jsonb`,
+          })
+          .execute();
 
-      return updatedRow;
-    });
+        return { updatedRow, restockProductIds };
+      });
+
+    // Post-commit: fire back-in-stock notifications for any products
+    // this status change brought off the out-of-stock list. Failures
+    // are swallowed by RestockService so a flaky SMTP run doesn't
+    // propagate back to the invoice finalize endpoint.
+    if (restockProductIds.length > 0) {
+      await this.restock.dispatchForProducts(restockProductIds);
+    }
 
     return updated;
   }

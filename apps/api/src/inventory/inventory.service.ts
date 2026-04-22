@@ -3,6 +3,7 @@ import { Kysely, sql, type Transaction } from 'kysely';
 import { KYSELY } from '../db/database.module';
 import type { DB, InventoryMovementReason } from '../db/types';
 import { d, toDbString } from '../common/money';
+import { RestockService } from '../restock/restock.service';
 
 export interface InventoryRow {
   product_id: string;
@@ -28,7 +29,10 @@ export interface InventoryRow {
 
 @Injectable()
 export class InventoryService {
-  constructor(@Inject(KYSELY) private readonly db: Kysely<DB>) {}
+  constructor(
+    @Inject(KYSELY) private readonly db: Kysely<DB>,
+    private readonly restock: RestockService,
+  ) {}
 
   /** Full inventory rollup for admins. */
   list(): Promise<InventoryRow[]> {
@@ -168,6 +172,12 @@ export class InventoryService {
    * Apply an arbitrary inventory movement. Callers must provide their own
    * Kysely transaction — every mutation happens inside one atomic block so
    * the row lock stays held across the read/write pair.
+   *
+   * Returns `{ became_available }` where the flag is true iff this movement
+   * transitioned the product's `available = on_hand - reserved` from ≤ 0
+   * to > 0. Callers use this to decide whether to kick the back-in-stock
+   * notifier after their trx commits. Always-in-stock movements return
+   * false; so do reserve-into-already-available-stock movements.
    */
   async applyMovement(
     trx: Transaction<DB>,
@@ -191,11 +201,11 @@ export class InventoryService {
        */
       force?: boolean;
     },
-  ): Promise<void> {
+  ): Promise<{ became_available: boolean }> {
     const delta = params.delta;
     const reservedDelta = params.reserved_delta ?? 0;
     const force = params.force === true;
-    if (delta === 0 && reservedDelta === 0) return;
+    if (delta === 0 && reservedDelta === 0) return { became_available: false };
 
     // Lock the row (or the product's would-be row) for the remainder of the tx.
     // SELECT FOR UPDATE against the existing row; if none exists we fall through
@@ -318,6 +328,18 @@ export class InventoryService {
         actor_user_id: params.actor_user_id ?? null,
       })
       .execute();
+
+    // Transition detection for the back-in-stock notifier. We compare
+    // available (on_hand − reserved) before and after this movement.
+    // Callers collect these flags across a batch of movements and
+    // hand them to RestockService.dispatchForProducts AFTER their trx
+    // commits — dispatching inline would race the commit and risk
+    // the notifier reading pre-commit stock levels.
+    const prevAvailable = currentOnHand - currentReserved;
+    const nextAvailable = nextOnHand - nextReserved;
+    return {
+      became_available: prevAvailable <= 0 && nextAvailable > 0,
+    };
   }
 
   // ─── Reservation wrappers ─────────────────────────────────────────────
@@ -336,9 +358,9 @@ export class InventoryService {
       /** Admin override — bypass the on-hand ≥ reserved guard. */
       force?: boolean;
     },
-  ): Promise<void> {
+  ): Promise<{ became_available: boolean }> {
     if (params.qty <= 0) throw new BadRequestException('qty must be positive');
-    await this.applyMovement(trx, {
+    return this.applyMovement(trx, {
       product_id: params.product_id,
       delta: 0,
       reserved_delta: params.qty,
@@ -353,9 +375,9 @@ export class InventoryService {
   async releaseReservationFor(
     trx: Transaction<DB>,
     params: { product_id: string; qty: number; invoice_id: string; actor_user_id: string },
-  ): Promise<void> {
+  ): Promise<{ became_available: boolean }> {
     if (params.qty <= 0) throw new BadRequestException('qty must be positive');
-    await this.applyMovement(trx, {
+    return this.applyMovement(trx, {
       product_id: params.product_id,
       delta: 0,
       reserved_delta: -params.qty,
@@ -385,9 +407,9 @@ export class InventoryService {
        */
       force?: boolean;
     },
-  ): Promise<void> {
+  ): Promise<{ became_available: boolean }> {
     if (params.qty <= 0) throw new BadRequestException('qty must be positive');
-    await this.applyMovement(trx, {
+    return this.applyMovement(trx, {
       product_id: params.product_id,
       delta: -params.qty,
       reserved_delta: -params.qty,
@@ -482,7 +504,7 @@ export class InventoryService {
       .executeTakeFirst();
     if (!product) throw new NotFoundException('Product not found');
 
-    await this.db.transaction().execute((trx) =>
+    const result = await this.db.transaction().execute((trx) =>
       this.applyMovement(trx, {
         product_id: productId,
         delta,
@@ -491,6 +513,14 @@ export class InventoryService {
         notes,
       }),
     );
+
+    // Post-commit: fire the restock notifier when this adjustment
+    // brought the product back in stock. Best-effort — RestockService
+    // swallows per-product failures so a failed send doesn't affect
+    // the caller's happy path.
+    if (result.became_available) {
+      await this.restock.dispatchForProducts([productId]);
+    }
 
     const rows = await this.list();
     const row = rows.find((r) => r.product_id === productId);
