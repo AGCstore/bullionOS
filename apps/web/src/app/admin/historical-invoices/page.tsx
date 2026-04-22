@@ -1,8 +1,18 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, ApiError, getAccessToken } from '@/lib/api-client';
+import { ClientCombobox, displayName, type ComboboxClient } from '@/components/client-combobox';
+
+/**
+ * localStorage key for the sticky day picker. The accountant enters
+ * a long run of entries for a single historical day, so snapping the
+ * date back to "today" on every page reload is actively harmful —
+ * they'd have to re-type the month. Persist across reloads; only the
+ * user's explicit date-picker selection overrides.
+ */
+const STICKY_DATE_KEY = 'agc.historical-invoices.date';
 
 /**
  * Historical invoices — admin page for reconciling past-system
@@ -60,7 +70,19 @@ function money(s: string | number): string {
 
 export default function HistoricalInvoicesPage() {
   const qc = useQueryClient();
+  // Date state starts at today but rehydrates from localStorage on
+  // mount. Can't read localStorage during the initial useState because
+  // that runs server-side during Next.js SSR — guard behind useEffect.
   const [date, setDate] = useState<string>(todayIso());
+  useEffect(() => {
+    const saved = typeof window !== 'undefined' ? window.localStorage.getItem(STICKY_DATE_KEY) : null;
+    if (saved && /^\d{4}-\d{2}-\d{2}$/.test(saved)) setDate(saved);
+  }, []);
+  // Mirror every operator-driven date change back into localStorage so
+  // a refresh or tab re-open keeps them on the day they were booking.
+  useEffect(() => {
+    if (typeof window !== 'undefined') window.localStorage.setItem(STICKY_DATE_KEY, date);
+  }, [date]);
 
   const { data: rows, isLoading } = useQuery({
     queryKey: ['admin', 'historical-invoices', date],
@@ -76,6 +98,17 @@ export default function HistoricalInvoicesPage() {
       apiFetch<DaySummary>(
         `/admin/historical-invoices/summary?from=${date}&to=${date}`,
       ),
+  });
+
+  // Preload the full client list so QuickAdd can render the combobox
+  // without hitting the API per-keystroke. Reuses the same cache key
+  // as the invoice wizard — pages share the fetch if the user just
+  // came from /admin/invoices/new. 10-minute staleTime because client
+  // roster changes are rare during an entry session.
+  const { data: clients } = useQuery<ComboboxClient[]>({
+    queryKey: ['admin', 'clients', 'all'],
+    queryFn: () => apiFetch<ComboboxClient[]>('/admin/clients'),
+    staleTime: 10 * 60_000,
   });
 
   const refetchAll = () => {
@@ -131,8 +164,10 @@ export default function HistoricalInvoicesPage() {
         </div>
       </section>
 
-      {/* Quick-add form */}
-      <QuickAdd date={date} onAdded={refetchAll} />
+      {/* Multi-row entry form — mirrors the line-item pattern used on
+          /admin/invoices/new so the accountant can type a day's worth
+          of past invoices in one pass, then submit the batch. */}
+      <BatchAdd date={date} clients={clients ?? []} onAdded={refetchAll} />
 
       {/* CSV import */}
       <CsvImport onImported={refetchAll} />
@@ -176,132 +211,347 @@ export default function HistoricalInvoicesPage() {
   );
 }
 
-function QuickAdd({ date, onAdded }: { date: string; onAdded: () => void }) {
-  const [type, setType] = useState<InvType>('sell');
-  const [amount, setAmount] = useState('');
-  const [clientName, setClientName] = useState('');
-  const [reference, setReference] = useState('');
-  const [isWholesale, setIsWholesale] = useState(false);
-  const [notes, setNotes] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+/**
+ * Draft row inside the BatchAdd form. Stays purely client-side until
+ * the operator hits "Save all"; at that point every row is POSTed one
+ * at a time and any per-row failure gets rendered back onto its own
+ * draft so the operator can fix just the broken one instead of losing
+ * the whole batch.
+ */
+interface DraftEntry {
+  /** Stable local id — not persisted, only used as React key / error lookup. */
+  key: string;
+  type: InvType;
+  amount: string;
+  /** UUID of the linked CRM client, if one was picked. null for free-text. */
+  clientId: string | null;
+  /** Display name. Auto-fills from picked client; still editable for overrides / walk-ins. */
+  clientName: string;
+  reference: string;
+  isWholesale: boolean;
+  notes: string;
+  /** Per-row error message, populated on submit if this row's POST failed. */
+  error: string | null;
+}
 
-  async function add() {
-    setError(null);
-    const n = Number(String(amount).replace(/[$,]/g, ''));
-    if (!isFinite(n) || n < 0) {
-      setError('Enter a non-negative dollar amount.');
-      return;
-    }
+function emptyDraft(): DraftEntry {
+  return {
+    key: cryptoRandomKey(),
+    type: 'sell',
+    amount: '',
+    clientId: null,
+    clientName: '',
+    reference: '',
+    isWholesale: false,
+    notes: '',
+    error: null,
+  };
+}
+
+/** Cheap unique-enough id for React keys — no persistence needed. */
+function cryptoRandomKey(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+/**
+ * Multi-row entry form. Mirrors the line-item UX on /admin/invoices/new:
+ * each row is an independent entry, operators can append/remove freely,
+ * and "Save all" submits the batch. Failed rows stay visible with their
+ * error message; succeeded rows disappear. Replaces the prior single-
+ * entry QuickAdd so the accountant can type one day's full invoice
+ * list before pressing save.
+ */
+function BatchAdd({
+  date,
+  clients,
+  onAdded,
+}: {
+  date: string;
+  clients: ComboboxClient[];
+  onAdded: () => void;
+}) {
+  const [drafts, setDrafts] = useState<DraftEntry[]>(() => [emptyDraft()]);
+  const [busy, setBusy] = useState(false);
+  const [summary, setSummary] = useState<
+    | { saved: number; failed: number }
+    | null
+  >(null);
+
+  function patchDraft(key: string, patch: Partial<DraftEntry>) {
+    setDrafts((cur) => cur.map((d) => (d.key === key ? { ...d, ...patch, error: null } : d)));
+  }
+
+  function removeDraft(key: string) {
+    setDrafts((cur) => {
+      const next = cur.filter((d) => d.key !== key);
+      // Never leave the form empty — keep at least one editable row so
+      // the accountant doesn't have to click "Add row" before typing.
+      return next.length === 0 ? [emptyDraft()] : next;
+    });
+  }
+
+  function appendDraft() {
+    setDrafts((cur) => [...cur, emptyDraft()]);
+  }
+
+  async function saveAll() {
+    setSummary(null);
+    // Validate locally first — don't fire any POSTs if every row would
+    // fail the amount check. Mark the bad ones inline and stop.
+    let anyInvalid = false;
+    const validated = drafts.map((d) => {
+      const n = Number(String(d.amount).replace(/[$,]/g, ''));
+      const empty = !d.amount.trim();
+      if (empty) {
+        anyInvalid = true;
+        return { ...d, error: 'Amount is required.' };
+      }
+      if (!isFinite(n) || n < 0) {
+        anyInvalid = true;
+        return { ...d, error: 'Enter a non-negative dollar amount.' };
+      }
+      return { ...d, error: null };
+    });
+    setDrafts(validated);
+    if (anyInvalid) return;
+
     setBusy(true);
-    try {
-      await apiFetch('/admin/historical-invoices', {
-        method: 'POST',
-        body: JSON.stringify({
-          date,
-          type,
-          amount: n,
-          is_wholesale: isWholesale,
-          client_name: clientName.trim() || null,
-          reference: reference.trim() || null,
-          notes: notes.trim() || null,
-        }),
-      });
-      setAmount('');
-      setClientName('');
-      setReference('');
-      setNotes('');
-      setIsWholesale(false);
-      onAdded();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Save failed');
-    } finally {
-      setBusy(false);
+    let saved = 0;
+    const remaining: DraftEntry[] = [];
+    // Serial loop — the table is tiny and keeping writes in order makes
+    // the post-save UI easier to reason about than Promise.all races.
+    for (const d of validated) {
+      const n = Number(String(d.amount).replace(/[$,]/g, ''));
+      try {
+        await apiFetch('/admin/historical-invoices', {
+          method: 'POST',
+          body: JSON.stringify({
+            date,
+            type: d.type,
+            amount: n,
+            is_wholesale: d.isWholesale,
+            client_id: d.clientId,
+            client_name: d.clientName.trim() || null,
+            reference: d.reference.trim() || null,
+            notes: d.notes.trim() || null,
+          }),
+        });
+        saved += 1;
+      } catch (err) {
+        remaining.push({
+          ...d,
+          error: err instanceof ApiError ? err.message : 'Save failed',
+        });
+      }
     }
+    // Successes drop out of the form; failures stay visible with their
+    // error so the operator can fix + retry only the broken rows. If
+    // every row succeeded, reset back to a single empty starter row.
+    setDrafts(remaining.length === 0 ? [emptyDraft()] : remaining);
+    setSummary({ saved, failed: remaining.length });
+    setBusy(false);
+    if (saved > 0) onAdded();
   }
 
   return (
     <section className="mt-6 rounded-xl border border-ink-200 bg-white p-5">
-      <h2 className="text-xs font-semibold uppercase tracking-wide text-ink-400">
-        Add entry for {date}
-      </h2>
-      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-6">
+      <div className="flex items-baseline justify-between">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-ink-400">
+          Add entries for {date}
+        </h2>
+        <span className="text-xs text-ink-400">
+          {drafts.length} row{drafts.length === 1 ? '' : 's'} pending
+        </span>
+      </div>
+
+      <div className="mt-3 space-y-3">
+        {drafts.map((d, i) => (
+          <DraftRow
+            key={d.key}
+            index={i}
+            draft={d}
+            clients={clients}
+            onPatch={(p) => patchDraft(d.key, p)}
+            onRemove={() => removeDraft(d.key)}
+          />
+        ))}
+      </div>
+
+      <div className="mt-4 flex items-center justify-between">
+        <button
+          onClick={appendDraft}
+          className="rounded-md border border-ink-300 bg-white px-3 py-1.5 text-sm font-medium text-ink-700 hover:bg-ink-50"
+          type="button"
+        >
+          + Add another row
+        </button>
+        <div className="flex items-center gap-3">
+          {summary && (
+            <span className="text-xs text-ink-500">
+              {summary.saved > 0 && (
+                <span className="font-semibold text-green-700">
+                  Saved {summary.saved}
+                </span>
+              )}
+              {summary.saved > 0 && summary.failed > 0 && ' · '}
+              {summary.failed > 0 && (
+                <span className="font-semibold text-red-700">
+                  {summary.failed} failed
+                </span>
+              )}
+            </span>
+          )}
+          <button
+            onClick={saveAll}
+            disabled={busy}
+            className="rounded-md bg-ink-900 px-4 py-2 text-sm font-medium text-white hover:bg-ink-800 disabled:opacity-60"
+            type="button"
+          >
+            {busy
+              ? 'Saving…'
+              : `Save ${drafts.length === 1 ? 'entry' : `all ${drafts.length}`}`}
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * One draft row. Packs every field inline for keyboard-fast entry —
+ * type, amount, client combobox, free-text name, reference, wholesale,
+ * notes — with a compact remove button at the end. The combobox and
+ * the name field are siblings rather than a single hybrid control so
+ * walk-in rows ("Jane at counter") don't need a dummy CRM client
+ * record to display sensibly.
+ */
+function DraftRow({
+  index,
+  draft,
+  clients,
+  onPatch,
+  onRemove,
+}: {
+  index: number;
+  draft: DraftEntry;
+  clients: ComboboxClient[];
+  onPatch: (patch: Partial<DraftEntry>) => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="rounded-lg border border-ink-200 bg-ink-50/30 p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-400">
+          Entry {index + 1}
+        </span>
+        <button
+          type="button"
+          onClick={onRemove}
+          className="text-[11px] text-ink-400 hover:text-red-600"
+          aria-label="Remove this entry"
+        >
+          ✕ Remove
+        </button>
+      </div>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-12">
         <label className="block sm:col-span-1">
-          <span className="text-xs font-medium text-ink-600">Type</span>
+          <span className="text-[11px] font-medium text-ink-500">Type</span>
           <select
-            value={type}
-            onChange={(e) => setType(e.target.value as InvType)}
+            value={draft.type}
+            onChange={(e) => onPatch({ type: e.target.value as InvType })}
             className="input mt-1"
           >
             <option value="sell">Sell</option>
             <option value="buy">Buy</option>
           </select>
         </label>
-        <label className="block sm:col-span-1">
-          <span className="text-xs font-medium text-ink-600">Amount</span>
+        <label className="block sm:col-span-2">
+          <span className="text-[11px] font-medium text-ink-500">Amount</span>
           <input
             type="text"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
+            inputMode="decimal"
+            value={draft.amount}
+            onChange={(e) => onPatch({ amount: e.target.value })}
             placeholder="0.00"
             className="input mt-1 font-mono"
           />
         </label>
-        <label className="block sm:col-span-2">
-          <span className="text-xs font-medium text-ink-600">Client (optional)</span>
+        <div className="sm:col-span-4">
+          <span className="text-[11px] font-medium text-ink-500">
+            Link to client (optional)
+          </span>
+          <div className="mt-1">
+            <ClientCombobox
+              clients={clients}
+              value={draft.clientId ?? ''}
+              onChange={(id) => {
+                const picked = id ? clients.find((c) => c.id === id) ?? null : null;
+                // Auto-fill the display-name field with the picked
+                // client's formatted name so the accountant doesn't
+                // have to re-type it. They can still edit it for
+                // per-row annotations ("Bob Smith — cash deal").
+                onPatch({
+                  clientId: id || null,
+                  clientName: picked
+                    ? displayName(picked)
+                    : draft.clientName,
+                });
+              }}
+              placeholder="Search existing clients…"
+            />
+          </div>
+        </div>
+        <label className="block sm:col-span-3">
+          <span className="text-[11px] font-medium text-ink-500">
+            Display name
+          </span>
           <input
             type="text"
-            value={clientName}
-            onChange={(e) => setClientName(e.target.value)}
-            placeholder="Walk-in, John Smith, Acme Coins…"
+            value={draft.clientName}
+            onChange={(e) => onPatch({ clientName: e.target.value })}
+            placeholder="Walk-in, Jane Smith…"
             className="input mt-1"
             maxLength={200}
           />
         </label>
         <label className="block sm:col-span-2">
-          <span className="text-xs font-medium text-ink-600">Reference (optional)</span>
+          <span className="text-[11px] font-medium text-ink-500">Reference</span>
           <input
             type="text"
-            value={reference}
-            onChange={(e) => setReference(e.target.value)}
-            placeholder="POS-4501, QB-2841"
+            value={draft.reference}
+            onChange={(e) => onPatch({ reference: e.target.value })}
+            placeholder="POS-4501"
             className="input mt-1 font-mono"
             maxLength={120}
           />
         </label>
-        <label className="flex items-center gap-2 sm:col-span-2">
-          <input
-            type="checkbox"
-            checked={isWholesale}
-            onChange={(e) => setIsWholesale(e.target.checked)}
-            className="h-4 w-4"
-          />
-          <span className="text-sm text-ink-700">Wholesale</span>
-        </label>
-        <label className="block sm:col-span-4">
-          <span className="text-xs font-medium text-ink-600">Notes (optional)</span>
+        <label className="block sm:col-span-8">
+          <span className="text-[11px] font-medium text-ink-500">Notes</span>
           <input
             type="text"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
+            value={draft.notes}
+            onChange={(e) => onPatch({ notes: e.target.value })}
             className="input mt-1"
             maxLength={2000}
           />
         </label>
+        <label className="flex items-end gap-2 sm:col-span-4">
+          <input
+            type="checkbox"
+            checked={draft.isWholesale}
+            onChange={(e) => onPatch({ isWholesale: e.target.checked })}
+            className="mb-2 h-4 w-4"
+          />
+          <span className="mb-2 text-xs text-ink-700">Wholesale</span>
+        </label>
       </div>
-      {error && (
-        <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">{error}</div>
+      {draft.error && (
+        <div className="mt-2 rounded-md bg-red-50 px-3 py-1.5 text-xs text-red-700">
+          {draft.error}
+        </div>
       )}
-      <div className="mt-4 flex justify-end">
-        <button
-          onClick={add}
-          disabled={busy}
-          className="rounded-md bg-ink-900 px-4 py-2 text-sm font-medium text-white hover:bg-ink-800 disabled:opacity-60"
-        >
-          {busy ? 'Saving…' : 'Add entry'}
-        </button>
-      </div>
-    </section>
+    </div>
   );
 }
 
