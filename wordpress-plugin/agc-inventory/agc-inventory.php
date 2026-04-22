@@ -5,7 +5,7 @@
  * Description:       Live inventory and "What We Pay" widgets for Atlanta
  *                    Gold & Coin, fed by the AGC Desk API. Elementor widgets
  *                    + shortcodes, auto-refreshing during shop hours.
- * Version:           2.4.1
+ * Version:           2.5.0
  * Author:            Atlanta Gold and Coin
  * License:           Proprietary
  * Text Domain:       agc-inventory
@@ -48,7 +48,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-define( 'AGC_INV_VERSION', '2.4.1' );
+define( 'AGC_INV_VERSION', '2.5.0' );
 define( 'AGC_INV_DEFAULT_BASE', 'https://agc-api-production.up.railway.app/api/v1' );
 // Server-side transient TTL. Short enough that a show_on_website toggle
 // in AGC Desk appears on the shop's WP page within ~15s, long enough
@@ -545,6 +545,7 @@ function agc_inv_render_what_we_pay( $atts ) {
                     <thead>
                         <tr>
                             <th class="agc-inv-col-item">Item</th>
+                            <th class="agc-inv-col-premium">Premium</th>
                             <th class="agc-inv-col-price">We pay</th>
                         </tr>
                     </thead>
@@ -553,6 +554,9 @@ function agc_inv_render_what_we_pay( $atts ) {
                             <tr>
                                 <td class="agc-inv-col-item">
                                     <span class="agc-inv-name"><?php echo esc_html( $row['name'] ); ?></span>
+                                </td>
+                                <td class="agc-inv-col-premium">
+                                    <?php echo agc_inv_render_premium_cell( $row, $spot ); ?>
                                 </td>
                                 <td class="agc-inv-col-price">
                                     $<?php echo esc_html( number_format( floatval( $row['buy_price'] ), 2 ) ); ?>
@@ -687,6 +691,37 @@ function agc_inv_render_buy_rates_page( $atts ) {
     </aside>
     <?php
     return ob_get_clean();
+}
+
+/**
+ * Server-side twin of the JS renderPremiumCell — computes buy premium
+ * (buy_price − melt_value) and emits dollar + percent, colored green
+ * over melt / red under melt. Cell is always rendered; visibility is
+ * toggled client-side by the operator's hero double-click.
+ */
+function agc_inv_render_premium_cell( $row, $spot ) {
+    if ( ! is_array( $spot ) ) {
+        return '<span class="agc-inv-premium-na">&mdash;</span>';
+    }
+    $metal      = strtolower( $row['metal'] ?? '' );
+    $spot_price = isset( $spot[ $metal ] ) ? floatval( $spot[ $metal ] ) : 0.0;
+    $weight     = floatval( $row['weight_troy_oz'] ?? 0 );
+    $purity     = floatval( $row['purity'] ?? 0 );
+    $melt       = $spot_price * $weight * $purity;
+    $buy        = floatval( $row['buy_price'] ?? 0 );
+    if ( $melt <= 0 || $buy <= 0 ) {
+        return '<span class="agc-inv-premium-na">&mdash;</span>';
+    }
+    $delta = $buy - $melt;
+    $pct   = ( $delta / $melt ) * 100;
+    $sign  = $delta >= 0 ? '+' : '-';
+    $cls   = $delta > 0
+        ? 'agc-inv-premium--over'
+        : ( $delta < 0 ? 'agc-inv-premium--under' : 'agc-inv-premium--flat' );
+    return '<span class="agc-inv-premium ' . esc_attr( $cls ) . '">'
+        . '<span class="agc-inv-premium-dollar">' . esc_html( $sign . '$' . number_format( abs( $delta ), 2 ) ) . '</span>'
+        . '<span class="agc-inv-premium-pct">' . esc_html( $sign . number_format( abs( $pct ), 2 ) . '%' ) . '</span>'
+        . '</span>';
 }
 
 function agc_inv_render_spot_strip( $spot ) {

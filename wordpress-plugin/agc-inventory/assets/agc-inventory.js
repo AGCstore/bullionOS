@@ -162,7 +162,7 @@
     for (var i = 0; i < sections.length; i++) {
       var s = sections[i];
       if (!s.rows || !s.rows.length) continue;
-      html += renderSection(widget, s.id, s.label, s.rows);
+      html += renderSection(widget, s.id, s.label, s.rows, data.spot || null);
     }
     if (sections.length === 0) {
       html +=
@@ -225,11 +225,17 @@
     );
   }
 
-  function renderSection(widget, slug, label, rows) {
+  function renderSection(widget, slug, label, rows, spot) {
     var isLive = widget === 'live-inventory';
+    // Premium column ALWAYS rendered on What We Pay but hidden by CSS
+    // unless the wrap has .agc-inv-wrap--show-premium (toggled via the
+    // operator's double-click on the hero badge). Keeps the column
+    // in the DOM for instant reveal without a re-render.
     var head = isLive
       ? '<th class="agc-inv-col-item">Item</th><th class="agc-inv-col-qty">Qty</th>'
-      : '<th class="agc-inv-col-item">Item</th><th class="agc-inv-col-price">We pay</th>';
+      : '<th class="agc-inv-col-item">Item</th>' +
+        '<th class="agc-inv-col-premium">Premium</th>' +
+        '<th class="agc-inv-col-price">We pay</th>';
     var body = '';
     for (var j = 0; j < rows.length; j++) {
       var r = rows[j];
@@ -249,7 +255,11 @@
         body +=
           '<tr><td class="agc-inv-col-item"><span class="agc-inv-name">' +
           escapeHtml(r.name || '') +
-          '</span></td><td class="agc-inv-col-price">$' +
+          '</span></td>' +
+          '<td class="agc-inv-col-premium">' +
+          renderPremiumCell(r, spot) +
+          '</td>' +
+          '<td class="agc-inv-col-price">$' +
           formatMoney(r.buy_price) +
           '</td></tr>';
       }
@@ -266,6 +276,48 @@
       '</tr></thead><tbody>' +
       body +
       '</tbody></table></section>'
+    );
+  }
+
+  /**
+   * Premium = how far our buy price sits from melt value. Positive = we
+   * pay MORE than melt (typical for small fractionals + semi-numismatics),
+   * negative = we pay BELOW melt (generic bullion). Shown as dollar
+   * amount with percent subtitle; computed purely client-side from the
+   * already-fetched spot + per-row weight/purity, so the premium never
+   * travels through the public API payload.
+   */
+  function renderPremiumCell(r, spot) {
+    if (!spot) return '<span class="agc-inv-premium-na">—</span>';
+    var metal = (r.metal || '').toLowerCase();
+    var spotPrice = Number(spot[metal] || 0);
+    var weight = Number(r.weight_troy_oz || 0);
+    var purity = Number(r.purity || 0);
+    var melt = spotPrice * weight * purity;
+    var buy = Number(r.buy_price || 0);
+    if (!(melt > 0) || !(buy > 0)) {
+      return '<span class="agc-inv-premium-na">—</span>';
+    }
+    var delta = buy - melt;
+    var pct = (delta / melt) * 100;
+    var sign = delta >= 0 ? '+' : '-';
+    var cls =
+      delta > 0
+        ? 'agc-inv-premium--over'
+        : delta < 0
+        ? 'agc-inv-premium--under'
+        : 'agc-inv-premium--flat';
+    return (
+      '<span class="agc-inv-premium ' +
+      cls +
+      '"><span class="agc-inv-premium-dollar">' +
+      sign +
+      '$' +
+      formatMoney(Math.abs(delta)) +
+      '</span><span class="agc-inv-premium-pct">' +
+      sign +
+      Math.abs(pct).toFixed(2) +
+      '%</span></span>'
     );
   }
 
@@ -489,6 +541,45 @@
     document.addEventListener('DOMContentLoaded', initDrawer);
   } else {
     initDrawer();
+  }
+})();
+
+/**
+ * Hidden operator tool — double-clicking the LIVE badge in a widget's
+ * hero reveals the premium column on What We Pay. The column is
+ * always rendered; CSS hides it until this class flips on. Customers
+ * never see it because the trigger is a double-click on a small
+ * labeled control that reads as part of the heading.
+ *
+ * State is per-widget-on-the-page (not persisted) — a page reload
+ * restores the hidden state so the next customer doesn't inherit
+ * a reveal from the last operator who stood at the screen.
+ */
+(function () {
+  function init() {
+    document.addEventListener('dblclick', function (e) {
+      var badge = e.target.closest
+        ? e.target.closest('.agc-inv-hero-badge')
+        : null;
+      if (!badge) return;
+      // The hero sits as a sibling of .agc-inv-wrap — walk from the
+      // hero container to its next sibling that's the wrap, toggle
+      // the reveal class there.
+      var hero = badge.closest('.agc-inv-hero');
+      if (!hero) return;
+      var wrap = hero.nextElementSibling;
+      while (wrap && !wrap.classList.contains('agc-inv-wrap')) {
+        wrap = wrap.nextElementSibling;
+      }
+      if (!wrap) return;
+      e.preventDefault();
+      wrap.classList.toggle('agc-inv-wrap--show-premium');
+    });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
   }
 })();
 

@@ -347,6 +347,65 @@
     font-weight: 600;
 }
 
+/* ── Premium column (operator double-click reveal) ───────────────
+ * Hidden by default. Double-clicking the LIVE badge in the widget
+ * hero flips `.agc-inv-wrap--show-premium` on, which makes every
+ * .agc-inv-col-premium cell a table-cell. Customers can't see this
+ * without knowing the gesture. */
+.agc-inv-wrap .agc-inv-table .agc-inv-col-premium {
+    display: none;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1, 'lnum' 1;
+    width: 7.5rem;
+    white-space: nowrap;
+}
+.agc-inv-wrap--show-premium .agc-inv-table .agc-inv-col-premium {
+    display: table-cell;
+}
+.agc-inv-wrap .agc-inv-premium {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    line-height: 1.15;
+    gap: 1px;
+}
+.agc-inv-wrap .agc-inv-premium-dollar {
+    font-weight: 600;
+    font-size: 0.88rem;
+}
+.agc-inv-wrap .agc-inv-premium-pct {
+    font-weight: 500;
+    font-size: 0.72rem;
+    opacity: 0.78;
+}
+.agc-inv-wrap .agc-inv-premium--over .agc-inv-premium-dollar,
+.agc-inv-wrap .agc-inv-premium--over .agc-inv-premium-pct {
+    color: var(--agc-up);
+}
+.agc-inv-wrap .agc-inv-premium--under .agc-inv-premium-dollar,
+.agc-inv-wrap .agc-inv-premium--under .agc-inv-premium-pct {
+    color: var(--agc-down);
+}
+.agc-inv-wrap .agc-inv-premium--flat .agc-inv-premium-dollar,
+.agc-inv-wrap .agc-inv-premium--flat .agc-inv-premium-pct {
+    color: var(--agc-muted);
+}
+.agc-inv-wrap .agc-inv-premium-na {
+    color: var(--agc-muted);
+}
+/* Give the LIVE badge a quiet cue that it's a trigger for the dbl-click
+ * so operators who know the gesture can locate it. Not advertised — no
+ * extra text/icon — just a faint dashed underline on hover. */
+.agc-inv-hero-badge {
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+}
+.agc-inv-hero-badge:hover {
+    border-color: rgba(212, 176, 112, 0.55);
+}
+
 .agc-inv-wrap .agc-inv-name {
     font-weight: 500;
     color: var(--agc-ink);
@@ -980,5 +1039,71 @@ body.agc-drawer-locked {
     .agc-inv-notify-form {
         min-width: 0;
         flex-wrap: wrap;
+    }
+}
+
+/* ═════════════════════════════════════════════════════════════════
+ * MOBILE POLISH (<= 520px)
+ * Consolidated tightening so the widget reads comfortably on phones:
+ *   - Widget + hero padding shrinks to free real estate for content
+ *   - Hero typography scales down so the title doesn't dominate
+ *   - Tables allow horizontal overflow ONLY when needed (Premium
+ *     column revealed or long item names) so customer view stays
+ *     snappy but operator view doesn't clip
+ *   - Premium column narrows + drops the percent subtitle to fit
+ *   - Spot strip already collapses to 2-up at 640px (see line 64)
+ * ═════════════════════════════════════════════════════════════════ */
+@media (max-width: 520px) {
+    .agc-inv-wrap {
+        padding: 1.25rem 1rem;
+    }
+    .agc-inv-hero {
+        padding: 1.1rem 1.1rem 1rem;
+    }
+    .agc-inv-hero-title {
+        font-size: 1.2rem;
+    }
+    .agc-inv-hero-sub {
+        font-size: 0.8rem;
+    }
+    .agc-inv-hero + .agc-inv-wrap {
+        padding-top: 1.25rem;
+    }
+    /* Tables: let them scroll horizontally if the revealed Premium
+     * column pushes total width past the viewport. `display: block`
+     * on the table would break `table-cell` semantics, so instead we
+     * wrap each section's table using an ancestor overflow rule. */
+    .agc-inv-wrap .agc-inv-section {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    /* Compact premium cell — smaller dollar/percent stack + tighter
+     * width — so the two-column default layout stays clean and the
+     * revealed three-column layout isn't cramped. */
+    .agc-inv-wrap .agc-inv-table .agc-inv-col-premium {
+        width: 5.5rem;
+        padding-left: 0.35rem;
+        padding-right: 0.35rem;
+    }
+    .agc-inv-wrap .agc-inv-premium-dollar {
+        font-size: 0.78rem;
+    }
+    .agc-inv-wrap .agc-inv-premium-pct {
+        font-size: 0.66rem;
+    }
+    /* OOS heading wraps its count onto a second line cleanly. */
+    .agc-inv-oos-heading {
+        flex-wrap: wrap;
+    }
+    /* Chips stay one row with a horizontal scroll fallback so long
+     * category labels don't force an ugly multi-line tag cloud. */
+    .agc-inv-wrap .agc-inv-chips {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        padding-bottom: 0.2rem;
+    }
+    .agc-inv-wrap .agc-inv-chip {
+        flex-shrink: 0;
     }
 }
