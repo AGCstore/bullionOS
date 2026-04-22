@@ -65,21 +65,20 @@ export class AdminProductsController {
   ) {}
 
   /**
-   * Short-lived in-memory cache for the /sheet endpoint. Price Sheet,
-   * In-Stock Sheet, and Buy Sheet all hit the same payload on page
-   * load + 60s poll. Without this, three admins open on three pages =
-   * three full catalog × pricing recomputes every minute; with it,
-   * burst requests inside the TTL window return from a Map lookup.
-   *
-   * TTL is intentionally short (5s) — admin mutations call
-   * invalidateSheetCache() to clear it immediately, so the cache
-   * doesn't mask fresh edits.
+   * Short-lived in-memory caches. Two slots: the bulky /sheet payload
+   * (prices + inventory join) and the lighter /list payload (just the
+   * product table). Both bust on any mutation below that could change
+   * them; a short TTL is a backstop so cross-instance drift during
+   * deploys never serves stale data for more than a few seconds.
    */
   private static sheetCache: { at: number; data: unknown } | null = null;
+  private static listCache: { at: number; data: unknown } | null = null;
   private static readonly SHEET_CACHE_TTL_MS = 5_000;
+  private static readonly LIST_CACHE_TTL_MS = 5_000;
 
   static invalidateSheetCache() {
     AdminProductsController.sheetCache = null;
+    AdminProductsController.listCache = null;
   }
 
   /**
@@ -115,8 +114,18 @@ export class AdminProductsController {
   }
 
   @Get()
-  list() {
-    return this.products.list();
+  async list() {
+    const now = Date.now();
+    if (
+      AdminProductsController.listCache &&
+      now - AdminProductsController.listCache.at <
+        AdminProductsController.LIST_CACHE_TTL_MS
+    ) {
+      return AdminProductsController.listCache.data;
+    }
+    const data = await this.products.list();
+    AdminProductsController.listCache = { at: now, data };
+    return data;
   }
 
   /**
