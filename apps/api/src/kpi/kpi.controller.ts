@@ -94,12 +94,20 @@ export class KpiController {
     // appear to spike on the first of each month and read as bugs.
     // Daily/weekly views stay strictly live-data to avoid that.
     const includeManual = period === 'month' || period === 'quarter' || period === 'year';
+    // DATE columns (kpi_manual_entries.bucket_month) have no time
+    // component — they name a specific calendar day. Applying
+    // `AT TIME ZONE 'America/New_York'` on top turned a '2025-01-01'
+    // entry into '2024-12-31' at UTC, which then date_trunc'd back
+    // to '2024-12-01' on the session tz — i.e., January rows
+    // surfaced in December's bucket (operator-reported Apr 2026).
+    //
+    // Fix: run date_trunc directly on the DATE, then cast to ::date.
+    // No tz math needed since the source is already calendar-local.
     const manualCte = includeManual
       ? sql`
           UNION ALL
           SELECT
-            date_trunc(${period}, m.bucket_month::timestamp AT TIME ZONE 'America/New_York')
-              AS bucket_start,
+            date_trunc(${period}, m.bucket_month)::date AS bucket_start,
             NULL::text AS type,
             (
               CASE
@@ -119,11 +127,14 @@ export class KpiController {
     // drives the wholesale subtotal (we synthesize client_type as
     // 'wholesaler' when it's set so the CASE-arms downstream treat
     // it the same as a live wholesale invoice).
+    // Same DATE-column fix as manualCte above — historical_invoices.
+    // date is a DATE, no tz conversion needed. The old AT TIME ZONE
+    // cast was shifting e.g. January 1 entries into December's
+    // bucket when the PG session tz didn't match ET.
     const historicalCte = sql`
       UNION ALL
       SELECT
-        date_trunc(${period}, h.date::timestamp AT TIME ZONE 'America/New_York')
-          AS bucket_start,
+        date_trunc(${period}, h.date)::date AS bucket_start,
         h.type,
         (CASE WHEN h.is_wholesale THEN 'wholesaler' ELSE 'retail' END)::text AS client_type,
         h.amount::numeric AS total,
@@ -136,18 +147,24 @@ export class KpiController {
       purchases: string;
       sales: string;
       wholesale: string;
+      wholesale_sales: string;
     }>`
+      -- Series + eligible both cast bucket_start to ::date so the
+      -- LEFT JOIN compares calendar-local dates to calendar-local
+      -- dates — no implicit timestamp/timestamptz coercion, no
+      -- off-by-one tz surprises. The manual + historical CTEs
+      -- already emit ::date (see above).
       WITH series AS (
-        SELECT generate_series(
+        SELECT (generate_series(
           date_trunc(${period}, (now() AT TIME ZONE 'America/New_York'))
             - (${sql.raw(`interval '1 ${period}'`)} * (${buckets} - 1)),
           date_trunc(${period}, (now() AT TIME ZONE 'America/New_York')),
           ${sql.raw(`interval '1 ${period}'`)}
-        ) AS bucket_start
+        ))::date AS bucket_start
       ),
       eligible AS (
         SELECT
-          date_trunc(${period}, (i.created_at AT TIME ZONE 'America/New_York')) AS bucket_start,
+          date_trunc(${period}, (i.created_at AT TIME ZONE 'America/New_York'))::date AS bucket_start,
           i.type,
           c.client_type,
           i.total::numeric AS total,
@@ -193,7 +210,19 @@ export class KpiController {
             WHEN e.manual_category = 'wholesale' THEN e.total
             WHEN e.client_type = 'wholesaler' AND e.manual_category IS NULL THEN e.total
           END
-        ), 0)::text AS wholesale
+        ), 0)::text AS wholesale,
+        -- Wholesale sales only (type='sell' wholesaler invoices +
+        -- manual_category='wholesale' rows — manual wholesale entries
+        -- are conceptually revenue, not purchases). Split out from
+        -- the combined wholesale column above so the frontend's
+        -- Net-sales total can include wholesale revenue without
+        -- also subtracting the wholesale-buy side twice.
+        COALESCE(SUM(
+          CASE
+            WHEN e.manual_category = 'wholesale' THEN e.total
+            WHEN e.client_type = 'wholesaler' AND e.type = 'sell' AND e.manual_category IS NULL THEN e.total
+          END
+        ), 0)::text AS wholesale_sales
       FROM series s
       LEFT JOIN eligible e ON e.bucket_start = s.bucket_start
       GROUP BY s.bucket_start
@@ -207,6 +236,7 @@ export class KpiController {
         purchases: r.purchases,
         sales: r.sales,
         wholesale: r.wholesale,
+        wholesale_sales: r.wholesale_sales,
       })),
     };
   }

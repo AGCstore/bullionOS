@@ -767,6 +767,31 @@ function Legend({ color, label }: { color: string; label: string }) {
 }
 
 /** Tooltip-formatter for chart bars — dollars with commas, no decimals. */
+/** Nice-ladder tick step picker — see /admin/kpi/page.tsx for details. */
+function pickTickStep(max: number, desiredStep: number, maxTicks: number): number {
+  const ladder = [50_000, 100_000, 250_000, 500_000, 1_000_000, 2_500_000, 5_000_000];
+  const start = ladder.indexOf(desiredStep);
+  for (let i = Math.max(0, start); i < ladder.length; i++) {
+    const step = ladder[i];
+    if (Math.ceil(max / step) <= maxTicks) return step;
+  }
+  return ladder[ladder.length - 1];
+}
+
+/** "$0", "$50k", "$1.2M" — compact axis label. */
+function formatDollarTick(n: number): string {
+  if (n === 0) return '$0';
+  if (n >= 1_000_000) {
+    const v = n / 1_000_000;
+    return `$${v % 1 === 0 ? v.toFixed(0) : v.toFixed(1)}M`;
+  }
+  if (n >= 1_000) {
+    const v = n / 1_000;
+    return `$${v % 1 === 0 ? v.toFixed(0) : v.toFixed(1)}k`;
+  }
+  return `$${n.toFixed(0)}`;
+}
+
 function fmtMoney(n: number): string {
   return `$${n.toLocaleString(undefined, {
     minimumFractionDigits: 0,
@@ -791,7 +816,7 @@ function MonthlyBars({
   }
 
   // Max across all three series so bars stay comparable across the chart.
-  const max = Math.max(
+  const rawMax = Math.max(
     1,
     ...buckets.flatMap((b) => [
       Number(b.sales),
@@ -799,32 +824,53 @@ function MonthlyBars({
       Number(b.wholesale),
     ]),
   );
+  // $50k ticks with nice-ladder auto-upgrade for larger charts — see
+  // apps/web/src/app/admin/kpi/page.tsx for the original impl + docstring.
+  const tickStep = pickTickStep(rawMax, 50_000, 8);
+  const max = Math.max(tickStep, Math.ceil(rawMax / tickStep) * tickStep);
+  const ticks: number[] = [];
+  for (let v = 0; v <= max; v += tickStep) ticks.push(v);
 
   const barWidth = 14;
   const barGap = 3;
   const groupWidth = barWidth * 3 + barGap * 2;
   const groupGap = 14;
   const chartH = 180;
+  const yAxisWidth = 52;
   const chartW = buckets.length * (groupWidth + groupGap);
+  const totalW = Math.max(chartW + yAxisWidth, 400);
   const paddingBottom = 28;
 
   return (
     <svg
-      width={Math.max(chartW, 400)}
+      width={totalW}
       height={chartH + paddingBottom}
       className="min-w-full"
     >
-      {[0, 0.25, 0.5, 0.75, 1].map((f) => (
-        <line
-          key={f}
-          x1={0}
-          x2={Math.max(chartW, 400)}
-          y1={chartH - chartH * f}
-          y2={chartH - chartH * f}
-          stroke="#eeeef1"
-          strokeWidth={1}
-        />
-      ))}
+      {ticks.map((v) => {
+        const y = chartH - (v / max) * chartH;
+        return (
+          <g key={v}>
+            <line
+              x1={0}
+              x2={totalW - yAxisWidth}
+              y1={y}
+              y2={y}
+              stroke="#eeeef1"
+              strokeWidth={1}
+            />
+            <text
+              x={totalW - yAxisWidth + 8}
+              y={y + 3}
+              fontSize={9}
+              fill="#8a8a92"
+              fontFamily="ui-monospace, SFMono-Regular, monospace"
+            >
+              {formatDollarTick(v)}
+            </text>
+          </g>
+        );
+      })}
       {buckets.map((b, i) => {
         const sales = Number(b.sales);
         const purchases = Number(b.purchases);

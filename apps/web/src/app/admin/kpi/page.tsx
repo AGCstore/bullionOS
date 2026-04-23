@@ -10,8 +10,14 @@ type Period = 'day' | 'week' | 'month' | 'quarter' | 'year';
 interface Bucket {
   bucket_start: string;
   purchases: string;
+  /** RETAIL sales only — disjoint from `wholesale`. */
   sales: string;
+  /** Wholesaler-client flows (buy + sell combined). */
   wholesale: string;
+  /** SELL-side portion of `wholesale`. Used by the Net-sales total
+   *  so wholesale revenue is included without also subtracting the
+   *  wholesale-buy side. */
+  wholesale_sales: string;
 }
 
 interface KpiResponse {
@@ -154,14 +160,24 @@ export default function KpiPage() {
             <tr>
               <th className="px-4 py-3">Bucket</th>
               <th className="px-4 py-3 text-right">Sales</th>
-              <th className="px-4 py-3 text-right">Purchases</th>
               <th className="px-4 py-3 text-right">Wholesale</th>
-              <th className="px-4 py-3 text-right">Net (Sales − Purchases)</th>
+              <th className="px-4 py-3 text-right">Purchases</th>
+              <th
+                className="px-4 py-3 text-right"
+                title="All sales (retail + wholesale sells) minus all purchases"
+              >
+                Net
+              </th>
             </tr>
           </thead>
           <tbody>
             {(data?.buckets ?? []).slice().reverse().map((b) => {
-              const net = Number(b.sales) - Number(b.purchases);
+              // Net = all sales − all purchases. Include wholesale
+              // SELLS only (wholesale_sales is the sell portion of
+              // the combined wholesale column), so we don't subtract
+              // wholesale-buy twice (it's already in purchases).
+              const totalSales = Number(b.sales) + Number(b.wholesale_sales || 0);
+              const net = totalSales - Number(b.purchases);
               return (
                 <tr key={b.bucket_start} className="border-t border-ink-200">
                   <td className="px-4 py-3">{formatBucket(b.bucket_start, period)}</td>
@@ -169,15 +185,16 @@ export default function KpiPage() {
                     {money(b.sales)}
                   </td>
                   <td className="px-4 py-3 text-right font-mono">
-                    {money(b.purchases)}
-                  </td>
-                  <td className="px-4 py-3 text-right font-mono">
                     {money(b.wholesale)}
                   </td>
+                  <td className="px-4 py-3 text-right font-mono">
+                    {money(b.purchases)}
+                  </td>
                   <td
-                    className={`px-4 py-3 text-right font-mono ${
+                    className={`px-4 py-3 text-right font-mono font-semibold ${
                       net >= 0 ? 'text-sell-700' : 'text-red-700'
                     }`}
+                    title={`${money(totalSales)} − ${money(b.purchases)}`}
                   >
                     {money(net)}
                   </td>
@@ -318,7 +335,7 @@ function BarChart({
   }
 
   // Compute max across all three series to keep bars comparable.
-  const max = Math.max(
+  const rawMax = Math.max(
     1,
     ...buckets.flatMap((b) => [
       Number(b.sales),
@@ -326,33 +343,61 @@ function BarChart({
       Number(b.wholesale),
     ]),
   );
+  // Operator spec (Apr 2026): y-axis ticks in $50k increments.
+  // For small charts that'd flood with labels if max is >~$350k, so
+  // auto-double the step until we have ≤ 8 ticks. Keep `max` at the
+  // next tick-boundary above rawMax so the top label matches the
+  // top of the chart.
+  const tickStep = pickTickStep(rawMax, 50_000, 8);
+  const max = Math.max(tickStep, Math.ceil(rawMax / tickStep) * tickStep);
+  const ticks: number[] = [];
+  for (let v = 0; v <= max; v += tickStep) ticks.push(v);
 
   const barWidth = 14;
   const barGap = 3;
   const groupWidth = barWidth * 3 + barGap * 2;
   const groupGap = 10;
   const chartH = 220;
+  // Reserve space on the RIGHT for y-axis labels (operator spec —
+  // dollars printed to the right of the chart, not left).
+  const yAxisWidth = 52;
   const chartW = buckets.length * (groupWidth + groupGap);
+  const totalW = Math.max(chartW + yAxisWidth, 400);
   const paddingBottom = 30;
 
   return (
     <svg
-      width={Math.max(chartW, 400)}
+      width={totalW}
       height={chartH + paddingBottom}
       className="min-w-full"
     >
-      {/* Y gridlines at 0/25/50/75/100% */}
-      {[0, 0.25, 0.5, 0.75, 1].map((frac) => (
-        <line
-          key={frac}
-          x1={0}
-          x2={Math.max(chartW, 400)}
-          y1={chartH - chartH * frac}
-          y2={chartH - chartH * frac}
-          stroke="#eeeef1"
-          strokeWidth={1}
-        />
-      ))}
+      {/* Y gridlines at each tick + $ label on the right. Gridlines
+          span the full bar-chart width but stop before the axis
+          column so they don't crash into the labels. */}
+      {ticks.map((v) => {
+        const y = chartH - (v / max) * chartH;
+        return (
+          <g key={v}>
+            <line
+              x1={0}
+              x2={totalW - yAxisWidth}
+              y1={y}
+              y2={y}
+              stroke="#eeeef1"
+              strokeWidth={1}
+            />
+            <text
+              x={totalW - yAxisWidth + 8}
+              y={y + 3}
+              fontSize={9}
+              fill="#8a8a92"
+              fontFamily="ui-monospace, SFMono-Regular, monospace"
+            >
+              {formatDollarTick(v)}
+            </text>
+          </g>
+        );
+      })}
       {buckets.map((b, i) => {
         const sales = Number(b.sales);
         const purchases = Number(b.purchases);
@@ -480,6 +525,37 @@ function formatBucket(iso: string, period: Period): string {
     case 'year':
       return String(d.getFullYear());
   }
+}
+
+/**
+ * Pick a y-axis tick step. Starts at `desiredStep` (operator spec =
+ * $50k) and doubles up the nice-number ladder (50 → 100 → 250 → 500)
+ * until the number of ticks fits under `maxTicks`. Keeps the axis
+ * readable on both small monthly charts and multi-million-dollar
+ * yearly views.
+ */
+function pickTickStep(max: number, desiredStep: number, maxTicks: number): number {
+  const ladder = [50_000, 100_000, 250_000, 500_000, 1_000_000, 2_500_000, 5_000_000];
+  const start = ladder.indexOf(desiredStep);
+  for (let i = Math.max(0, start); i < ladder.length; i++) {
+    const step = ladder[i];
+    if (Math.ceil(max / step) <= maxTicks) return step;
+  }
+  return ladder[ladder.length - 1];
+}
+
+/** "$0", "$50k", "$1.2M" — compact axis label format. */
+function formatDollarTick(n: number): string {
+  if (n === 0) return '$0';
+  if (n >= 1_000_000) {
+    const v = n / 1_000_000;
+    return `$${v % 1 === 0 ? v.toFixed(0) : v.toFixed(1)}M`;
+  }
+  if (n >= 1_000) {
+    const v = n / 1_000;
+    return `$${v % 1 === 0 ? v.toFixed(0) : v.toFixed(1)}k`;
+  }
+  return `$${n.toFixed(0)}`;
 }
 
 function formatBucketShort(iso: string, period: Period): string {
