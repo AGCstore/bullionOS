@@ -5,7 +5,14 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, ApiError } from '@/lib/api-client';
 
 interface IntegrationStatus {
-  provider: 'ups' | 'fedex' | 'usps' | 'docusign' | 'metals' | 'google_calendar';
+  provider:
+    | 'ups'
+    | 'fedex'
+    | 'usps'
+    | 'docusign'
+    | 'metals'
+    | 'google_calendar'
+    | 'greminders';
   label: string;
   configured: boolean;
   enabled: boolean;
@@ -99,6 +106,25 @@ const FIELDS: Record<
       name: 'services',
       label: 'Services (semicolon-separated)',
       placeholder: 'Buy consultation;Sell consultation;Appraisal',
+    },
+  ],
+  greminders: [
+    {
+      name: 'api_key',
+      label: 'API Key',
+      secret: true,
+      placeholder: 'from developer.greminders.com → API Keys',
+    },
+    {
+      name: 'impersonation_id',
+      label: 'Impersonation User ID (optional)',
+      placeholder: 'GReminders user id whose bookings we watch',
+    },
+    {
+      name: 'webhook_secret',
+      label: 'Webhook signing secret',
+      secret: true,
+      placeholder: 'Set in GReminders → Webhooks → Edit → Secret',
     },
   ],
 };

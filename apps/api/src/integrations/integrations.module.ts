@@ -5,6 +5,8 @@ import { UpsAdapter } from './adapters/ups.adapter';
 import { UspsAdapter } from './adapters/usps.adapter';
 import { CarrierService } from './carrier.service';
 import { DocuSignService } from './docusign.service';
+import { GremindersService } from './greminders.service';
+import { GremindersWebhookController } from './greminders-webhook.controller';
 import { IntegrationsController } from './integrations.controller';
 import { IntegrationsService } from './integrations.service';
 import { ShipmentIngestService } from './shipment-ingest.service';
@@ -12,6 +14,7 @@ import { ShipmentPollService } from './shipment-poll.service';
 import { CarrierWebhooksController } from './webhooks.controller';
 import { MetalsModule } from '../metals/metals.module';
 import { CalendarModule } from '../calendar/calendar.module';
+import { ClientsModule } from '../clients/clients.module';
 
 // Global: many feature modules will inject CarrierService/DocuSignService.
 // Imports MetalsModule because IntegrationsController needs MetalsService
@@ -27,12 +30,17 @@ import { CalendarModule } from '../calendar/calendar.module';
   // ScheduleModule.forRoot() lives in AppModule — calling it here would
   // create a duplicate scheduler registry and the @Cron decorator on
   // ShipmentPollService silently wouldn't fire.
-  imports: [MetalsModule, forwardRef(() => CalendarModule)],
-  controllers: [IntegrationsController, CarrierWebhooksController],
+  imports: [MetalsModule, forwardRef(() => CalendarModule), ClientsModule],
+  controllers: [
+    IntegrationsController,
+    CarrierWebhooksController,
+    GremindersWebhookController,
+  ],
   providers: [
     IntegrationsService,
     CarrierService,
     DocuSignService,
+    GremindersService,
     ShipmentIngestService,
     ShipmentPollService,
     // Carrier adapters — one per provider.
@@ -45,6 +53,7 @@ import { CalendarModule } from '../calendar/calendar.module';
     IntegrationsService,
     CarrierService,
     DocuSignService,
+    GremindersService,
     ShipmentIngestService,
     ShipmentPollService,
   ],

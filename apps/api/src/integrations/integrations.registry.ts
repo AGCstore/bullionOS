@@ -91,6 +91,35 @@ const googleCalendarCreds = z.object({
     ),
 });
 
+/**
+ * GReminders credentials. The API supports two auth modes; we use the
+ * "API key + impersonation" header pair for server-to-server calls
+ * (see https://developer.greminders.com). The signing secret is shared
+ * at webhook-subscription time and used to HMAC-verify inbound events
+ * so we're sure payloads actually came from GReminders.
+ *
+ * Usage inside AGC Desk:
+ *   - Inbound webhooks at POST /api/v1/public/greminders/webhook auto-
+ *     sync the booking's attendee into the clients table via
+ *     findOrCreateByContact(), then write an activity-log entry with
+ *     the GReminders event id, service, and start/end times. Reminders
+ *     (SMS / email) continue to be handled by GReminders — AGC Desk
+ *     just keeps the client + history in sync.
+ *   - Outbound calls (Option B — push AGC-initiated appointments into
+ *     GReminders) will use the same creds when we build that flow.
+ */
+const gremindersCreds = z.object({
+  api_key: z.string().min(20).max(500),
+  // User id whose calendar bookings we subscribe to. GReminders routes
+  // per-user; this row identifies which operator's account we're
+  // acting on behalf of. Leave blank until you have it.
+  impersonation_id: z.string().max(100).optional().default(''),
+  // HMAC signing secret configured at webhook-subscription time in the
+  // GReminders dashboard. Leave blank to skip verification (dev only);
+  // production MUST have a secret — main.ts logs a warning otherwise.
+  webhook_secret: z.string().max(200).optional().default(''),
+});
+
 const docusignCreds = z.object({
   integration_key: z.string().min(20).max(100),
   account_id: z.string().min(20).max(100),
@@ -146,6 +175,13 @@ export const PROVIDERS = {
     secretFields: ['client_secret', 'refresh_token'] as const,
     hint: (c: z.infer<typeof googleCalendarCreds>) =>
       `${c.calendar_id} · ${c.refresh_token ? 'authorized' : 'not authorized'}`,
+  },
+  greminders: {
+    label: 'GReminders (SMS/email reminders)',
+    schema: gremindersCreds,
+    secretFields: ['api_key', 'webhook_secret'] as const,
+    hint: (c: z.infer<typeof gremindersCreds>) =>
+      `key ${maskId(c.api_key)} · webhook ${c.webhook_secret ? 'signed' : 'unsigned'}`,
   },
 } as const;
 
