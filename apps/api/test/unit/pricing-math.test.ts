@@ -51,9 +51,13 @@ const rule = (
   metal: 'gold' as Metal | null,
   product_id: null as string | null,
   buy_premium_type: 'percent' as PremiumType,
-  buy_premium_value: '-3',
+  // SHARE-form percent values: 97 = "buy at 97% of melt", 104 = "sell
+  // at 104% of melt". Typical dealer spread. These were delta-form
+  // values (-3 / +4) before the April 2026 refactor to share-form
+  // semantics; tests were stale until the semantics alignment fix.
+  buy_premium_value: '97',
   sell_premium_type: 'percent' as PremiumType,
-  sell_premium_value: '4',
+  sell_premium_value: '104',
   is_active: true,
   ...overrides,
 });
@@ -171,9 +175,15 @@ describe('PricingService — rule resolution', () => {
 });
 
 describe('PricingService — percent premium', () => {
+  // Percent values are SHARE-form — value=90 → "90% of melt", not
+  // "10% below melt". Tests updated to match the April 2026 semantics
+  // refactor (class doc + applyPremium). In delta form the values
+  // would have been -10 and +15; in share form they're 90 and 115
+  // for the same resulting prices.
+  //
   // melt = 2000 * 0.999 = 1998
-  // buy  = 1998 * (1 - 10/100) = 1798.20
-  // sell = 1998 * (1 + 15/100) = 2297.70
+  // buy  = 1998 * (90/100)  = 1798.20   (buy at 90% of melt)
+  // sell = 1998 * (115/100) = 2297.70   (sell at 115% of melt)
   it('computes buy/sell from percent premiums', async () => {
     const db = makeDbStub({
       products: [SILVER_EAGLE],
@@ -181,9 +191,9 @@ describe('PricingService — percent premium', () => {
         rule({
           metal: 'silver',
           buy_premium_type: 'percent',
-          buy_premium_value: '-10',
+          buy_premium_value: '90',
           sell_premium_type: 'percent',
-          sell_premium_value: '15',
+          sell_premium_value: '115',
         }),
       ],
     });
@@ -223,9 +233,11 @@ describe('PricingService — flat premium', () => {
 
 describe('PricingService — line totals and snapshot fields', () => {
   it('scales line totals by quantity and exposes gross+purity separately', async () => {
+    // buy_premium_value 95 = "buy at 95% of melt" under share-form
+    // semantics (not -5% delta). Multiplier 0.95 is unchanged.
     const db = makeDbStub({
       products: [SILVER_EAGLE],
-      rules: [rule({ metal: 'silver', buy_premium_value: '-5', sell_premium_value: '10' })],
+      rules: [rule({ metal: 'silver', buy_premium_value: '95', sell_premium_value: '110' })],
     });
     const svc = new PricingService(db, makeMetalsStub({ silver: '2000' }));
     const [q] = await svc.quoteMany([{ product_id: SILVER_EAGLE.id, quantity: 7 }]);

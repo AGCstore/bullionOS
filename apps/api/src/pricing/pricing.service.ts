@@ -325,8 +325,13 @@ export class PricingService {
   /**
    * Apply a premium to melt value.
    *
-   *  percent → melt * (1 + pct/100)
+   *  percent → melt * (pct/100)               (SHARE-of-spot semantics)
    *  flat    → melt + (flat_per_oz * metal_content)
+   *
+   * Share semantics: value=96 means 96% of melt (typical buy), value=105
+   * means 105% of melt (typical sell). This is deliberately NOT the
+   * delta-form "1 + pct/100" — see the class-level doc for the full
+   * rationale.
    */
   private applyPremium(
     melt: Decimal,
