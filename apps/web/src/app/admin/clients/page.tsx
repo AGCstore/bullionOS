@@ -7,8 +7,13 @@ import { apiFetch, ApiError } from '@/lib/api-client';
 
 interface ClientRow {
   id: string;
-  first_name: string;
-  last_name: string;
+  // Nullable — wholesaler rows (company-only) and webhook-auto-created
+  // clients (single-word names from Gmail / GReminders / Calendar) can
+  // leave one half blank. Defend with `?? ''` before .trim() /
+  // .toLowerCase() on every read site below; the DB has always allowed
+  // NULL here, the interface was overpromising.
+  first_name: string | null;
+  last_name: string | null;
   email: string | null;
   phone: string | null;
   city: string | null;
@@ -71,7 +76,7 @@ export default function ClientsListPage() {
   const duplicates = useMemo(() => {
     const groups = new Map<string, ClientRow[]>();
     for (const c of data ?? []) {
-      const key = `${c.first_name.trim().toLowerCase()}|${c.last_name.trim().toLowerCase()}`;
+      const key = `${(c.first_name ?? '').trim().toLowerCase()}|${(c.last_name ?? '').trim().toLowerCase()}`;
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key)!.push(c);
     }
@@ -234,7 +239,7 @@ export default function ClientsListPage() {
                       type="checkbox"
                       checked={selected.has(c.id)}
                       onChange={() => toggle(c.id)}
-                      aria-label={`Select ${c.first_name} ${c.last_name}`}
+                      aria-label={`Select ${`${c.first_name ?? ''} ${c.last_name ?? ''}`.trim()}`}
                     />
                   </td>
                   <td className="px-4 py-3">
@@ -242,7 +247,7 @@ export default function ClientsListPage() {
                       href={`/admin/clients/${c.id}`}
                       className="font-medium hover:underline"
                     >
-                      {c.last_name}, {c.first_name}
+                      {c.last_name ?? ''}, {c.first_name ?? ''}
                     </Link>
                     {c.client_type === 'wholesaler' && (
                       <span className="ml-2 rounded-full bg-gold-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-gold-600">
@@ -349,7 +354,7 @@ function DuplicateGroup({ group }: { group: ClientRow[] }) {
   return (
     <div className="rounded-xl border border-ink-200 bg-white p-4">
       <div className="mb-2 text-xs font-medium text-ink-600">
-        {group[0].last_name}, {group[0].first_name} · {group.length} records
+        {group[0].last_name ?? ''}, {group[0].first_name ?? ''} · {group.length} records
       </div>
       {done && (
         <div className="mb-2 rounded-md bg-green-50 px-3 py-1 text-xs text-green-700">{done}</div>
@@ -365,7 +370,7 @@ function DuplicateGroup({ group }: { group: ClientRow[] }) {
           >
             <div className="text-xs">
               <div className="font-medium">
-                {c.first_name} {c.last_name}
+                {c.first_name ?? ''} {c.last_name ?? ''}
                 {c.client_type === 'wholesaler' && (
                   <span className="ml-1 text-[10px] uppercase text-gold-600">(wholesale)</span>
                 )}
