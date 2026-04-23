@@ -29,8 +29,23 @@ async function bootstrap() {
     }),
   );
 
+  // CORS allowlist: the admin web app (WEB_ORIGIN) plus any additional
+  // public consumers listed in PUBLIC_ORIGINS (comma-separated). The
+  // latter covers the WordPress plugin on atlantagoldandcoin.com —
+  // without it, the browser was blocking the restock-notify POST and
+  // similar @Public() endpoints with no Access-Control-Allow-Origin
+  // header on the preflight response. Dev leaves PUBLIC_ORIGINS empty
+  // and CORS falls back to WEB_ORIGIN only.
+  const corsOrigins = [
+    config.getOrThrow<string>('WEB_ORIGIN'),
+    ...config
+      .get<string>('PUBLIC_ORIGINS', '')
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean),
+  ];
   app.enableCors({
-    origin: [config.getOrThrow<string>('WEB_ORIGIN')],
+    origin: corsOrigins,
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Authorization', 'Content-Type', 'X-Requested-With'],

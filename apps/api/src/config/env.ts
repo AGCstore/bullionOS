@@ -12,6 +12,25 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(4000),
   API_BASE_URL: z.string().url(),
   WEB_ORIGIN: z.string().url(),
+  /**
+   * Comma-separated list of additional origins allowed to call the
+   * `@Public()` endpoints cross-origin — the WordPress plugin lives
+   * on atlantagoldandcoin.com and the browser was blocking its
+   * restock-notify POSTs without the site listed here.
+   *
+   * Default bakes in the canonical AGC WP origins so the feature
+   * works out of the box on a fresh Railway deploy. Override via
+   * env var when spinning up additional public consumers:
+   *   PUBLIC_ORIGINS=https://example.com,https://www.example.com
+   * main.ts parses + merges these into the CORS origin allowlist
+   * alongside WEB_ORIGIN.
+   */
+  PUBLIC_ORIGINS: z
+    .string()
+    .optional()
+    .default(
+      'https://atlantagoldandcoin.com,https://www.atlantagoldandcoin.com',
+    ),
 
   DATABASE_URL: z.string().url(),
   DATABASE_POOL_MAX: z.coerce.number().int().positive().default(20),

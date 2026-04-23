@@ -5,7 +5,7 @@
  * Description:       Live inventory and "What We Pay" widgets for Atlanta
  *                    Gold & Coin, fed by the AGC Desk API. Elementor widgets
  *                    + shortcodes, auto-refreshing during shop hours.
- * Version:           2.6.2
+ * Version:           2.7.0
  * Author:            Atlanta Gold and Coin
  * License:           Proprietary
  * Text Domain:       agc-inventory
@@ -48,7 +48,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-define( 'AGC_INV_VERSION', '2.6.2' );
+define( 'AGC_INV_VERSION', '2.7.0' );
 define( 'AGC_INV_DEFAULT_BASE', 'https://agc-api-production.up.railway.app/api/v1' );
 // Server-side transient TTL. Short enough that a show_on_website toggle
 // in AGC Desk appears on the shop's WP page within ~15s, long enough
@@ -492,6 +492,73 @@ add_shortcode( 'agc_schedule_drawer', function ( $atts ) {
         ]
     );
 } );
+
+/**
+ * Inline schedule-link button for placement in site header, page
+ * content, or widget areas. Shares the centered-modal drawer that
+ * [agc_schedule_drawer] also triggers — click this button and the
+ * Gravity Form pops up in an in-window modal.
+ *
+ * Usage:
+ *   [agc_schedule_link]                             — gold solid, default label
+ *   [agc_schedule_link label="Book a visit"]        — custom copy
+ *   [agc_schedule_link style="outline"]             — outline variant
+ *   [agc_schedule_link size="lg"]                   — larger hero CTA
+ *   [agc_schedule_link size="sm" style="outline"]   — compact header pill
+ *
+ * Drawer is rendered dedupe-safe inside the same call, so dropping
+ * this shortcode on a page is enough — no need to also place
+ * [agc_schedule_drawer] alongside. The sitewide-drawer toggle's
+ * first-call-wins guard means only one modal ends up on the page
+ * regardless.
+ */
+add_shortcode( 'agc_schedule_link', function ( $atts ) {
+    $atts = shortcode_atts(
+        [
+            'form_id'  => '2',
+            'label'    => 'Schedule an Appointment',
+            'title'    => 'Schedule an Appointment',
+            'subtitle' => 'Meet with a specialist to discuss buying, selling, or appraising your precious metals.',
+            'style'    => 'solid',   // 'solid' | 'outline'
+            'size'     => 'md',      // 'sm' | 'md' | 'lg'
+        ],
+        $atts,
+        'agc_schedule_link'
+    );
+    wp_enqueue_style( 'agc-inv' );
+    wp_enqueue_script( 'agc-inv' );
+
+    $style = in_array( $atts['style'], [ 'solid', 'outline' ], true ) ? $atts['style'] : 'solid';
+    $size  = in_array( $atts['size'],  [ 'sm', 'md', 'lg' ],      true ) ? $atts['size']  : 'md';
+    $classes = 'agc-schedule-link agc-schedule-link--' . $style . ' agc-schedule-link--' . $size;
+
+    $drawer = agc_inv_render_schedule_drawer(
+        $atts['form_id'],
+        [
+            'title'    => $atts['title'],
+            'subtitle' => $atts['subtitle'],
+        ]
+    );
+
+    ob_start();
+    ?>
+    <button type="button"
+            class="<?php echo esc_attr( $classes ); ?>"
+            data-agc-buy-open="1"
+            aria-label="<?php echo esc_attr( $atts['label'] ); ?>">
+        <svg class="agc-schedule-link-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+            <line x1="16" y1="2" x2="16" y2="6"></line>
+            <line x1="8" y1="2" x2="8" y2="6"></line>
+            <line x1="3" y1="10" x2="21" y2="10"></line>
+        </svg>
+        <span><?php echo esc_html( $atts['label'] ); ?></span>
+    </button>
+    <?php echo $drawer; // Escaped internally by agc_inv_render_schedule_drawer. ?>
+    <?php
+    return ob_get_clean();
+} );
+
 
 /**
  * Sitewide drawer injection.

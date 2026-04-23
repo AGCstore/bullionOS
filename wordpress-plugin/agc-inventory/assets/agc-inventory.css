@@ -726,38 +726,55 @@
     pointer-events: auto;
 }
 
+/* The "drawer" was originally a right-side slide-in; per operator
+ * feedback (Apr 2026) it now renders as a centered in-window popup
+ * modal instead. Same markup, same JS, same open/close hooks —
+ * purely a CSS change. On very small screens (≤520px) it collapses
+ * to near-full-viewport so the Gravity Form stays usable. */
 .agc-drawer {
     position: fixed;
-    top: 0;
-    right: 0;
-    /* 100dvh handles iOS Safari URL-bar shrinking correctly; fallback
-     * to 100vh for older browsers that don't parse dvh. */
-    height: 100vh;
-    height: 100dvh;
-    width: min(500px, 100vw);
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, calc(-50% + 12px)) scale(0.98);
+    width: min(560px, calc(100vw - 32px));
+    max-height: min(90vh, 90dvh);
     background: #fff;
-    box-shadow: -16px 0 40px rgba(0, 0, 0, 0.24);
-    transform: translateX(calc(100% + 24px));
-    transition: transform 320ms cubic-bezier(0.2, 0.8, 0.3, 1);
+    border-radius: 14px;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.28),
+                0 2px 8px rgba(0, 0, 0, 0.12);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 220ms ease,
+                transform 320ms cubic-bezier(0.2, 0.8, 0.3, 1);
     z-index: 2147483642;
     display: flex;
     flex-direction: column;
+    overflow: hidden; /* keeps the gold accent rail inside the radius */
     font-family: 'Instrument Sans', system-ui, -apple-system, sans-serif;
 }
 .agc-drawer.agc-drawer--open {
-    transform: translateX(0);
+    opacity: 1;
+    pointer-events: auto;
+    transform: translate(-50%, -50%) scale(1);
+}
+@media (max-width: 520px) {
+    .agc-drawer {
+        width: calc(100vw - 16px);
+        max-height: calc(100dvh - 32px);
+        border-radius: 10px;
+    }
 }
 
-/* Gold rail on the left edge of the drawer — signals the opening
- * direction + ties the drawer visually to the widget hero rail. */
+/* Gold rail at the top of the modal — replaces the left-edge rail
+ * that was aligned with the old right-slide-in direction. */
 .agc-drawer-accent {
     position: absolute;
     top: 0;
     left: 0;
-    bottom: 0;
-    width: 3px;
+    right: 0;
+    height: 3px;
     background: linear-gradient(
-        180deg,
+        90deg,
         #e8d4a0 0%,
         #d4b070 50%,
         #b8965e 100%
