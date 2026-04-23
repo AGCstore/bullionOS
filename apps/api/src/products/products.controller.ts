@@ -214,6 +214,20 @@ export class AdminProductsController {
         display_category_override: p.display_category_override,
         buy_price: q ? q.buy_unit_price : null,
         sell_price: q ? q.sell_unit_price : null,
+        // Expose the rule-stored premium so the Price Sheet can render
+        // "X% of spot" / "$X over spot" without re-deriving from the
+        // rounded unit price. Re-deriving drifts as spot moves (e.g.
+        // a flat $200 rule rendered $199.45 at a slightly different
+        // spot tick) — the stored value is stable by definition.
+        buy_premium_type: q?.buy_premium_type ?? null,
+        buy_premium_value: q?.buy_premium_value ?? null,
+        sell_premium_type: q?.sell_premium_type ?? null,
+        sell_premium_value: q?.sell_premium_value ?? null,
+        // Per-unit metal content (weight × purity). Lets the frontend
+        // compute "$ over spot per unit" from a flat $/oz premium
+        // without needing the spot itself — purely multiplicative on
+        // stable snapshot values, so no drift.
+        metal_content_troy_oz: p.metal_content_troy_oz,
         quantity_on_hand: on_hand,
         quantity_reserved: reserved,
         available: on_hand - reserved,

@@ -28,9 +28,19 @@ import { CSS } from '@dnd-kit/utilities';
  *
  * Single-surface cheat sheet for operators quoting at the counter —
  * every active product with its current buy + sell price, fuzzy
- * search at the top, and a margin signal under each price:
- *   We Pay  → "X% of spot" (buy as share of melt value)
- *   We Sell → "+$X over spot" (sell markup in dollars over melt)
+ * search at the top, and a margin signal on each side:
+ *
+ *   We Pay  → "X% of spot" hero   (stored rule % — stable)
+ *             "$Y"          sub   (live unit price — changes with spot)
+ *
+ *   We Sell → "+$X over spot" hero  (stored flat rule $/oz — stable)
+ *                              or  "Y% of spot" for percent-type rules
+ *             "$Z"            sub  (live unit price)
+ *
+ * Premium displays are sourced from the RULE row (sheet payload
+ * `buy_premium_*`, `sell_premium_*`) not re-derived from the rounded
+ * unit price, so they don't drift as spot ticks ($200-over-spot does
+ * not momentarily become $199.45).
  *
  * Ordering follows the same global sort_order every other product
  * listing honors — drag-reorder here re-ranks the catalog everywhere.
@@ -42,8 +52,6 @@ import { CSS } from '@dnd-kit/utilities';
  * Admin-only page (admin+staff nav); margin signals never leak to
  * client-facing pricing pages.
  */
-
-type Metal = 'gold' | 'silver' | 'platinum' | 'palladium';
 
 export default function PriceSheetPage() {
   const qc = useQueryClient();
@@ -139,7 +147,7 @@ export default function PriceSheetPage() {
       </div>
 
       <div className="mt-6 overflow-x-auto rounded-xl border border-ink-200 bg-white">
-        <table className="w-full min-w-[920px] text-sm">
+        <table className="w-full min-w-[640px] text-sm">
           <thead className="bg-ink-50 text-left text-xs uppercase tracking-wide text-ink-400">
             <tr>
               <th className="w-8 px-2 py-3" />
@@ -148,20 +156,14 @@ export default function PriceSheetPage() {
                   - We pay = money going out to the customer → red tint
                   - We sell = money coming in from the customer → green tint
                   Kept subtle so the numbers still lead the column.
-                  Two premium columns bookend the price pair:
-                    Buy premium   (how much below melt we buy)   — red
-                    Sell premium  (how much above melt we sell)  — green */}
-              <th className="bg-red-50/40 px-4 py-3 text-right text-red-600/80">
-                Buy premium
-              </th>
+                  Premium signal lives inside each price column (hero on
+                  top, unit price as subtitle) — no separate bookend
+                  columns anymore. */}
               <th className="bg-red-50/70 px-4 py-3 text-right text-red-700">
                 We pay
               </th>
               <th className="bg-green-50/70 px-4 py-3 text-right text-green-700">
                 We sell
-              </th>
-              <th className="bg-green-50/40 px-4 py-3 text-right text-green-600/80">
-                Sell premium
               </th>
             </tr>
           </thead>
@@ -178,7 +180,7 @@ export default function PriceSheetPage() {
                 {isLoading && (
                   <tr>
                     <td
-                      colSpan={6}
+                      colSpan={4}
                       className="px-4 py-10 text-center text-sm text-ink-400"
                     >
                       Loading…
@@ -188,7 +190,7 @@ export default function PriceSheetPage() {
                 {!isLoading && filtered.length === 0 && (
                   <tr>
                     <td
-                      colSpan={6}
+                      colSpan={4}
                       className="px-4 py-10 text-center text-sm text-ink-400"
                     >
                       {search.trim()
@@ -201,7 +203,6 @@ export default function PriceSheetPage() {
                   <PriceRow
                     key={p.product_id}
                     row={p}
-                    spot={spot}
                     dragDisabled={dragDisabled}
                   />
                 ))}
@@ -216,16 +217,9 @@ export default function PriceSheetPage() {
 
 function PriceRow({
   row,
-  spot,
   dragDisabled,
 }: {
   row: SheetRow;
-  spot: {
-    gold: string;
-    silver: string;
-    platinum: string;
-    palladium: string;
-  } | null;
   dragDisabled: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
@@ -237,47 +231,23 @@ function PriceRow({
     background: isDragging ? '#f7f7f8' : undefined,
   };
 
-  const spotForMetal = spot
-    ? Number(spot[row.metal as Metal] ?? 0)
-    : 0;
-  // metal_content = weight × purity per unit. Multiplying by spot
-  // gives the raw metal value of one unit. Dividing our quoted price
-  // by that value is the "% of spot" figure — 100% means we buy at
-  // pure melt, 96% on a buy means we're 4pts below melt, etc.
-  const weight = Number(row.weight_troy_oz) || 0;
-  const purity = Number(row.purity) || 0;
-  const metalContent = weight * purity;
-  const meltValue = spotForMetal * metalContent;
-
-  const buyPct =
-    meltValue > 0 && row.buy_price !== null
-      ? (Number(row.buy_price) / meltValue) * 100
-      : null;
-  // We Sell subtitle is dollar-markup over spot melt value, not a
-  // percentage — operator's mental model at the counter is "we're
-  // charging $X over melt," not "we're charging 105%." Negative
-  // values (sell below melt) are unusual but displayed verbatim so
-  // pricing-rule misconfigurations are obvious.
-  const sellOverSpot =
-    meltValue > 0 && row.sell_price !== null
-      ? Number(row.sell_price) - meltValue
-      : null;
-  // Buy premium = what we pay BELOW melt. Positive = discount to melt
-  // (typical for generic bullion), negative = we're paying above melt
-  // (sometimes happens for semi-numismatic where the numismatic spread
-  // drags buys up).
-  const buyUnderSpot =
-    meltValue > 0 && row.buy_price !== null
-      ? meltValue - Number(row.buy_price)
-      : null;
-  const buyUnderPct =
-    buyUnderSpot !== null && meltValue > 0
-      ? (buyUnderSpot / meltValue) * 100
-      : null;
-  const sellOverPct =
-    sellOverSpot !== null && meltValue > 0
-      ? (sellOverSpot / meltValue) * 100
-      : null;
+  // Premium hero texts come from the STORED rule values, not from
+  // re-deriving price/spot. That's what keeps "$200 over spot" from
+  // flickering to "$199.45 over spot" as spot ticks — the rule row
+  // hasn't changed, so the display shouldn't either.
+  const metalContent = Number(row.metal_content_troy_oz) || 0;
+  const buyHero = formatPremiumHero(
+    row.buy_premium_type,
+    row.buy_premium_value,
+    'buy',
+    metalContent,
+  );
+  const sellHero = formatPremiumHero(
+    row.sell_premium_type,
+    row.sell_premium_value,
+    'sell',
+    metalContent,
+  );
 
   return (
     <tr
@@ -307,36 +277,13 @@ function PriceRow({
           <span className="ml-2 capitalize">{row.metal}</span>
         </div>
       </td>
-      {/* Buy premium — sits LEFT of We pay. Dollar amount leading,
-          percent as subtitle. Signed: positive = buying below melt. */}
-      <td className="bg-red-50/20 px-4 py-3 text-right">
-        {buyUnderSpot !== null ? (
-          <>
-            <div className="font-mono font-semibold text-red-700/80">
-              {buyUnderSpot >= 0
-                ? `-$${buyUnderSpot.toFixed(2)}`
-                : `+$${Math.abs(buyUnderSpot).toFixed(2)}`}
-            </div>
-            {buyUnderPct !== null && (
-              <div className="font-mono text-[11px] text-red-500/70">
-                {buyUnderPct >= 0
-                  ? `${buyUnderPct.toFixed(2)}% off spot`
-                  : `${Math.abs(buyUnderPct).toFixed(2)}% over spot`}
-              </div>
-            )}
-          </>
-        ) : (
-          <span className="text-ink-300">—</span>
-        )}
-      </td>
+      {/* We pay: premium (share of spot) leads, unit price subtitle.
+          Premium text is rule-sourced so it doesn't drift with spot. */}
       <td className="bg-red-50/40 px-4 py-3 text-right">
-        {/* % of spot is the operator's lead signal at the counter —
-            "we're at 96% of spot" communicates the ask faster than
-            the dollar figure. Dollar moves to the subtitle. */}
-        {buyPct !== null ? (
+        {buyHero ? (
           <>
             <div className="font-mono font-semibold text-red-700">
-              {buyPct.toFixed(2)}% of spot
+              {buyHero}
             </div>
             <div className="font-mono text-[11px] text-red-500/80">
               {row.buy_price !== null
@@ -352,45 +299,79 @@ function PriceRow({
           </div>
         )}
       </td>
+      {/* We sell: premium (over spot) leads, unit price subtitle.
+          Flipped from the earlier layout where $price was the hero —
+          operators want the markup signal first, exact price second. */}
       <td className="bg-green-50/40 px-4 py-3 text-right">
-        <div className="font-mono font-semibold text-green-700">
-          {row.sell_price !== null
-            ? `$${Number(row.sell_price).toFixed(2)}`
-            : '—'}
-        </div>
-        {sellOverSpot !== null && (
-          <div className="font-mono text-[11px] text-green-600/80">
-            {sellOverSpot >= 0
-              ? `+$${sellOverSpot.toFixed(2)} over spot`
-              : `-$${Math.abs(sellOverSpot).toFixed(2)} under spot`}
-          </div>
-        )}
-      </td>
-      {/* Sell premium — sits RIGHT of We sell. Dollar amount only per
-          operator spec; percent subtitle added so the two premium
-          columns visually balance. */}
-      <td className="bg-green-50/20 px-4 py-3 text-right">
-        {sellOverSpot !== null ? (
+        {sellHero ? (
           <>
-            <div className="font-mono font-semibold text-green-700/80">
-              {sellOverSpot >= 0
-                ? `+$${sellOverSpot.toFixed(2)}`
-                : `-$${Math.abs(sellOverSpot).toFixed(2)}`}
+            <div className="font-mono font-semibold text-green-700">
+              {sellHero}
             </div>
-            {sellOverPct !== null && (
-              <div className="font-mono text-[11px] text-green-600/70">
-                {sellOverPct >= 0
-                  ? `+${sellOverPct.toFixed(2)}% over spot`
-                  : `-${Math.abs(sellOverPct).toFixed(2)}% under spot`}
-              </div>
-            )}
+            <div className="font-mono text-[11px] text-green-600/80">
+              {row.sell_price !== null
+                ? `$${Number(row.sell_price).toFixed(2)}`
+                : '—'}
+            </div>
           </>
         ) : (
-          <span className="text-ink-300">—</span>
+          <div className="font-mono font-semibold text-green-700">
+            {row.sell_price !== null
+              ? `$${Number(row.sell_price).toFixed(2)}`
+              : '—'}
+          </div>
         )}
       </td>
     </tr>
   );
+}
+
+/**
+ * Format the hero-row premium label from the stored rule.
+ *
+ * percent → "X% of spot"  (share-form value; 96 = 96% of melt)
+ * flat    → "-$X off spot" on buy / "+$X over spot" on sell,
+ *           where X = stored $/oz × metal_content_per_unit (so the
+ *           figure is PER UNIT, matching the unit price below it)
+ *
+ * Returns null when the row has no rule attached — caller collapses
+ * the two-line layout back to one line in that case.
+ *
+ * `dropTrailingZero` runs on the percent path: 96.30 → "96.3",
+ * 96.25 → "96.25", 96.00 → "96.0" (keep at least one decimal). Per
+ * operator request; the old .toFixed(2) was visually noisy for
+ * round numbers.
+ */
+function formatPremiumHero(
+  type: SheetRow['buy_premium_type'],
+  value: string | null,
+  side: 'buy' | 'sell',
+  metalContent: number,
+): string | null {
+  if (!type || value === null) return null;
+  const v = Number(value);
+  if (!isFinite(v)) return null;
+  if (type === 'percent') {
+    return `${dropTrailingZero(v.toFixed(2))}% of spot`;
+  }
+  // flat: stored as $ per troy oz of metal content. Scale to per-unit
+  // for consistency with the unit price below.
+  const perUnit = v * (metalContent || 1);
+  const abs = Math.abs(perUnit).toFixed(2);
+  if (side === 'buy') {
+    // On the buy side a positive flat value REDUCES what we pay below
+    // melt, so label it as "off spot". Negative is the rare case where
+    // we're paying above melt (numismatic halo, specialty coin).
+    return perUnit >= 0 ? `-$${abs} off spot` : `+$${abs} over spot`;
+  }
+  return perUnit >= 0 ? `+$${abs} over spot` : `-$${abs} under spot`;
+}
+
+/** "96.30" → "96.3" · "96.25" → "96.25" · "96.00" → "96.0". */
+function dropTrailingZero(s: string): string {
+  return s.endsWith('0') && s.includes('.') && !s.endsWith('.0')
+    ? s.slice(0, -1)
+    : s;
 }
 
 function fmtTimeSince(iso: string): string {
