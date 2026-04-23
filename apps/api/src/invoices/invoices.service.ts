@@ -714,7 +714,84 @@ export class InvoicesService {
       await this.restock.dispatchForProducts(restockProductIds);
     }
 
+    // Oversell-override notification (operator request Apr 2026).
+    // When an admin force-overrides the stock guard on a transition,
+    // broadcast an in-app notification to every admin so someone
+    // remembers to reconcile inventory later. Keeps the audit trail
+    // (audit_logs already records force_oversell in metadata), adds
+    // a nudge to the bell icon so it doesn't get lost. Silent on the
+    // normal happy path.
+    if (forceOversell) {
+      try {
+        await this.broadcastOversellOverride({
+          invoiceId: id,
+          invoiceNumber: updated.invoice_number,
+          fromStatus: current.status,
+          toStatus: status,
+          actorUserId: actor.id,
+          actorName: actor.role,
+        });
+      } catch (err) {
+        // Non-fatal — the inventory move already committed. Log and move on.
+        // eslint-disable-next-line no-console
+        console.warn(
+          `oversell-override notify failed for invoice ${id}: ${(err as Error).message}`,
+        );
+      }
+    }
+
     return updated;
+  }
+
+  /**
+   * Fan out an oversell-override notification to every admin user.
+   * Each gets a row in their notifications feed tagged
+   * `inventory.override_used` so the bell icon surfaces it.
+   * Lands AFTER the trx commits so a notification row write failure
+   * can't roll back a successful status move.
+   */
+  private async broadcastOversellOverride(args: {
+    invoiceId: string;
+    invoiceNumber: string;
+    fromStatus: InvoiceStatus;
+    toStatus: InvoiceStatus;
+    actorUserId: string;
+    actorName: string;
+  }): Promise<void> {
+    const admins = await this.db
+      .selectFrom('users')
+      .select(['id', 'email'])
+      .where('role', '=', 'admin')
+      .where('status', '=', 'active')
+      .execute();
+    if (admins.length === 0) return;
+
+    const link = `/admin/invoices/${args.invoiceId}`;
+    const title = `Stock override used on ${args.invoiceNumber}`;
+    const body =
+      `An admin force-overrode the inventory guard when moving ` +
+      `${args.invoiceNumber} from ${args.fromStatus} → ${args.toStatus}. ` +
+      `Inventory may now be negative on one or more line items — reconcile ` +
+      `stock counts when convenient.`;
+
+    await Promise.all(
+      admins.map((u) =>
+        this.notifications.create({
+          user_id: u.id,
+          type: 'inventory.override_used',
+          title,
+          body,
+          link,
+          metadata: {
+            invoice_id: args.invoiceId,
+            invoice_number: args.invoiceNumber,
+            from_status: args.fromStatus,
+            to_status: args.toStatus,
+            actor_user_id: args.actorUserId,
+          },
+        }),
+      ),
+    );
   }
 
   /**

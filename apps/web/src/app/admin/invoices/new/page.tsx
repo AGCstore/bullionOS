@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, ApiError } from '@/lib/api-client';
+import { useAuth } from '@/lib/auth-context';
 import { PageTint } from '@/components/page-tint';
 import { ProductCombobox } from '@/components/product-combobox';
 import { ClientCombobox, type ComboboxClient } from '@/components/client-combobox';
@@ -122,6 +123,8 @@ function money(n: number): string {
 export default function NewInvoicePage() {
   const router = useRouter();
   const qc = useQueryClient();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const searchParams = useSearchParams();
   const fromId = searchParams.get('from');
   const initialDraftId = searchParams.get('draftId');
@@ -139,6 +142,14 @@ export default function NewInvoicePage() {
   const [notes, setNotes] = useState('');
   const [txDate, setTxDate] = useState('');
   const [txTime, setTxTime] = useState('');
+  // Admin-only oversell override. When ticked on a sell invoice
+  // create, the finalize PATCH goes out with force_oversell=true so
+  // the reservation commits even if it takes inventory negative.
+  // Server-side broadcasts an in-app notification to every admin so
+  // someone reconciles stock later. Hidden entirely for non-admin
+  // actors and for buy invoices (there's no oversell condition on
+  // BUYs — those only ever add inventory).
+  const [forceOversell, setForceOversell] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<null | 'save' | 'create' | 'print' | 'email' | 'delete'>(
     null,
@@ -496,9 +507,17 @@ export default function NewInvoicePage() {
         body: JSON.stringify(payload),
       });
       // Draft → finalized. The service handles inventory reservation.
+      // force_oversell=true bypasses the on-hand guard (admin + sell
+      // only; backend ignores otherwise). Triggers an in-app
+      // notification to every admin so someone reconciles stock later.
       await apiFetch(`/admin/invoices/${created.id}/status`, {
         method: 'PATCH',
-        body: JSON.stringify({ status: 'finalized' }),
+        body: JSON.stringify({
+          status: 'finalized',
+          force_oversell: forceOversell && isAdmin && type === 'sell'
+            ? true
+            : undefined,
+        }),
       });
       // If we were backing a draft, clean it up.
       if (draftId && draftId !== created.id) {
@@ -840,6 +859,39 @@ export default function NewInvoicePage() {
             className="input mt-3 w-full whitespace-pre-wrap break-words"
           />
         </section>
+
+        {/* Oversell override — admin-only, sell invoices only. Bypasses
+            the on-hand guard when Create is clicked so the finalize
+            transaction commits even if inventory goes negative. The
+            backend broadcasts a bell-icon notification to every admin
+            so someone remembers to adjust stock later. Hidden for
+            staff + for buy invoices (no oversell exposure on BUYs —
+            those only ever add inventory). */}
+        {isAdmin && type === 'sell' && (
+          <section className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4 shadow-sm">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={forceOversell}
+                onChange={(e) => setForceOversell(e.target.checked)}
+                className="mt-0.5"
+              />
+              <div className="text-sm">
+                <div className="font-semibold text-amber-900">
+                  Override stock check (admin only)
+                </div>
+                <p className="mt-0.5 text-xs text-amber-800">
+                  Allow this invoice to reserve more than is on hand
+                  — useful for pre-sales against incoming stock or
+                  when counts are behind. Inventory will go negative
+                  at finalize time; a bell-icon notification goes to
+                  every admin so someone reconciles after. Every
+                  movement stays audit-logged.
+                </p>
+              </div>
+            </label>
+          </section>
+        )}
 
         {/* Flash / error */}
         {flash && (
