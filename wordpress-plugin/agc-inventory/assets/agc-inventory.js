@@ -172,6 +172,19 @@
           : 'Pricing coming soon.') +
         '</p>';
     }
+
+    // OOS / "Notify me" section — only on Live Inventory. Without this
+    // the 60s refresh was wiping the server-rendered section after
+    // the first tick since the AJAX payload used to omit oos. Backend
+    // now includes data.oos + data.api_base on every poll.
+    if (
+      widget === 'live-inventory' &&
+      Array.isArray(data.oos) &&
+      data.oos.length
+    ) {
+      html += renderOosSection(data.oos, data.api_base || '');
+    }
+
     html +=
       '<p class="agc-inv-footnote">' +
       (widget === 'live-inventory' ? 'Updated ' : 'Live prices — updated ') +
@@ -366,6 +379,45 @@
       chips[c].style.display =
         sectionEl && sectionEl.style.display === 'none' ? 'none' : '';
     }
+  }
+
+  /**
+   * Mirror of agc_inv_render_oos_section() in the PHP template. Called
+   * on every refresh tick so the "Notify me" section survives the
+   * innerHTML swap that used to wipe it. Each button still carries the
+   * same data-agc-notify + data-agc-api-base + data-agc-product-name
+   * attributes the delegated click handler at the bottom of this file
+   * listens for.
+   */
+  function renderOosSection(rows, apiBase) {
+    var count = rows.length;
+    var html =
+      '<div class="agc-inv-oos-section">' +
+      '<h3 class="agc-inv-oos-heading">Out of Stock' +
+      '<span class="agc-inv-oos-count">' +
+      count +
+      ' item' +
+      (count === 1 ? '' : 's') +
+      ' &mdash; get notified when back in stock</span>' +
+      '</h3>' +
+      '<table class="agc-inv-oos-table"><tbody>';
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i] || {};
+      var id = r.product_id || '';
+      var name = r.name || '';
+      html +=
+        '<tr data-agc-oos-id="' + escapeHtml(id) + '">' +
+        '<td class="agc-inv-oos-name">' + escapeHtml(name) + '</td>' +
+        '<td class="agc-inv-oos-cta">' +
+        '<button type="button" class="agc-inv-notify-btn" ' +
+        'data-agc-notify="' + escapeHtml(id) + '" ' +
+        'data-agc-api-base="' + escapeHtml(apiBase) + '" ' +
+        'data-agc-product-name="' + escapeHtml(name) + '">' +
+        'Notify Me</button>' +
+        '</td></tr>';
+    }
+    html += '</tbody></table></div>';
+    return html;
   }
 
   /**

@@ -5,7 +5,7 @@
  * Description:       Live inventory and "What We Pay" widgets for Atlanta
  *                    Gold & Coin, fed by the AGC Desk API. Elementor widgets
  *                    + shortcodes, auto-refreshing during shop hours.
- * Version:           2.7.0
+ * Version:           2.7.1
  * Author:            Atlanta Gold and Coin
  * License:           Proprietary
  * Text Domain:       agc-inventory
@@ -48,7 +48,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-define( 'AGC_INV_VERSION', '2.7.0' );
+define( 'AGC_INV_VERSION', '2.7.1' );
 define( 'AGC_INV_DEFAULT_BASE', 'https://agc-api-production.up.railway.app/api/v1' );
 // Server-side transient TTL. Short enough that a show_on_website toggle
 // in AGC Desk appears on the shop's WP page within ~15s, long enough
@@ -288,10 +288,20 @@ function agc_inv_ajax_live_inventory() {
     } ) );
     $items    = agc_inv_filter_by_metal( $items, $metal );
     $sections = agc_inv_group_by_display_category( $items );
+
+    // OOS rows are rendered server-side on first paint but were being
+    // wiped by the 60s poll because this AJAX payload didn't include
+    // them. Include them here; the JS renderer rebuilds the section
+    // so "Notify me" buttons survive refreshes.
+    $oos = agc_inv_fetch( 'public/out-of-stock' );
+    $oos = is_array( $oos ) ? agc_inv_filter_by_metal( $oos, $metal ) : [];
+
     wp_send_json_success( [
         'sections' => $sections,
         'mode'     => 'live-inventory',
         'updated'  => current_time( 'g:i A' ),
+        'oos'      => $oos,
+        'api_base' => agc_inv_get_base(),
     ] );
 }
 
