@@ -86,10 +86,6 @@ export default function KpiPage() {
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-semibold">KPI</h1>
-          <p className="mt-1 text-sm text-ink-400">
-            Money in vs money out, bucketed by period. Only paid / shipped
-            invoices count — drafts and canceled are excluded.
-          </p>
         </div>
         <nav className="flex gap-1 rounded-md border border-ink-200 bg-white p-1 text-sm">
           {PERIODS.map((p) => (
@@ -362,8 +358,25 @@ function BarChart({
         const purchases = Number(b.purchases);
         const wholesale = Number(b.wholesale);
         const x = i * (groupWidth + groupGap);
+        // SVG <title> gives us native browser tooltips with zero
+        // React state. The invisible hit rect below it spans the
+        // full bucket area so hovering between bars still shows the
+        // tooltip — without it, hovering in the gaps does nothing.
+        const tip =
+          `${formatBucket(b.bucket_start, period)}\n` +
+          `Sales:      ${money(sales)}\n` +
+          `Purchases:  ${money(purchases)}\n` +
+          `Wholesale:  ${money(wholesale)}`;
         return (
           <g key={b.bucket_start}>
+            <title>{tip}</title>
+            <rect
+              x={x}
+              y={0}
+              width={groupWidth}
+              height={chartH}
+              fill="transparent"
+            />
             <Bar x={x} y={chartH} h={(sales / max) * chartH} w={barWidth} color="#1f6b3e" />
             <Bar
               x={x + barWidth + barGap}

@@ -23,14 +23,17 @@ const ALLOWED_PERIODS: Record<Period, string> = {
  * so the financial day matches the shop's wall clock. Each row carries three
  * totals:
  *
- *   purchases  — ALL buy  invoices (retail + wholesale). The top-line "money
- *                out the door" for the period.
- *   sales      — ALL sell invoices (retail + wholesale). The top-line "money
- *                in" for the period.
- *   wholesale  — SUBSET: the portion of the above attributable to wholesaler
- *                clients (buy + sell combined). Think of it as a filter view
- *                of the same data, not a separate bucket — summing sales +
- *                purchases + wholesale double-counts.
+ *   purchases  — ALL buy  invoices (retail + wholesale). Money out the door.
+ *   sales      — RETAIL sell invoices ONLY. Wholesaler sell invoices are
+ *                excluded here and rolled into `wholesale` instead, so
+ *                Sales + Wholesale is disjoint (no double-count on the chart).
+ *                Operator spec Apr 2026: "Sales column should only show sales
+ *                to clients." Previously this included wholesale and visually
+ *                double-counted alongside the wholesale subtotal.
+ *   wholesale  — Wholesaler-client flows (buy + sell combined). Prior to the
+ *                April 2026 change this was a SUBSET of the Sales / Purchases
+ *                totals; it's now DISJOINT from Sales (still overlaps with
+ *                Purchases — that column retains the full all-client total).
  *
  * Only invoices in status IN ('paid','shipped') count. Drafts and canceled
  * don't move money. Callers pass:
@@ -170,16 +173,21 @@ export class KpiController {
             WHEN e.type = 'buy' THEN e.total
           END
         ), 0)::text AS purchases,
-        -- Sales = ALL sell invoices (retail + wholesale).
+        -- Sales = RETAIL sell invoices only. Wholesaler sell invoices get
+        -- accounted under the `wholesale` column below, so Sales + Wholesale
+        -- is disjoint (no double-count on the stacked-bar chart).
+        -- manual_category='sales' entries are tagged retail in the CTE
+        -- (see manualCte above), so the first arm is automatically retail-
+        -- only without an explicit client_type filter.
         COALESCE(SUM(
           CASE
             WHEN e.manual_category = 'sales' THEN e.total
-            WHEN e.type = 'sell' THEN e.total
+            WHEN e.type = 'sell' AND e.client_type <> 'wholesaler' THEN e.total
           END
         ), 0)::text AS sales,
-        -- Wholesale is a SUBSET of the above, not additive. Kept so the
-        -- dashboard can still answer "of the above, how much was wholesale?"
-        -- at a glance.
+        -- Wholesaler-client flows (buy + sell combined). Disjoint from
+        -- Sales; still overlaps with Purchases (that column is
+        -- intentionally all-client; see header doc).
         COALESCE(SUM(
           CASE
             WHEN e.manual_category = 'wholesale' THEN e.total

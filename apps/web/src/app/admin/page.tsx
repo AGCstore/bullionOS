@@ -766,6 +766,14 @@ function Legend({ color, label }: { color: string; label: string }) {
   );
 }
 
+/** Tooltip-formatter for chart bars — dollars with commas, no decimals. */
+function fmtMoney(n: number): string {
+  return `$${n.toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  })}`;
+}
+
 function MonthlyBars({
   buckets,
   loading,
@@ -822,8 +830,29 @@ function MonthlyBars({
         const purchases = Number(b.purchases);
         const wholesale = Number(b.wholesale);
         const x = i * (groupWidth + groupGap);
+        // SVG <title> + full-bucket transparent hit rect: gives a
+        // native tooltip with zero React state. Hovering anywhere in
+        // the bucket column (not just on a bar) triggers the tooltip
+        // — helpful in zero-value months where bars have no area.
+        const monthLabel = new Date(b.bucket_start).toLocaleDateString(undefined, {
+          month: 'long',
+          year: 'numeric',
+        });
+        const tip =
+          `${monthLabel}\n` +
+          `Sales:      ${fmtMoney(sales)}\n` +
+          `Purchases:  ${fmtMoney(purchases)}\n` +
+          `Wholesale:  ${fmtMoney(wholesale)}`;
         return (
           <g key={b.bucket_start}>
+            <title>{tip}</title>
+            <rect
+              x={x}
+              y={0}
+              width={groupWidth}
+              height={chartH}
+              fill="transparent"
+            />
             <rect
               x={x}
               y={chartH - (sales / max) * chartH}
