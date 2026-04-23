@@ -1,6 +1,8 @@
 import {
+  BadRequestException,
   Inject,
   Injectable,
+  InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
 import { Kysely, sql } from 'kysely';
@@ -98,17 +100,25 @@ export class KpiManualEntriesService {
     amount: number;
     notes?: string;
   }): Promise<ManualEntryRow> {
-    const inserted = await this.db
-      .insertInto('kpi_manual_entries')
-      .values({
-        bucket_month: input.bucket_month,
+    let inserted: { id: string };
+    try {
+      inserted = await this.db
+        .insertInto('kpi_manual_entries')
+        .values({
+          bucket_month: input.bucket_month,
+          category: input.category,
+          client_id: input.client_id ?? null,
+          amount: toDbString(input.amount),
+          notes: input.notes ?? null,
+        })
+        .returning(['id'])
+        .executeTakeFirstOrThrow();
+    } catch (err) {
+      throw translatePgError(err, {
         category: input.category,
         client_id: input.client_id ?? null,
-        amount: toDbString(input.amount),
-        notes: input.notes ?? null,
-      })
-      .returning(['id'])
-      .executeTakeFirstOrThrow();
+      });
+    }
     return this.getById(inserted.id);
   }
 
@@ -136,11 +146,18 @@ export class KpiManualEntriesService {
     if (patch.amount !== undefined) set.amount = toDbString(patch.amount);
     if (patch.notes !== undefined) set.notes = patch.notes;
 
-    await this.db
-      .updateTable('kpi_manual_entries')
-      .set(set)
-      .where('id', '=', id)
-      .execute();
+    try {
+      await this.db
+        .updateTable('kpi_manual_entries')
+        .set(set)
+        .where('id', '=', id)
+        .execute();
+    } catch (err) {
+      throw translatePgError(err, {
+        category: (patch.category as KpiManualCategory | undefined) ?? null,
+        client_id: patch.client_id ?? null,
+      });
+    }
 
     return this.getById(id);
   }
@@ -176,5 +193,53 @@ export class KpiManualEntriesService {
       .executeTakeFirst();
     if (!row) throw new NotFoundException('Entry not found');
     return row as unknown as ManualEntryRow;
+  }
+}
+
+/**
+ * Turn raw Postgres errors into HTTP errors with actionable copy.
+ * Previously a bad client_id / bad month / out-of-range amount
+ * surfaced as a generic 500 "Internal server error" that left the
+ * accountant guessing. We map the PG SQLSTATE codes to BadRequest
+ * with the real reason; everything else falls through as a 500 so
+ * the original stack still hits Railway logs.
+ *
+ * Codes we translate:
+ *   23503 foreign_key_violation       → wrong client_id
+ *   23514 check_violation              → category not in allowed list
+ *   22P02 invalid_text_representation  → bad UUID / bad date
+ *   22001 string_data_right_truncation → notes over length cap
+ *   22003 numeric_value_out_of_range   → amount too big
+ */
+function translatePgError(
+  err: unknown,
+  ctx: { category: KpiManualCategory | null; client_id: string | null },
+): Error {
+  const code = (err as { code?: string } | null)?.code;
+  switch (code) {
+    case '23503':
+      return new BadRequestException(
+        ctx.client_id
+          ? `The wholesaler you selected (client id ${ctx.client_id}) no longer exists in the clients table. Pick a different wholesaler.`
+          : 'A referenced record was missing. Refresh the form and try again.',
+      );
+    case '23514':
+      return new BadRequestException(
+        `Category "${ctx.category ?? ''}" is not one of sales / purchases / wholesale.`,
+      );
+    case '22P02':
+      return new BadRequestException(
+        'A date or id field was malformed. Month must be YYYY-MM-01 and the wholesaler must be picked from the dropdown (not typed).',
+      );
+    case '22001':
+      return new BadRequestException('Notes are too long (max 500 characters).');
+    case '22003':
+      return new BadRequestException(
+        'Amount is out of range for this column (numeric(20,2)). Are there too many digits, or a bad decimal value?',
+      );
+    default:
+      return new InternalServerErrorException(
+        `KPI entry save failed. ${(err as Error)?.message ?? ''}`.trim(),
+      );
   }
 }
