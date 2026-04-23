@@ -264,8 +264,45 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
             {formatLocalDateTime(data.created_at)}
           </p>
         </div>
+        {/* Apr 2026 polish: header action cluster is broken into three
+            visual groups so the 6–9 buttons that can appear here stop
+            looking like a single undifferentiated row.
+              1. File-actions pill (Print · Download · Email) — grouped
+                 together so operators recognize them as "same family."
+              2. Status transitions (Continue editing, Mark paid, dropdown
+                 options) — the primary-hero group, dark fill.
+              3. Destructive (Void & recreate, Delete) — visually
+                 separated by a slim divider + quieter styling so the
+                 eye doesn't land on them first.
+            Every onClick/handler is preserved verbatim. */}
         <div className="flex flex-wrap items-center gap-2">
           <StatusPill status={data.status} />
+
+          {/* File-actions pill. EmailInvoiceButton is its own component
+              (manages its own popover); keeping it inside the pill means
+              its trigger button sits alongside Print + Download for
+              consistent visual weight. */}
+          <div className="inline-flex rounded-md border border-ink-200 bg-ink-50/50 p-0.5">
+            <button
+              onClick={printPdf}
+              className="rounded px-3 py-1 text-sm text-ink-700 hover:bg-white hover:text-ink-900"
+              title="Open the print dialog directly — works on drafts too"
+            >
+              Print
+            </button>
+            <button
+              onClick={openPdf}
+              className="rounded px-3 py-1 text-sm text-ink-700 hover:bg-white hover:text-ink-900"
+              title="Download the PDF"
+            >
+              Download
+            </button>
+            <EmailInvoiceButton
+              invoiceId={data.id}
+              defaultTo={data.client_email ?? ''}
+            />
+          </div>
+
           {/* Draft-only "Continue editing" → resumes the wizard bound to
               this draft via ?draftId. Without this, operators landing on
               the detail page of a saved-but-unfinished invoice have no
@@ -274,12 +311,13 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
           {data.status === 'draft' && (
             <Link
               href={`/admin/invoices/new?draftId=${data.id}`}
-              className="rounded-md bg-ink-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-ink-800"
+              className="rounded-md bg-ink-900 px-3 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-ink-800"
               title="Open the invoice wizard to edit line items, quantities, and payment"
             >
               Continue editing
             </Link>
           )}
+
           {/* Wholesale-specific Mark Paid button (WH-002). More prominent
               than the generic "Mark paid" option in the status dropdown;
               stamps paid_by_user_id automatically via the service.
@@ -291,55 +329,16 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
             !data.paid_at && (
               <button
                 onClick={() => setStatus('paid')}
-                className="rounded-md bg-green-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-700"
+                className="rounded-md bg-green-600 px-3 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-green-700"
                 title="Record that this wholesaler has paid — removes from outstanding totals"
               >
                 Mark paid
               </button>
             )}
-          <button
-            onClick={printPdf}
-            className="rounded-md border border-ink-200 px-3 py-1.5 text-sm hover:bg-ink-50"
-            title="Open the print dialog directly — works on drafts too"
-          >
-            Print
-          </button>
-          <button
-            onClick={openPdf}
-            className="rounded-md border border-ink-200 px-3 py-1.5 text-sm hover:bg-ink-50"
-          >
-            Download PDF
-          </button>
-          <EmailInvoiceButton
-            invoiceId={data.id}
-            defaultTo={data.client_email ?? ''}
-          />
-          {/* Void & recreate — surfaced on every status so an operator
-              can correct a line item by opening a fresh copy. Cancels the
-              current invoice (which reverses any inventory it caused) and
-              opens the wizard pre-filled. */}
-          <button
-            onClick={voidAndRecreate}
-            className="rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-100"
-            title="Void this invoice and start a new one with the same fields pre-filled"
-          >
-            Void &amp; recreate
-          </button>
-          {/* Admin-only PIN-gated force delete. Hidden for staff and for
-              shipped tickets (server also rejects those). Kept visually
-              minor with red outline so it doesn't get mistaken for the
-              primary action. */}
-          {isAdmin && data.status !== 'shipped' && (
-            <button
-              onClick={forceDelete}
-              className="rounded-md border border-red-300 px-3 py-1.5 text-sm text-red-700 hover:bg-red-50"
-              title="Permanently delete this invoice (PIN-gated)"
-            >
-              Delete
-            </button>
-          )}
-          {/* Hide the generic "Mark paid" from the status dropdown for
-              wholesalers — they use the dedicated green button above. */}
+
+          {/* Status transition buttons. Hide the generic "Mark paid" from
+              the list for wholesalers — they use the dedicated green
+              button above. */}
           {options
             .filter(
               (o) =>
@@ -349,11 +348,32 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
               <button
                 key={o.value}
                 onClick={() => setStatus(o.value)}
-                className="rounded-md bg-ink-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-ink-800"
+                className="rounded-md bg-ink-900 px-3 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-ink-800"
               >
                 {o.label}
               </button>
             ))}
+
+          {/* Destructive group, visually separated. Void & recreate is
+              amber (reversible, keeps history); Delete is red and
+              admin-PIN-gated (permanent). */}
+          <span aria-hidden className="mx-1 h-6 w-px bg-ink-200" />
+          <button
+            onClick={voidAndRecreate}
+            className="rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-100"
+            title="Void this invoice and start a new one with the same fields pre-filled"
+          >
+            Void &amp; recreate
+          </button>
+          {isAdmin && data.status !== 'shipped' && (
+            <button
+              onClick={forceDelete}
+              className="rounded-md px-3 py-1.5 text-sm text-red-700 hover:bg-red-50"
+              title="Permanently delete this invoice (PIN-gated)"
+            >
+              Delete
+            </button>
+          )}
         </div>
       </header>
 
@@ -749,10 +769,13 @@ function EmailInvoiceButton({
   }
 
   if (!open) {
+    // Styled to slot cleanly inside the header's file-actions pill
+    // alongside Print + Download — no outer border (the pill carries
+    // that), same hover treatment as its siblings.
     return (
       <button
         onClick={() => setOpen(true)}
-        className="rounded-md border border-ink-200 px-3 py-1.5 text-sm hover:bg-ink-50"
+        className="rounded px-3 py-1 text-sm text-ink-700 hover:bg-white hover:text-ink-900"
         title="Email this invoice as a PDF attachment"
       >
         Email

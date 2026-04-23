@@ -819,73 +819,90 @@ export default function NewInvoicePage() {
 
       {/* Sticky action rail — running total above bottom buttons (INV-001,
           INV-005, INV-008). Padding-bottom on the main column above keeps
-          the last field from hiding under the rail. */}
+          the last field from hiding under the rail.
+          Apr 2026 polish: three visual tiers in the button cluster —
+            · Cancel is a quiet text link (leave without committing)
+            · Save / Print / Email share a subtle grouped style (secondary)
+            · Create is the single hero primary
+            · Delete draft is visually separated when present (destructive)
+          Running total is given its own block with a larger mono figure so
+          operators can keep an eye on the number while typing line items. */}
       <div className="fixed inset-x-0 bottom-0 z-10 border-t border-ink-200 bg-white/95 backdrop-blur">
-        <div className="mx-auto flex max-w-4xl flex-col gap-3 px-4 py-3 md:flex-row md:items-center md:justify-between">
-          <div className="text-sm">
-            <span className="text-ink-400">Running total:</span>{' '}
-            <span className="font-mono text-lg font-semibold text-ink-900">
-              {money(runningTotal)}
-            </span>
+        <div className="mx-auto flex max-w-5xl flex-col gap-3 px-4 py-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-baseline gap-3">
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-400">
+                Running total
+              </div>
+              <div className="font-mono text-2xl font-semibold tabular-nums text-ink-900">
+                {money(runningTotal)}
+              </div>
+            </div>
             {filledLines.length > 0 && (
-              <span className="ml-2 text-xs text-ink-400">
-                · {filledLines.length} line{filledLines.length === 1 ? '' : 's'}
-              </span>
+              <div className="text-xs text-ink-400">
+                {filledLines.length} line{filledLines.length === 1 ? '' : 's'}
+              </div>
             )}
           </div>
 
-          {/* Order required by INV-008: Cancel · Save · Print · Create · Email · Delete
-              The email recipient input used to live inline here and
-              was crowding Delete off narrow screens (INV-007 fix). It
-              now opens in a popover when "Email" is clicked — same
-              pattern as the invoice detail page — so every button in
-              the rail is reachable at any viewport. Delete draft stays
-              at the far right when a draft is active so it doesn't
-              mix with the always-present primaries. */}
+          {/* Order left→right: Cancel (quiet) · Save · Print · Email ·
+              Create (primary) · Delete (destructive, only when a draft
+              exists). Email popover positioned relative to its button
+              container; closes on outside click or Close. */}
           <div className="relative flex flex-wrap items-center gap-2">
             <button
               onClick={() => router.back()}
-              className="rounded-md border border-ink-200 px-3 py-2 text-sm text-ink-700 hover:bg-ink-50"
+              className="rounded-md px-2 py-2 text-sm text-ink-500 hover:text-ink-900"
             >
               Cancel
             </button>
-            <button
-              onClick={handleSave}
-              disabled={!!busy}
-              className="rounded-md border border-ink-200 px-3 py-2 text-sm text-ink-700 hover:bg-ink-50 disabled:opacity-60"
-            >
-              {busy === 'save' ? 'Saving…' : 'Save'}
-            </button>
-            <button
-              onClick={handlePrint}
-              disabled={!!busy}
-              className="rounded-md border border-ink-200 px-3 py-2 text-sm text-ink-700 hover:bg-ink-50 disabled:opacity-60"
-            >
-              {busy === 'print' ? 'Preparing…' : 'Print'}
-            </button>
+            <div className="inline-flex rounded-md border border-ink-200 bg-ink-50/50 p-0.5">
+              <button
+                onClick={handleSave}
+                disabled={!!busy}
+                title="Save this as a draft"
+                className="rounded px-3 py-1.5 text-sm text-ink-700 hover:bg-white hover:text-ink-900 disabled:opacity-60"
+              >
+                {busy === 'save' ? 'Saving…' : 'Save'}
+              </button>
+              <button
+                onClick={handlePrint}
+                disabled={!!busy}
+                title="Save + open the PDF in a new tab (does not finalize)"
+                className="rounded px-3 py-1.5 text-sm text-ink-700 hover:bg-white hover:text-ink-900 disabled:opacity-60"
+              >
+                {busy === 'print' ? 'Opening…' : 'Print'}
+              </button>
+              <button
+                onClick={() => setEmailOpen((v) => !v)}
+                disabled={!!busy}
+                aria-expanded={emailOpen}
+                title="Save + email the PDF to a recipient"
+                className="inline-flex items-center gap-1 rounded px-3 py-1.5 text-sm text-ink-700 hover:bg-white hover:text-ink-900 disabled:opacity-60"
+              >
+                {busy === 'email' ? 'Sending…' : 'Email'}
+                <span className="text-[10px] text-ink-400">▾</span>
+              </button>
+            </div>
             <button
               onClick={handleCreate}
               disabled={!!busy}
-              className="rounded-md bg-ink-900 px-4 py-2 text-sm font-medium text-white hover:bg-ink-800 disabled:opacity-60"
+              className="rounded-md bg-ink-900 px-5 py-2 text-sm font-semibold text-white shadow-sm hover:bg-ink-800 disabled:opacity-60"
             >
-              {busy === 'create' ? 'Creating…' : 'Create'}
-            </button>
-            <button
-              onClick={() => setEmailOpen((v) => !v)}
-              disabled={!!busy}
-              className="rounded-md border border-ink-200 px-3 py-2 text-sm text-ink-700 hover:bg-ink-50 disabled:opacity-60"
-              aria-expanded={emailOpen}
-            >
-              {busy === 'email' ? 'Sending…' : emailOpen ? 'Email ▾' : 'Email'}
+              {busy === 'create' ? 'Creating…' : 'Create invoice'}
             </button>
             {draftId && (
-              <button
-                onClick={handleDelete}
-                disabled={!!busy}
-                className="ml-auto rounded-md border border-red-200 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-60"
-              >
-                {busy === 'delete' ? 'Deleting…' : 'Delete draft'}
-              </button>
+              <>
+                <span aria-hidden className="mx-1 h-6 w-px bg-ink-200" />
+                <button
+                  onClick={handleDelete}
+                  disabled={!!busy}
+                  title="Permanently delete this draft"
+                  className="rounded-md px-3 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-60"
+                >
+                  {busy === 'delete' ? 'Deleting…' : 'Delete draft'}
+                </button>
+              </>
             )}
 
             {emailOpen && (
