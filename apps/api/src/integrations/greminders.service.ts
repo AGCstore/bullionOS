@@ -50,12 +50,74 @@ export interface GremindersAttendee {
 @Injectable()
 export class GremindersService {
   private readonly logger = new Logger(GremindersService.name);
+  private static readonly API_BASE = 'https://api.greminders.com';
 
   constructor(
     @Inject(KYSELY) private readonly db: Kysely<DB>,
     private readonly integrations: IntegrationsService,
     private readonly clients: ClientsService,
   ) {}
+
+  /**
+   * "Test connection" handler for the admin Integrations page. Hits
+   * `GET /users` (list organization users — a read-only lightweight
+   * endpoint documented at developer.greminders.com) with the stored
+   * API key. A 200 response confirms the key is valid and the account
+   * is reachable; a 401 means bad credentials; anything else is
+   * surfaced verbatim so the operator can reason about it.
+   *
+   * The impersonation header is optional on /users — we send it when
+   * configured but don't require it here, since the operator may be
+   * testing the API key before they know which user to impersonate.
+   */
+  async testConnection(): Promise<{ ok: boolean; message: string }> {
+    const creds = await this.integrations.getCredentials('greminders', {
+      respectEnabled: false,
+    });
+    if (!creds) {
+      return { ok: false, message: 'No credentials saved — enter an API key first.' };
+    }
+    if (!creds.api_key) {
+      return { ok: false, message: 'API key is empty.' };
+    }
+
+    const headers: Record<string, string> = {
+      'X-GReminders-API-Key': creds.api_key,
+      Accept: 'application/json',
+    };
+    if (creds.impersonation_id) {
+      headers['X-GReminders-Impersonation-ID'] = creds.impersonation_id;
+    }
+
+    try {
+      const res = await fetch(`${GremindersService.API_BASE}/users`, {
+        method: 'GET',
+        headers,
+      });
+      if (res.ok) {
+        return {
+          ok: true,
+          message:
+            `Connected to GReminders (HTTP ${res.status}). ` +
+            (creds.webhook_secret
+              ? 'Webhook signing is enabled.'
+              : 'Webhook signing secret NOT set — inbound events will be accepted unsigned.'),
+        };
+      }
+      const body = await res.text().catch(() => '');
+      return {
+        ok: false,
+        message: `GReminders returned HTTP ${res.status}${
+          body ? ` — ${body.slice(0, 200)}` : ''
+        }`,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        message: `Network error reaching GReminders: ${(err as Error).message}`,
+      };
+    }
+  }
 
   /**
    * Verify the X-Greminders-Signature header. Returns true if signing

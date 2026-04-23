@@ -18,6 +18,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import type { ShipmentCarrier } from '../db/types';
 import { CarrierService } from './carrier.service';
 import { DocuSignService } from './docusign.service';
+import { GremindersService } from './greminders.service';
 import { IntegrationsService } from './integrations.service';
 import { MetalsService } from '../metals/metals.service';
 import { isProvider, type ProviderName } from './integrations.registry';
@@ -34,6 +35,7 @@ export class IntegrationsController {
     private readonly integrations: IntegrationsService,
     private readonly carrier: CarrierService,
     private readonly docusign: DocuSignService,
+    private readonly greminders: GremindersService,
     private readonly metals: MetalsService,
     @Inject(forwardRef(() => CalendarService))
     private readonly calendar: CalendarService,
@@ -83,6 +85,8 @@ export class IntegrationsController {
       result = await this.metals.testConnection();
     } else if (provider === 'google_calendar') {
       result = await this.calendar.testConnection();
+    } else if (provider === 'greminders') {
+      result = await this.greminders.testConnection();
     } else {
       result = await this.carrier.testConnection(provider as ShipmentCarrier);
     }
