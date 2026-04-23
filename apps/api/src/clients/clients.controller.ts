@@ -59,6 +59,25 @@ export class AdminClientsController {
     return this.clients.getTimeline(id);
   }
 
+  /**
+   * Latest GReminders activity for this client — appointment
+   * confirmations/declines/creates that the webhook handler
+   * (apps/api/src/integrations/greminders-webhook.controller.ts)
+   * has ingested into audit_logs. Used by:
+   *   - /admin/clients/[id] — shows a per-client confirmation panel
+   *   - /admin/calendar — AttendeeChip renders a small confirmation
+   *     pill when this endpoint returns any entries for the attendee's
+   *     linked client id.
+   */
+  @Get(':id/greminders-activity')
+  gremindersActivity(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Query('limit') limitRaw?: string,
+  ) {
+    const limit = Math.min(50, Math.max(1, Number(limitRaw ?? 10) || 10));
+    return this.clients.getGremindersActivity(id, limit);
+  }
+
   @Post()
   @HttpCode(201)
   create(@Body() dto: CreateClientDto) {

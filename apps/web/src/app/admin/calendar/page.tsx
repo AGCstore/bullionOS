@@ -293,6 +293,22 @@ function AttendeeChip({
         ? 'bg-red-100 text-red-700'
         : 'bg-ink-100 text-ink-600';
 
+  // GReminders confirmation status — most recent webhook event per
+  // linked client. Only fires a query if this attendee has a linked
+  // client_id and isn't internal staff (their bookings don't trigger
+  // client reminders). Idle cheap when nothing's there.
+  const linkedClientId = data?.client_id ?? null;
+  const { data: gremindersActivity } = useQuery({
+    queryKey: ['admin', 'greminders-activity', linkedClientId],
+    queryFn: () =>
+      apiFetch<Array<{ change_type: string; at: string; start_time: string | null }>>(
+        `/admin/clients/${linkedClientId}/greminders-activity?limit=1`,
+      ),
+    enabled: !!linkedClientId && !isInternalEmail(attendee.email),
+    staleTime: 60_000,
+  });
+  const latestGreminders = gremindersActivity?.[0] ?? null;
+
   async function createClient() {
     try {
       const res = await apiFetch<{ client_id: string; created: boolean }>(
@@ -327,20 +343,31 @@ function AttendeeChip({
   // After auto-create the response has client_id + created:true +
   // matched:false (matched = 'pre-existed'). Either way, if we got a
   // client_id back the attendee is linked — render as a link, not
-  // a "+ add" chip.
+  // a "+ add" chip. Tack a GReminders confirmation pill onto the end
+  // when we've seen activity for this client, so operators can tell
+  // at a glance who's confirmed today's appointments without leaving
+  // the calendar page.
   if (data?.client_id) {
     return (
-      <Link
-        href={`/admin/clients/${data.client_id}`}
-        className={`rounded-full px-2 py-0.5 hover:underline ${statusCls}`}
-        title={
-          data.created
-            ? 'New CRM client auto-created from this calendar attendee'
-            : 'Linked to CRM client'
-        }
-      >
-        {label} →
-      </Link>
+      <span className="inline-flex items-center gap-1">
+        <Link
+          href={`/admin/clients/${data.client_id}`}
+          className={`rounded-full px-2 py-0.5 hover:underline ${statusCls}`}
+          title={
+            data.created
+              ? 'New CRM client auto-created from this calendar attendee'
+              : 'Linked to CRM client'
+          }
+        >
+          {label} →
+        </Link>
+        {latestGreminders && (
+          <GremindersChip
+            changeType={latestGreminders.change_type}
+            at={latestGreminders.at}
+          />
+        )}
+      </span>
     );
   }
   return (
@@ -538,6 +565,71 @@ function groupByDay(
   return [...map.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([dayIso, events]) => ({ dayIso, events }));
+}
+
+/**
+ * Micro-chip for the GReminders confirmation state. Only rendered
+ * when the calendar AttendeeChip has a linked client AND the
+ * /admin/clients/:id/greminders-activity endpoint returned at least
+ * one entry — so an unreminded client's chip is unchanged.
+ *
+ * We map the change_type to three visual buckets + one neutral
+ * fallback. Exact `change_type` strings aren't fully pinned in
+ * GReminders' public docs so we match on substrings and degrade
+ * gracefully for anything unrecognized.
+ */
+function GremindersChip({
+  changeType,
+  at,
+}: {
+  changeType: string;
+  at: string;
+}) {
+  const ct = (changeType ?? '').toLowerCase();
+  let cls = 'bg-ink-100 text-ink-700';
+  let glyph = '•';
+  let label = 'Reminded';
+  if (ct.includes('confirm')) {
+    cls = 'bg-green-100 text-green-700';
+    glyph = '✓';
+    label = 'Confirmed';
+  } else if (ct.includes('decline')) {
+    cls = 'bg-red-100 text-red-700';
+    glyph = '✗';
+    label = 'Declined';
+  } else if (ct.includes('cancel')) {
+    cls = 'bg-red-100 text-red-700';
+    glyph = '✗';
+    label = 'Canceled';
+  } else if (ct.includes('update') || ct.includes('reschedul')) {
+    cls = 'bg-amber-100 text-amber-700';
+    glyph = '↻';
+    label = 'Rescheduled';
+  } else if (ct.includes('create') || ct.includes('book')) {
+    cls = 'bg-ink-100 text-ink-700';
+    glyph = '•';
+    label = 'Booked';
+  }
+  const when = (() => {
+    try {
+      return new Date(at).toLocaleString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      });
+    } catch {
+      return '';
+    }
+  })();
+  return (
+    <span
+      className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${cls}`}
+      title={`GReminders — ${label}${when ? ` at ${when}` : ''}`}
+    >
+      {glyph} {label}
+    </span>
+  );
 }
 
 function fmtTime(d: Date): string {

@@ -500,6 +500,56 @@ export class ClientsService {
     return { temp_password: temp };
   }
 
+  /**
+   * Latest GReminders events linked to this client via the webhook
+   * ingest path (integrations/greminders-webhook.controller). Each row
+   * is one audit_logs entry with action like `greminders_booking.*`
+   * (created / updated / canceled / confirmed / declined — whatever
+   * change_type GReminders emits). Metadata JSON carries the event id,
+   * service name, and start/end times for display.
+   *
+   * Returns the entries sorted newest-first. Empty array when nothing
+   * has been recorded yet.
+   */
+  async getGremindersActivity(clientId: string, limit: number) {
+    // Validate the client exists (404 if not) — keeps error handling
+    // consistent with getTimeline().
+    await this.getById(clientId);
+
+    const rows = await this.db
+      .selectFrom('audit_logs')
+      .select([
+        'id',
+        'action',
+        'metadata',
+        sql<Date>`created_at`.as('created_at'),
+      ])
+      .where('entity_type', '=', 'client')
+      .where('entity_id', '=', clientId)
+      .where(sql<boolean>`action LIKE 'greminders_booking.%'`)
+      .orderBy('created_at', 'desc')
+      .limit(limit)
+      .execute();
+
+    return rows.map((r) => {
+      const md = (r.metadata as Record<string, unknown> | null) ?? {};
+      // `action` is 'greminders_booking.<change_type>' — strip the
+      // prefix for a concise display value.
+      const changeType = String(r.action).replace(/^greminders_booking\./, '');
+      return {
+        id: r.id,
+        change_type: changeType,
+        at: r.created_at,
+        greminders_event_id: (md.greminders_event_id as string | null) ?? null,
+        service: (md.service as string | null) ?? null,
+        start_time: (md.start_time as string | null) ?? null,
+        end_time: (md.end_time as string | null) ?? null,
+        location: (md.location as string | null) ?? null,
+        attendee_email: (md.attendee_email as string | null) ?? null,
+      };
+    });
+  }
+
   /** Read the full history timeline for the client-detail page. */
   async getTimeline(clientId: string) {
     await this.getById(clientId); // 404 if missing

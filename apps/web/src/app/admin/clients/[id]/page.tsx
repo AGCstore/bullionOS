@@ -45,6 +45,24 @@ interface AppointmentBooking {
   source: string;
 }
 
+/**
+ * One audit_logs row written by the GReminders webhook receiver.
+ * `change_type` is the bit after the `greminders_booking.` prefix on
+ * the action name — typically `created`, `updated`, `canceled`,
+ * `confirmed`, or `declined` (whatever GReminders emits).
+ */
+interface GremindersEntry {
+  id: string;
+  change_type: string;
+  at: string;
+  greminders_event_id: string | null;
+  service: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  location: string | null;
+  attendee_email: string | null;
+}
+
 interface Timeline {
   invoices: Array<{
     id: string;
@@ -106,6 +124,14 @@ export default function ClientDetailPage({
     queryKey: ['admin', 'client', id, 'appointments'],
     queryFn: () =>
       apiFetch<AppointmentBooking[]>(`/admin/clients/${id}/appointments`),
+  });
+  // GReminders activity — audit_logs entries for reminder / confirmation
+  // SMSes that GReminders fired for this client. Populated by the public
+  // webhook receiver (apps/api/src/integrations/greminders-webhook...).
+  const { data: greminders } = useQuery({
+    queryKey: ['admin', 'client', id, 'greminders'],
+    queryFn: () =>
+      apiFetch<GremindersEntry[]>(`/admin/clients/${id}/greminders-activity`),
   });
 
   const [portalResult, setPortalResult] = useState<string | null>(null);
@@ -442,6 +468,38 @@ export default function ClientDetailPage({
             </div>
           ))}
         </TimelineBlock>
+
+        {/* Reminder / confirmation activity from GReminders. One row per
+            webhook event — most useful for answering "did they confirm?"
+            right before an appointment without opening the GReminders
+            dashboard. Hidden entirely when there's no activity yet so
+            the timeline doesn't show an empty card for clients who
+            predate the integration. */}
+        {(greminders?.length ?? 0) > 0 && (
+          <TimelineBlock
+            title="Reminders &amp; confirmations"
+            empty="No GReminders activity"
+            count={greminders?.length}
+          >
+            {(greminders ?? []).map((g) => (
+              <div key={g.id} className="py-2 text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium">
+                    {g.service ?? 'Appointment'}
+                  </span>
+                  <GremindersStatusChip changeType={g.change_type} />
+                </div>
+                <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-ink-500">
+                  {g.start_time && (
+                    <span>{formatLocalDateTime(g.start_time)}</span>
+                  )}
+                  <span className="text-ink-400">·</span>
+                  <span>Logged {formatLocalDateTime(g.at)}</span>
+                </div>
+              </div>
+            ))}
+          </TimelineBlock>
+        )}
       </section>
 
       {/* Attachments — driver's license, passport, other ID/KYC docs.
@@ -956,6 +1014,48 @@ function ApplyFromIdPanel({
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * Small colored pill summarizing a single GReminders webhook event.
+ * Maps the `change_type` to one of four visual buckets:
+ *   confirmed    → green  (client replied YES to the reminder SMS)
+ *   declined     → red    (client replied NO — consider rescheduling)
+ *   canceled     → red    (booking nuked on GReminders' side)
+ *   updated      → amber  (rescheduled / rescoped — operator should look)
+ *   created / other → ink (neutral "booking landed" marker)
+ * The GReminders API doesn't fix the exact change_type names in its
+ * public docs, so this is deliberately a switch with a fallback —
+ * any unexpected value renders in the neutral style without breaking.
+ */
+function GremindersStatusChip({ changeType }: { changeType: string }) {
+  const ct = (changeType ?? '').toLowerCase();
+  let cls = 'bg-ink-100 text-ink-700';
+  let label = ct || 'updated';
+  if (ct.includes('confirm')) {
+    cls = 'bg-green-100 text-green-700';
+    label = 'Confirmed';
+  } else if (ct.includes('decline')) {
+    cls = 'bg-red-100 text-red-700';
+    label = 'Declined';
+  } else if (ct.includes('cancel')) {
+    cls = 'bg-red-100 text-red-700';
+    label = 'Canceled';
+  } else if (ct.includes('update') || ct.includes('reschedul')) {
+    cls = 'bg-amber-100 text-amber-700';
+    label = 'Rescheduled';
+  } else if (ct.includes('create') || ct.includes('book')) {
+    cls = 'bg-ink-100 text-ink-700';
+    label = 'Booked';
+  }
+  return (
+    <span
+      className={`rounded-full px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide ${cls}`}
+      title={`GReminders · ${ct}`}
+    >
+      {label}
+    </span>
   );
 }
 
