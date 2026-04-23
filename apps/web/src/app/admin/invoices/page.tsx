@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, ApiError } from '@/lib/api-client';
@@ -103,24 +103,104 @@ export default function InvoicesPage() {
   // enough (<= 500 rows) that filtering client-side is fine.
   const displayRows = tab === 'recent' ? filtered.slice(0, 15) : filtered;
 
+  // Top-of-page metric strip — quick scan of "what's in this view" so
+  // operators don't have to count rows or eyeball the table. Computed
+  // against `data` (the full payload for the current tab) rather than
+  // `filtered` so the draft / canceled tabs still show meaningful
+  // counts of their own rows.
+  const metrics = useMemo(() => {
+    const rows = data ?? [];
+    const totalSum = rows
+      .filter((r) => r.status !== 'draft' && r.status !== 'canceled')
+      .reduce((s, r) => s + Number(r.total || 0), 0);
+    const drafts = rows.filter((r) => r.status === 'draft').length;
+    const unpaid = rows.filter(
+      (r) =>
+        (r.status === 'finalized' || r.status === 'shipped') &&
+        r.payment_status !== 'paid',
+    ).length;
+    const canceled = rows.filter((r) => r.status === 'canceled').length;
+    return {
+      totalSum,
+      count: rows.filter((r) => r.status !== 'draft' && r.status !== 'canceled')
+        .length,
+      drafts,
+      unpaid,
+      canceled,
+    };
+  }, [data]);
+
   return (
     <div className="mx-auto max-w-6xl">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Invoices</h1>
-        <Link
-          href="/admin/invoices/new"
-          className="rounded-md bg-ink-900 px-4 py-2 text-sm font-medium text-white hover:bg-ink-800"
-        >
-          New invoice
-        </Link>
-      </div>
+      {/* Hero card — invoice surface summary. Same visual language as
+          the invoice-detail page (rounded-xl + shadow-sm card, small
+          uppercase-kerned metric labels). Provides a "what's here?"
+          one-glance read so operators don't have to scroll the table
+          to learn the shape of the current view. */}
+      <section className="relative overflow-hidden rounded-xl border border-ink-200 bg-white shadow-sm">
+        <div
+          aria-hidden
+          className="absolute inset-y-0 left-0 w-1 bg-ink-900"
+        />
+        <header className="flex flex-col gap-4 p-5 md:flex-row md:items-start md:justify-between md:p-6">
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-400">
+              Invoices
+            </div>
+            <h1 className="mt-0.5 text-2xl font-semibold tracking-tight text-ink-900">
+              {filtered.length}
+              <span className="ml-1 text-base font-normal text-ink-500">
+                row{filtered.length === 1 ? '' : 's'} in {TABS.find((t) => t.id === tab)?.label.toLowerCase()}
+              </span>
+            </h1>
+          </div>
+          <Link
+            href="/admin/invoices/new"
+            className="inline-flex items-center justify-center rounded-md bg-ink-900 px-5 py-2 text-sm font-semibold text-white shadow-sm hover:bg-ink-800"
+          >
+            New invoice
+          </Link>
+        </header>
 
-      <nav className="mt-5 flex gap-1 border-b border-ink-200 text-sm">
+        <div className="grid grid-cols-2 gap-x-3 gap-y-2 border-t border-ink-100 px-5 py-4 md:grid-cols-4 md:px-6">
+          <InvoiceMetric
+            label="Committed total"
+            value={`$${metrics.totalSum.toLocaleString(undefined, {
+              minimumFractionDigits: 0,
+              maximumFractionDigits: 0,
+            })}`}
+            mono
+            prominent
+            hint={`${metrics.count} non-draft non-canceled`}
+          />
+          <InvoiceMetric
+            label="Unpaid"
+            value={String(metrics.unpaid)}
+            mono
+            tone={metrics.unpaid > 0 ? 'warn' : 'neutral'}
+            hint={metrics.unpaid ? 'finalized + shipped' : 'all caught up'}
+          />
+          <InvoiceMetric
+            label="Drafts"
+            value={String(metrics.drafts)}
+            mono
+            tone={metrics.drafts > 0 ? 'info' : 'neutral'}
+          />
+          <InvoiceMetric
+            label="Canceled"
+            value={String(metrics.canceled)}
+            mono
+            tone="muted"
+          />
+        </div>
+      </section>
+
+      <nav className="mt-5 flex gap-1 overflow-x-auto border-b border-ink-200 text-sm">
         {TABS.map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
-            className={`-mb-px border-b-2 px-3 py-2 transition ${
+            className={`-mb-px whitespace-nowrap border-b-2 px-3 py-2 transition ${
               tab === t.id
                 ? 'border-ink-900 font-medium text-ink-900'
                 : 'border-transparent text-ink-600 hover:text-ink-900'
@@ -131,10 +211,13 @@ export default function InvoicesPage() {
         ))}
       </nav>
 
-      {/* MOB-002: horizontal scroll on narrow viewports instead of clipping. */}
-      <div className="mt-4 overflow-x-auto rounded-xl border border-ink-200 bg-white">
+      {/* MOB-002: horizontal scroll on narrow viewports instead of clipping.
+          Apr 2026 polish: card matches the hero (rounded-xl + shadow-sm),
+          zebra striping on even rows, colored type badges, tabular-nums
+          on money columns. */}
+      <div className="mt-4 overflow-x-auto rounded-xl border border-ink-200 bg-white shadow-sm">
         <table className="w-full min-w-[780px] text-sm">
-          <thead className="bg-ink-50 text-left text-xs uppercase tracking-wide text-ink-400">
+          <thead className="bg-ink-50 text-left text-[11px] font-semibold uppercase tracking-wider text-ink-500">
             <tr>
               <th className="px-4 py-3">Invoice</th>
               <th className="px-4 py-3">Client</th>
@@ -143,15 +226,17 @@ export default function InvoicesPage() {
               <th className="px-4 py-3">Payment</th>
               <th className="px-4 py-3 text-right">Total</th>
               <th className="px-4 py-3 text-right">Created</th>
-              {/* Admin-only column: delete canceled invoices. Width
-                  kept narrow so it doesn't steal focus from the main
-                  data columns. */}
               {isAdmin && tab === 'canceled' && <th className="px-4 py-3"></th>}
             </tr>
           </thead>
           <tbody>
-            {displayRows.map((inv) => (
-              <tr key={inv.id} className="border-t border-ink-200 hover:bg-ink-50/50">
+            {displayRows.map((inv, idx) => (
+              <tr
+                key={inv.id}
+                className={`border-t border-ink-100 transition hover:bg-ink-50 ${
+                  idx % 2 === 1 ? 'bg-ink-50/40' : ''
+                }`}
+              >
                 <td className="px-4 py-3 font-mono">
                   {/* Drafts deep-link straight into the wizard so operators
                       can keep adding line items without detouring through
@@ -163,7 +248,7 @@ export default function InvoicesPage() {
                         ? `/admin/invoices/new?draftId=${inv.id}`
                         : `/admin/invoices/${inv.id}`
                     }
-                    className="hover:underline"
+                    className="font-semibold text-ink-900 hover:underline"
                     title={
                       inv.status === 'draft'
                         ? 'Resume editing this draft'
@@ -174,23 +259,44 @@ export default function InvoicesPage() {
                   </Link>
                 </td>
                 <td className="px-4 py-3">
-                  <div className="font-medium">{inv.client_name}</div>
+                  <div className="font-medium text-ink-900">{inv.client_name}</div>
                   {inv.client_type === 'wholesaler' && (
-                    <span className="text-[10px] font-medium uppercase tracking-wide text-gold-600">
+                    <span className="mt-0.5 inline-block rounded-full bg-gold-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-gold-600">
                       Wholesale
                     </span>
                   )}
                 </td>
-                <td className="px-4 py-3">{inv.type.toUpperCase()}</td>
+                <td className="px-4 py-3">
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${
+                      inv.type === 'buy'
+                        ? 'bg-buy-600/10 text-buy-700'
+                        : 'bg-sell-600/10 text-sell-700'
+                    }`}
+                  >
+                    {inv.type === 'buy' ? 'Buy' : 'Sell'}
+                  </span>
+                </td>
                 <td className="px-4 py-3">
                   <StatusPill status={inv.status} />
                 </td>
-                <td className="px-4 py-3 text-ink-600">{inv.payment_status}</td>
-                <td className="px-4 py-3 text-right font-mono">
-                  ${Number(inv.total).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                <td className="px-4 py-3 text-xs capitalize text-ink-600">
+                  {inv.payment_status.replace('_', ' ')}
                 </td>
-                <td className="px-4 py-3 text-right text-ink-400">
-                  {new Date(inv.created_at).toLocaleString()}
+                <td className="px-4 py-3 text-right font-mono tabular-nums font-semibold text-ink-900">
+                  ${Number(inv.total).toLocaleString(undefined, {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
+                </td>
+                <td className="px-4 py-3 text-right text-xs text-ink-500">
+                  {new Date(inv.created_at).toLocaleString(undefined, {
+                    month: 'short',
+                    day: 'numeric',
+                    year: 'numeric',
+                    hour: 'numeric',
+                    minute: '2-digit',
+                  })}
                 </td>
                 {isAdmin && tab === 'canceled' && (
                   <td className="px-4 py-3 text-right">
@@ -199,7 +305,7 @@ export default function InvoicesPage() {
                         e.stopPropagation();
                         deleteRow(inv.id, inv.invoice_number);
                       }}
-                      className="rounded-md border border-red-200 px-2 py-0.5 text-xs text-red-700 hover:bg-red-50"
+                      className="rounded-md px-2 py-0.5 text-xs text-red-700 hover:bg-red-50"
                       title="Permanently delete this canceled invoice"
                     >
                       Delete
@@ -210,7 +316,7 @@ export default function InvoicesPage() {
             ))}
             {displayRows.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-12 text-center text-ink-400">
+                <td colSpan={7} className="px-4 py-12 text-center text-sm text-ink-400">
                   No invoices in this view.
                 </td>
               </tr>
@@ -218,6 +324,54 @@ export default function InvoicesPage() {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Metric cell used in the hero card. `tone` lets the numeric color
+ * match the semantic meaning: unpaid=amber, drafts=blue, canceled=
+ * muted grey, anything else neutral ink-900. `prominent` bumps to
+ * 2xl — reserved for the top-line committed total.
+ */
+function InvoiceMetric({
+  label,
+  value,
+  hint,
+  mono = false,
+  prominent = false,
+  tone = 'neutral',
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  mono?: boolean;
+  prominent?: boolean;
+  tone?: 'neutral' | 'warn' | 'info' | 'muted';
+}) {
+  const toneCls =
+    tone === 'warn'
+      ? 'text-amber-700'
+      : tone === 'info'
+        ? 'text-buy-700'
+        : tone === 'muted'
+          ? 'text-ink-400'
+          : 'text-ink-900';
+  return (
+    <div>
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-400">
+        {label}
+      </div>
+      <div
+        className={`mt-0.5 ${mono ? 'font-mono tabular-nums' : ''} ${
+          prominent ? 'text-2xl font-semibold' : 'text-base font-medium'
+        } ${toneCls}`}
+      >
+        {value}
+      </div>
+      {hint && (
+        <div className="mt-0.5 text-[10px] text-ink-400">{hint}</div>
+      )}
     </div>
   );
 }

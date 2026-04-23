@@ -586,16 +586,34 @@ export default function NewInvoicePage() {
   return (
     <PageTint side={type === 'buy' ? 'buy' : 'sell'}>
       <div className="mx-auto max-w-4xl pb-32">
-        <h1 className="text-2xl font-semibold">
-          {fromId ? 'Recreate invoice' : draftId ? 'Edit draft' : 'New invoice'}
-        </h1>
-        <p className="mt-1 text-sm text-ink-400">
-          {fromId
-            ? `Fields pre-filled from ${source?.invoice_number ?? 'a prior invoice'} (now canceled). Make your edits, then submit to create a new ticket. The old invoice stays in history as CANCELED.`
-            : draftId
-              ? `Editing an existing draft. Save updates it; Create finalizes; Delete removes it.`
-              : 'Prices computed against live spot at submission time. Override any unit price inline if needed.'}
-        </p>
+        {/* Hero card — same visual language as /admin/invoices and
+            /admin/invoices/[id]. Side-colored accent rail (buy/sell),
+            big mode label ("New invoice" / "Edit draft" / "Recreate
+            invoice"), subtitle explains what clicking Create will do. */}
+        <section className="relative overflow-hidden rounded-xl border border-ink-200 bg-white shadow-sm">
+          <div
+            aria-hidden
+            className={`absolute inset-y-0 left-0 w-1 ${
+              type === 'buy' ? 'bg-buy-600' : 'bg-sell-600'
+            }`}
+          />
+          <div className="p-5 md:p-6">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-400">
+              {fromId ? 'Recreate invoice' : draftId ? 'Edit draft' : 'Create invoice'}
+            </div>
+            <h1 className="mt-0.5 text-2xl font-semibold tracking-tight text-ink-900">
+              {fromId ? 'Recreate invoice' : draftId ? 'Edit draft' : 'New invoice'}
+            </h1>
+            <p className="mt-2 max-w-2xl text-sm text-ink-500">
+              {fromId
+                ? `Fields pre-filled from ${source?.invoice_number ?? 'a prior invoice'} (now canceled). Make your edits, then submit to create a new ticket. The old invoice stays in history as CANCELED.`
+                : draftId
+                  ? 'Editing an existing draft. Save updates it; Create finalizes; Delete removes it.'
+                  : 'Prices computed against live spot at submission time. Override any unit price inline if needed.'}
+            </p>
+          </div>
+        </section>
+
         {fromId && source && source.status !== 'canceled' && (
           <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
             The source invoice isn&rsquo;t canceled yet — submitting will leave two open
@@ -604,10 +622,9 @@ export default function NewInvoicePage() {
         )}
 
         {/* 1 · Client (INV-004 unified combobox) */}
-        <section className="mt-6 rounded-xl border border-ink-200 bg-white p-5">
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-ink-400">
-            1 · Client
-          </h2>
+        <section className="mt-6 rounded-xl border border-ink-200 bg-white p-5 shadow-sm">
+          <SectionHeader step={1} title="Client" />
+
           <div className="mt-3">
             <ClientCombobox
               clients={clients ?? []}
@@ -636,10 +653,9 @@ export default function NewInvoicePage() {
         </section>
 
         {/* 2 · Direction */}
-        <section className="mt-4 rounded-xl border border-ink-200 bg-white p-5">
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-ink-400">
-            2 · Direction
-          </h2>
+        <section className="mt-4 rounded-xl border border-ink-200 bg-white p-5 shadow-sm">
+          <SectionHeader step={2} title="Direction" />
+
           <div className="mt-3 inline-flex rounded-md border border-ink-200 bg-ink-50 p-1">
             <TypeToggle active={type === 'sell'} onClick={() => setType('sell')}>
               Sell (we sell to client)
@@ -651,11 +667,9 @@ export default function NewInvoicePage() {
         </section>
 
         {/* 3 · Line items */}
-        <section className="mt-4 rounded-xl border border-ink-200 bg-white p-5">
+        <section className="mt-4 rounded-xl border border-ink-200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-ink-400">
-              3 · Line items
-            </h2>
+            <SectionHeader step={3} title="Line items" />
             <span className="hidden text-xs text-ink-400 md:inline">
               New line auto-adds once the previous one is filled.
             </span>
@@ -689,11 +703,10 @@ export default function NewInvoicePage() {
         </section>
 
         {/* 4 · Payment */}
-        <section className="mt-4 rounded-xl border border-ink-200 bg-white p-5">
+        <section className="mt-4 rounded-xl border border-ink-200 bg-white p-5 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-ink-400">
-              4 · Payment <span className="text-red-600">*</span>
-            </h2>
+            <SectionHeader step={4} title="Payment" required />
+
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -732,10 +745,9 @@ export default function NewInvoicePage() {
         </section>
 
         {/* Tx date/time */}
-        <section className="mt-4 rounded-xl border border-ink-200 bg-white p-5">
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-ink-400">
-            Transaction date &amp; time
-          </h2>
+        <section className="mt-4 rounded-xl border border-ink-200 bg-white p-5 shadow-sm">
+          <SectionHeader title="Transaction date & time" />
+
           <p className="mt-1 text-xs text-ink-400">
             Leave blank to use &ldquo;now&rdquo; when you click Create. Backdate for
             walk-ins being written up later.
@@ -791,10 +803,9 @@ export default function NewInvoicePage() {
         {/* Notes — whitespace-pre-wrap preserves line breaks the operator
             types (INV-009). The textarea itself already wraps; the
             surrounding container now won't clip when notes go long. */}
-        <section className="mt-4 rounded-xl border border-ink-200 bg-white p-5">
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-ink-400">
-            Notes
-          </h2>
+        <section className="mt-4 rounded-xl border border-ink-200 bg-white p-5 shadow-sm">
+          <SectionHeader title="Notes" />
+
           <textarea
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
@@ -960,6 +971,34 @@ export default function NewInvoicePage() {
 }
 
 // ---------- subcomponents ----------
+
+/**
+ * Numbered / plain section header for the wizard cards. A small dark
+ * circular chip holds the step number; the label sits next to it.
+ * `required` adds a subtle red asterisk. Used across every card on
+ * this page for consistent visual rhythm.
+ */
+function SectionHeader({
+  step,
+  title,
+  required,
+}: {
+  step?: number;
+  title: string;
+  required?: boolean;
+}) {
+  return (
+    <h2 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-ink-600">
+      {step !== undefined && (
+        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-ink-900 text-[10px] font-bold text-white">
+          {step}
+        </span>
+      )}
+      <span>{title}</span>
+      {required && <span className="text-red-600">*</span>}
+    </h2>
+  );
+}
 
 function TypeToggle({
   active,
