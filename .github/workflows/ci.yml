@@ -52,6 +52,11 @@ jobs:
       JWT_REFRESH_SECRET: ci-dummy-refresh-secret-must-be-at-least-32-chars
       METALS_API_KEY: ci-dummy
       METALS_API_URL: https://api.metals.dev/v1/latest
+      # nest build (webpack under the hood) + Next's production build
+      # both hit the default 2 GB Node heap on ubuntu-latest as the
+      # repo has grown. Runners have 7 GB RAM; 4 GB heap is plenty
+      # and keeps us clear of OOM-kills. Revisit if it creeps higher.
+      NODE_OPTIONS: --max-old-space-size=4096
 
     steps:
       - uses: actions/checkout@v4
