@@ -55,14 +55,12 @@ export class ShipmentsService {
       throw new BadRequestException('Cannot create shipment for a canceled invoice');
     }
 
-    const existing = await this.db
-      .selectFrom('shipments')
-      .select('id')
-      .where('invoice_id', '=', dto.invoice_id)
-      .executeTakeFirst();
-    if (existing) {
-      throw new BadRequestException('Shipment already exists for this invoice');
-    }
+    // Multi-shipment support (migration 034): large orders frequently
+    // split across multiple packages with separate tracking numbers.
+    // We no longer enforce one-shipment-per-invoice either at the DB
+    // layer (unique constraint dropped) or here in the service. The
+    // invoice-detail UI lists every shipment tied to the invoice and
+    // always lets the operator add another.
 
     // Validate delivery_speed against the carrier whitelist (SHIP-001).
     // The helper throws a plain Error with a message listing the valid

@@ -629,6 +629,17 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
   );
 }
 
+interface ShipmentRow {
+  id: string;
+  invoice_id: string;
+  carrier: string;
+  tracking_number: string | null;
+  delivery_speed: string | null;
+  status: string;
+  tracking_url: string | null;
+  created_at: string;
+}
+
 function ShipmentSection({
   invoiceId,
   invoiceStatus,
@@ -637,21 +648,18 @@ function ShipmentSection({
   invoiceStatus: string;
 }) {
   const qc = useQueryClient();
-  const { data: existing } = useQuery({
+  // Multiple shipments per invoice (migration 034): a large wholesale
+  // order or a split retail send often goes out in two or three
+  // packages. Pull everything for this invoice, render each with its
+  // own carrier / tracking / status, and keep the add-new form below
+  // so operators can drop in another package anytime.
+  const { data: existing } = useQuery<ShipmentRow[]>({
     queryKey: ['admin', 'shipments', 'for', invoiceId],
     queryFn: async () => {
-      const all = await apiFetch<
-        Array<{
-          id: string;
-          invoice_id: string;
-          carrier: string;
-          tracking_number: string | null;
-          delivery_speed: string | null;
-          status: string;
-          tracking_url: string | null;
-        }>
-      >('/admin/shipments');
-      return all.find((s) => s.invoice_id === invoiceId) ?? null;
+      const all = await apiFetch<ShipmentRow[]>('/admin/shipments');
+      return all
+        .filter((s) => s.invoice_id === invoiceId)
+        .sort((a, b) => a.created_at.localeCompare(b.created_at));
     },
   });
 
@@ -694,6 +702,10 @@ function ShipmentSection({
           delivery_speed: deliverySpeed || undefined,
         }),
       });
+      // Reset the form so the operator can queue another without
+      // re-clearing fields — common case is 2-3 packages in a row.
+      setTracking('');
+      setDeliverySpeed('');
       await qc.invalidateQueries({ queryKey: ['admin', 'shipments'] });
       await qc.invalidateQueries({ queryKey: ['admin', 'shipments', 'for', invoiceId] });
     } catch (err) {
@@ -703,92 +715,123 @@ function ShipmentSection({
     }
   }
 
+  const shipments = existing ?? [];
+  const hasAny = shipments.length > 0;
+  const addFormDisabled = invoiceStatus === 'canceled';
+
   return (
     <section className="mt-8 rounded-xl border border-ink-200 bg-white p-5">
-      <h2 className="text-xs font-semibold uppercase tracking-wide text-ink-400">Shipment</h2>
-      {existing ? (
-        <div className="mt-3 text-sm">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="uppercase font-medium">{existing.carrier}</span>
-            {existing.delivery_speed && (
-              <span className="rounded-full bg-ink-100 px-2 py-0.5 text-[11px] font-medium text-ink-700">
-                {existing.delivery_speed}
-              </span>
-            )}
-            {existing.tracking_number ? (
-              existing.tracking_url ? (
-                <a
-                  href={existing.tracking_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="font-mono text-xs underline-offset-2 hover:underline"
-                >
-                  {existing.tracking_number}
-                </a>
-              ) : (
-                <span className="font-mono text-xs">{existing.tracking_number}</span>
-              )
-            ) : (
-              <span className="text-xs text-ink-400">no tracking yet</span>
-            )}
-            <span className="ml-auto rounded-full bg-ink-100 px-2 py-0.5 text-[11px] font-medium text-ink-600">
-              {existing.status.replace(/_/g, ' ')}
-            </span>
-          </div>
-          <p className="mt-3 text-xs text-ink-400">
-            Edit tracking, speed + status on the{' '}
-            <Link href="/admin/shipments" className="underline">
-              shipments page
-            </Link>
-            .
-          </p>
-        </div>
-      ) : invoiceStatus === 'canceled' ? (
-        <p className="mt-3 text-sm text-ink-400">Cannot ship a canceled invoice.</p>
+      <div className="flex items-baseline justify-between gap-3">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-ink-400">
+          {hasAny
+            ? `Shipments · ${shipments.length}`
+            : 'Shipments'}
+        </h2>
+        {hasAny && (
+          <Link
+            href="/admin/shipments"
+            className="text-[11px] text-ink-500 underline-offset-2 hover:underline"
+          >
+            manage all →
+          </Link>
+        )}
+      </div>
+
+      {hasAny && (
+        <ul className="mt-3 space-y-2">
+          {shipments.map((s, i) => (
+            <li
+              key={s.id}
+              className="rounded-md border border-ink-100 bg-ink-50/40 px-3 py-2 text-sm"
+            >
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-ink-900 text-[10px] font-semibold text-white">
+                  {i + 1}
+                </span>
+                <span className="font-medium uppercase">{s.carrier}</span>
+                {s.delivery_speed && (
+                  <span className="rounded-full bg-ink-100 px-2 py-0.5 text-[11px] font-medium text-ink-700">
+                    {s.delivery_speed}
+                  </span>
+                )}
+                {s.tracking_number ? (
+                  s.tracking_url ? (
+                    <a
+                      href={s.tracking_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-mono text-xs underline-offset-2 hover:underline"
+                    >
+                      {s.tracking_number}
+                    </a>
+                  ) : (
+                    <span className="font-mono text-xs">{s.tracking_number}</span>
+                  )
+                ) : (
+                  <span className="text-xs text-ink-400">no tracking yet</span>
+                )}
+                <span className="ml-auto rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-ink-600 ring-1 ring-ink-200">
+                  {s.status.replace(/_/g, ' ')}
+                </span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {addFormDisabled ? (
+        !hasAny && (
+          <p className="mt-3 text-sm text-ink-400">Cannot ship a canceled invoice.</p>
+        )
       ) : (
-        <div className="mt-3 flex flex-col gap-2 md:flex-row md:flex-wrap">
-          <select
-            value={carrier}
-            onChange={(e) =>
-              setCarrier(e.target.value as 'ups' | 'fedex' | 'usps' | 'other')
-            }
-            className="input md:w-28"
-          >
-            <option value="ups">UPS</option>
-            <option value="fedex">FedEx</option>
-            <option value="usps">USPS</option>
-            <option value="other">Other</option>
-          </select>
-          <select
-            value={deliverySpeed}
-            onChange={(e) => setDeliverySpeed(e.target.value)}
-            disabled={carrierSpeeds.length === 0}
-            className="input md:w-56"
-          >
-            <option value="">
-              {carrierSpeeds.length === 0
-                ? '— no service levels —'
-                : '— service level —'}
-            </option>
-            {carrierSpeeds.map((s) => (
-              <option key={s} value={s}>
-                {s}
+        <div className="mt-4 border-t border-ink-100 pt-4">
+          <div className="mb-2 text-[11px] font-medium text-ink-500">
+            {hasAny ? 'Add another shipment' : 'Create shipment'}
+          </div>
+          <div className="flex flex-col gap-2 md:flex-row md:flex-wrap">
+            <select
+              value={carrier}
+              onChange={(e) =>
+                setCarrier(e.target.value as 'ups' | 'fedex' | 'usps' | 'other')
+              }
+              className="input md:w-28"
+            >
+              <option value="ups">UPS</option>
+              <option value="fedex">FedEx</option>
+              <option value="usps">USPS</option>
+              <option value="other">Other</option>
+            </select>
+            <select
+              value={deliverySpeed}
+              onChange={(e) => setDeliverySpeed(e.target.value)}
+              disabled={carrierSpeeds.length === 0}
+              className="input md:w-56"
+            >
+              <option value="">
+                {carrierSpeeds.length === 0
+                  ? '— no service levels —'
+                  : '— service level —'}
               </option>
-            ))}
-          </select>
-          <input
-            value={tracking}
-            onChange={(e) => setTracking(e.target.value)}
-            placeholder="Tracking # (optional)"
-            className="input flex-1 md:min-w-[200px]"
-          />
-          <button
-            onClick={create}
-            disabled={busy}
-            className="rounded-md bg-ink-900 px-4 py-1.5 text-sm font-medium text-white hover:bg-ink-800 disabled:opacity-60"
-          >
-            {busy ? 'Creating…' : 'Create shipment'}
-          </button>
+              {carrierSpeeds.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+            <input
+              value={tracking}
+              onChange={(e) => setTracking(e.target.value)}
+              placeholder="Tracking # (optional)"
+              className="input flex-1 md:min-w-[200px]"
+            />
+            <button
+              onClick={create}
+              disabled={busy}
+              className="rounded-md bg-ink-900 px-4 py-1.5 text-sm font-medium text-white hover:bg-ink-800 disabled:opacity-60"
+            >
+              {busy ? 'Creating…' : hasAny ? 'Add shipment' : 'Create shipment'}
+            </button>
+          </div>
         </div>
       )}
       {error && (
