@@ -70,6 +70,17 @@ export class EmailService implements OnModuleInit {
   }
 
   async send(input: SendMailInput): Promise<void> {
+    // RFC 2606 reserves these TLDs explicitly so they never leak to real
+    // DNS. Seed users (admin@agc.local) + any other placeholder accounts
+    // that survive a migration end up triggering bounces to
+    // sales@atlantagoldandcoin.com every time a notification fans out.
+    // Short-circuit here so the bounce loop is impossible at the source.
+    if (isUnroutableAddress(input.to)) {
+      this.logger.warn(
+        `skipped email to unroutable address ${input.to} (reserved TLD per RFC 2606)`,
+      );
+      return;
+    }
     try {
       const info = await this.transporter.sendMail({
         from: this.from,
@@ -98,4 +109,37 @@ export class EmailService implements OnModuleInit {
       this.logger.error(`mail send failed to ${input.to}: ${(err as Error).message}`);
     }
   }
+}
+
+/**
+ * RFC 2606 reserved TLDs + common placeholder domains. Returns true when
+ * we can be confident the address will either not resolve in DNS or is
+ * intentionally non-deliverable. Matches the literal suffixes only, to
+ * avoid false positives on real domains like `.localhost.com`.
+ */
+function isUnroutableAddress(to: string | undefined | null): boolean {
+  if (!to) return true;
+  const lower = to.trim().toLowerCase();
+  // Accept comma-separated lists (nodemailer allows them) — block if ANY
+  // recipient is unroutable, since nodemailer fails the whole batch.
+  const addrs = lower
+    .split(/[,;]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return addrs.some((a) => {
+    const at = a.lastIndexOf('@');
+    if (at < 0) return true; // not even a valid shape — drop
+    const domain = a.slice(at + 1);
+    return (
+      domain === 'localhost' ||
+      domain.endsWith('.local') ||
+      domain.endsWith('.localhost') ||
+      domain.endsWith('.test') ||
+      domain.endsWith('.example') ||
+      domain.endsWith('.invalid') ||
+      domain === 'example.com' ||
+      domain === 'example.org' ||
+      domain === 'example.net'
+    );
+  });
 }

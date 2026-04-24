@@ -314,14 +314,32 @@ export default function NewInvoicePage() {
 
   // ---------- line/payment mutation helpers ----------
 
+  // Auto-append a blank row once the last line is "done". Two paths:
+  //   - Catalog product: product_id selected AND qty > 0
+  //   - One-off (ad-hoc) item: custom_name AND override_unit_price
+  //     filled AND qty > 0
+  // The old condition only covered the catalog path, so adding a
+  // one-off scrap line left the wizard stuck on a single row — operator
+  // had to click somewhere else to force another. Now handled.
   useEffect(() => {
     if (lines.length === 0) return;
     const last = lines[lines.length - 1];
-    if (last.product_id && last.quantity > 0) {
+    if (last.quantity <= 0) return;
+    const isCompleteProduct = Boolean(last.product_id);
+    const isCompleteAdHoc =
+      !last.product_id &&
+      last.custom_name.trim().length > 0 &&
+      last.override_unit_price.trim().length > 0;
+    if (isCompleteProduct || isCompleteAdHoc) {
       setLines((ls) => [...ls, blankLine()]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lines[lines.length - 1]?.product_id, lines[lines.length - 1]?.quantity]);
+  }, [
+    lines[lines.length - 1]?.product_id,
+    lines[lines.length - 1]?.quantity,
+    lines[lines.length - 1]?.custom_name,
+    lines[lines.length - 1]?.override_unit_price,
+  ]);
 
   function updateLine(idx: number, patch: Partial<DraftLine>) {
     setLines((l) => l.map((x, i) => (i === idx ? { ...x, ...patch } : x)));
