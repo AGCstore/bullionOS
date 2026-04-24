@@ -90,6 +90,9 @@ const NAV_ITEMS: NavEntry[] = [
     children: [
       { href: '/admin/in-stock-sheet', label: 'In Stock Sheet' },
       { href: '/admin/buy-sheet', label: 'What We Pay' },
+      // RARCOA supplier pricing — daily goldsheet ingest + AGC
+      // markdown-applied prices. Admin-only upload; staff can view.
+      { href: '/admin/rarcoa', label: 'RARCOA' },
     ],
   },
   {

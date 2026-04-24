@@ -33,6 +33,7 @@ import { BackupsModule } from './backups/backups.module';
 import { OcrModule } from './ocr/ocr.module';
 import { CalendarModule } from './calendar/calendar.module';
 import { RestockModule } from './restock/restock.module';
+import { RarcoaModule } from './rarcoa/rarcoa.module';
 import { HealthController } from './health/health.controller';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
@@ -106,6 +107,7 @@ import { AllExceptionsFilter } from './common/filters/http-exception.filter';
     OcrModule,
     CalendarModule,
     ClientPortalModule,
+    RarcoaModule,
   ],
   controllers: [HealthController],
   providers: [

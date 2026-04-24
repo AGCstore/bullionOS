@@ -446,6 +446,48 @@ export type HistoricalInvoice = Selectable<HistoricalInvoicesTable>;
 export type NewHistoricalInvoice = Insertable<HistoricalInvoicesTable>;
 export type HistoricalInvoiceUpdate = Updateable<HistoricalInvoicesTable>;
 
+// ===== Supplier prices (migration 032) — RARCOA + future vendors =====
+
+/**
+ * One ingested RARCOA (or other supplier) daily sheet. Header-level
+ * metadata: basis spot, provenance, ingester. Cascades to
+ * supplier_prices rows.
+ */
+export interface SupplierPriceSheetsTable {
+  id: Generated<string>;
+  supplier: string;
+  as_of_date: ColumnType<Date, Date | string, Date | string>;
+  as_of_time: string | null;
+  basis_gold: Numeric | null;
+  source_ref: string | null;
+  source_filename: string | null;
+  raw_text: string | null;
+  ingested_by_user_id: string | null;
+  ingested_at: Generated<Timestamp>;
+}
+export type SupplierPriceSheet = Selectable<SupplierPriceSheetsTable>;
+export type NewSupplierPriceSheet = Insertable<SupplierPriceSheetsTable>;
+
+/**
+ * Per-row price grid cell on a supplier sheet. One row per
+ * (product, grade) pair per day.
+ */
+export interface SupplierPricesTable {
+  id: Generated<string>;
+  sheet_id: string;
+  supplier: string;
+  section: string;
+  product: string;
+  grade: string;
+  raw_bid: Numeric | null;
+  raw_ask: Numeric | null;
+  ngc_only: ColumnType<boolean, boolean | undefined, boolean>;
+  as_of_date: ColumnType<Date, Date | string, Date | string>;
+  ingested_at: Generated<Timestamp>;
+}
+export type SupplierPrice = Selectable<SupplierPricesTable>;
+export type NewSupplierPrice = Insertable<SupplierPricesTable>;
+
 // ===== Database root =====
 export interface DB {
   users: UsersTable;
@@ -478,6 +520,8 @@ export interface DB {
   client_attachments: ClientAttachmentsTable;
   restock_subscriptions: RestockSubscriptionsTable;
   historical_invoices: HistoricalInvoicesTable;
+  supplier_price_sheets: SupplierPriceSheetsTable;
+  supplier_prices: SupplierPricesTable;
 }
 
 // ===== Calendar bookings (migration 023) =====
