@@ -20,7 +20,15 @@ interface InvoiceRow {
   client_type: 'retail' | 'wholesaler';
 }
 
-type Tab = 'recent' | 'drafts' | 'sales' | 'purchase' | 'wholesale' | 'canceled' | 'all';
+type Tab =
+  | 'recent'
+  | 'drafts'
+  | 'unpaid'
+  | 'sales'
+  | 'purchase'
+  | 'wholesale'
+  | 'canceled'
+  | 'all';
 
 const TABS: Array<{ id: Tab; label: string }> = [
   // 'Recent' moved from the dashboard (Apr 2026) — top-level tab so
@@ -28,6 +36,10 @@ const TABS: Array<{ id: Tab; label: string }> = [
   // this page.
   { id: 'recent', label: 'Recent' },
   { id: 'drafts', label: 'Drafts' },
+  // Cross-type AR view: finalized/shipped + payment_status!=paid.
+  // Added so the Unpaid hero metric has a direct click target; keeps
+  // "what's owed to us?" a single click away from the invoice home.
+  { id: 'unpaid', label: 'Unpaid' },
   { id: 'sales', label: 'Sales' },
   { id: 'purchase', label: 'Purchase' },
   { id: 'wholesale', label: 'Wholesale' },
@@ -55,6 +67,11 @@ function queryFor(tab: Tab): string {
       return '/admin/invoices?client_type=wholesaler';
     case 'canceled':
       return '/admin/invoices?status=canceled';
+    // Unpaid has no server-side filter (payment_status isn't a query
+    // param on /admin/invoices), so we fetch everything and narrow
+    // client-side in `filtered`. The list caps at 500 rows, so the
+    // cost is bounded.
+    case 'unpaid':
     case 'recent':
     case 'all':
     default:
@@ -91,11 +108,19 @@ export default function InvoicesPage() {
   // Canceled + draft rows are each visible on exactly one tab — their
   // own. Everywhere else (Recent / Sales / Purchase / Wholesale / All)
   // hides them so day-to-day triage only sees committed invoices.
-  // API doesn't support a status≠X filter, so we strip client-side —
-  // the 500-row cap on the list endpoint keeps this trivial.
+  // Unpaid additionally narrows to (finalized|shipped) +
+  // payment_status != paid. API doesn't support a status≠X or
+  // payment_status filter, so we strip client-side — the 500-row cap
+  // on the list endpoint keeps this trivial.
   const filtered = (data ?? []).filter((inv) => {
     if (tab === 'canceled') return inv.status === 'canceled';
     if (tab === 'drafts') return inv.status === 'draft';
+    if (tab === 'unpaid') {
+      return (
+        (inv.status === 'finalized' || inv.status === 'shipped') &&
+        inv.payment_status !== 'paid'
+      );
+    }
     return inv.status !== 'canceled' && inv.status !== 'draft';
   });
   // "Recent" is a compact top-N slice of the same payload "All" fetches.
@@ -179,18 +204,21 @@ export default function InvoicesPage() {
             mono
             tone={metrics.unpaid > 0 ? 'warn' : 'neutral'}
             hint={metrics.unpaid ? 'finalized + shipped' : 'all caught up'}
+            onClick={metrics.unpaid > 0 ? () => setTab('unpaid') : undefined}
           />
           <InvoiceMetric
             label="Drafts"
             value={String(metrics.drafts)}
             mono
             tone={metrics.drafts > 0 ? 'info' : 'neutral'}
+            onClick={metrics.drafts > 0 ? () => setTab('drafts') : undefined}
           />
           <InvoiceMetric
             label="Canceled"
             value={String(metrics.canceled)}
             mono
             tone="muted"
+            onClick={metrics.canceled > 0 ? () => setTab('canceled') : undefined}
           />
         </div>
       </section>
@@ -333,6 +361,11 @@ export default function InvoicesPage() {
  * match the semantic meaning: unpaid=amber, drafts=blue, canceled=
  * muted grey, anything else neutral ink-900. `prominent` bumps to
  * 2xl — reserved for the top-line committed total.
+ *
+ * When `onClick` is provided, renders as a button with hover affordance
+ * so operators can drill from a count straight into the filtered tab
+ * (Unpaid → unpaid tab, Drafts → drafts tab). Skipped when the count
+ * is zero so we don't tease a click that would land on an empty view.
  */
 function InvoiceMetric({
   label,
@@ -341,6 +374,7 @@ function InvoiceMetric({
   mono = false,
   prominent = false,
   tone = 'neutral',
+  onClick,
 }: {
   label: string;
   value: string;
@@ -348,6 +382,7 @@ function InvoiceMetric({
   mono?: boolean;
   prominent?: boolean;
   tone?: 'neutral' | 'warn' | 'info' | 'muted';
+  onClick?: () => void;
 }) {
   const toneCls =
     tone === 'warn'
@@ -357,8 +392,8 @@ function InvoiceMetric({
         : tone === 'muted'
           ? 'text-ink-400'
           : 'text-ink-900';
-  return (
-    <div>
+  const body = (
+    <>
       <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-400">
         {label}
       </div>
@@ -372,6 +407,25 @@ function InvoiceMetric({
       {hint && (
         <div className="mt-0.5 text-[10px] text-ink-400">{hint}</div>
       )}
-    </div>
+    </>
   );
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className="group -m-1 rounded-md p-1 text-left transition hover:bg-ink-50"
+        aria-label={`Filter to ${label}`}
+      >
+        {body}
+        <div
+          aria-hidden
+          className="mt-0.5 text-[10px] text-ink-300 transition group-hover:text-ink-500"
+        >
+          view →
+        </div>
+      </button>
+    );
+  }
+  return <div>{body}</div>;
 }
