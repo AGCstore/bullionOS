@@ -34,6 +34,7 @@ import { OcrModule } from './ocr/ocr.module';
 import { CalendarModule } from './calendar/calendar.module';
 import { RestockModule } from './restock/restock.module';
 import { RarcoaModule } from './rarcoa/rarcoa.module';
+import { GmailModule } from './gmail/gmail.module';
 import { HealthController } from './health/health.controller';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
@@ -108,6 +109,10 @@ import { AllExceptionsFilter } from './common/filters/http-exception.filter';
     CalendarModule,
     ClientPortalModule,
     RarcoaModule,
+    // GmailModule depends on RarcoaModule (for ingestPdf) and the global
+    // IntegrationsModule / NotificationsModule — keep this after
+    // RarcoaModule so Nest resolves the provider graph top-down.
+    GmailModule,
   ],
   controllers: [HealthController],
   providers: [

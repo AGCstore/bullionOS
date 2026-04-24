@@ -108,6 +108,55 @@ const googleCalendarCreds = z.object({
  *   - Outbound calls (Option B — push AGC-initiated appointments into
  *     GReminders) will use the same creds when we build that flow.
  */
+/**
+ * Gmail auto-ingest credentials for the RARCOA email listener.
+ *
+ * Setup (one-time, by an admin):
+ *   1. In Google Cloud Console, enable the Gmail API on the same project
+ *      you use for google_calendar. No new OAuth client needed — you can
+ *      reuse the existing client_id/client_secret (just paste them here
+ *      again; they're stored per-provider).
+ *   2. Add the `https://www.googleapis.com/auth/gmail.modify` scope to
+ *      the OAuth consent screen.
+ *   3. Save client_id + client_secret here, then click "Authorize with
+ *      Google" — sign in as sales@atlantagoldandcoin.com. Google returns
+ *      a refresh_token we persist to this row.
+ *
+ * The poll cron then runs every `poll_interval_minutes` (default 15),
+ * matching `gmail.users.messages.list` against (sender_filter, subject
+ * substring, unlabeled, has-attachment, newer_than 2d). Each hit's PDF
+ * attachment is handed to RarcoaService.ingestPdf(); on success the
+ * message gets `processed_label` applied so we don't re-ingest.
+ *
+ * `gmail.modify` is the minimum scope — `.readonly` would be tighter
+ * but can't add labels, which would force us to track seen message IDs
+ * in the DB. Labels are the idempotent signal Gmail itself provides.
+ */
+const gmailCreds = z.object({
+  client_id: z.string().min(20).max(400),
+  client_secret: z.string().min(20).max(400),
+  // Mailbox to poll — informational, matches the account that consents.
+  // 'me' works at the API level but the literal email makes this row
+  // self-describing.
+  mailbox_email: z.string().email().default('sales@atlantagoldandcoin.com'),
+  // Populated by the OAuth callback after the one-time user consent.
+  refresh_token: z.string().max(1000).default(''),
+  // Gmail search operator for the sender. RARCOA sends from a few
+  // different addresses depending on list vs individual send, so a
+  // domain-wide `from:` covers all of them.
+  sender_filter: z.string().min(3).max(200).default('from:rarcoa.com'),
+  // Subject substring to further filter. RARCOA's daily email subject
+  // is "RARCOA Goldsheet MM/DD/YY" — "Goldsheet" is the stable token.
+  subject_filter: z.string().max(200).default('Goldsheet'),
+  // Label applied to processed messages so they're excluded from the
+  // next poll. Gmail creates nested labels (RARCOA/Processed) as
+  // needed — no pre-setup required.
+  processed_label: z.string().min(1).max(100).default('RARCOA/Processed'),
+  // Poll cadence. Daily email so 15 min is plenty; floor at 5 to stay
+  // well inside Gmail's per-user quota.
+  poll_interval_minutes: z.coerce.number().int().min(5).max(120).default(15),
+});
+
 const gremindersCreds = z.object({
   api_key: z.string().min(20).max(500),
   // User id whose calendar bookings we subscribe to. GReminders routes
@@ -182,6 +231,13 @@ export const PROVIDERS = {
     secretFields: ['api_key', 'webhook_secret'] as const,
     hint: (c: z.infer<typeof gremindersCreds>) =>
       `key ${maskId(c.api_key)} · webhook ${c.webhook_secret ? 'signed' : 'unsigned'}`,
+  },
+  gmail: {
+    label: 'Gmail (RARCOA auto-ingest)',
+    schema: gmailCreds,
+    secretFields: ['client_secret', 'refresh_token'] as const,
+    hint: (c: z.infer<typeof gmailCreds>) =>
+      `${c.mailbox_email} · ${c.refresh_token ? 'authorized' : 'not authorized'} · poll ${c.poll_interval_minutes}m`,
   },
 } as const;
 

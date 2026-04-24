@@ -12,7 +12,8 @@ interface IntegrationStatus {
     | 'docusign'
     | 'metals'
     | 'google_calendar'
-    | 'greminders';
+    | 'greminders'
+    | 'gmail';
   label: string;
   configured: boolean;
   enabled: boolean;
@@ -125,6 +126,39 @@ const FIELDS: Record<
       label: 'Webhook signing secret',
       secret: true,
       placeholder: 'Set in GReminders → Webhooks → Edit → Secret',
+    },
+  ],
+  gmail: [
+    {
+      name: 'client_id',
+      label: 'OAuth Client ID',
+      placeholder: '…apps.googleusercontent.com (reuse Calendar client if same project)',
+    },
+    { name: 'client_secret', label: 'OAuth Client Secret', secret: true },
+    {
+      name: 'mailbox_email',
+      label: 'Mailbox',
+      placeholder: 'sales@atlantagoldandcoin.com',
+    },
+    {
+      name: 'sender_filter',
+      label: 'Sender filter (Gmail query)',
+      placeholder: 'from:rarcoa.com',
+    },
+    {
+      name: 'subject_filter',
+      label: 'Subject contains',
+      placeholder: 'Goldsheet',
+    },
+    {
+      name: 'processed_label',
+      label: 'Processed label',
+      placeholder: 'RARCOA/Processed',
+    },
+    {
+      name: 'poll_interval_minutes',
+      label: 'Poll interval (minutes)',
+      placeholder: '15',
     },
   ],
 };
@@ -337,6 +371,15 @@ function ProviderCard({ status }: { status: IntegrationStatus }) {
         />
       )}
 
+      {status.provider === 'gmail' && status.configured && (
+        <GmailActions
+          authorized={Boolean(
+            status.redacted_credentials?.refresh_token &&
+              status.redacted_credentials.refresh_token !== '—',
+          )}
+        />
+      )}
+
       <div className="mt-4 flex flex-wrap justify-end gap-2">
         {editing ? (
           <>
@@ -449,6 +492,68 @@ function GoogleCalendarActions({ authorized }: { authorized: boolean }) {
         className="mt-2 rounded-md bg-ink-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-ink-800 disabled:opacity-60"
       >
         {busy ? 'Opening Google…' : authorized ? 'Re-authorize with Google' : 'Authorize with Google'}
+      </button>
+      {err && (
+        <div role="alert" className="mt-2 rounded-md bg-red-50 px-3 py-2 text-[11px] text-red-700">
+          {err}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Gmail OAuth kickoff. Mirrors GoogleCalendarActions — separate because
+ * the authorize endpoint path differs (`/admin/integrations/gmail/...`)
+ * and the help copy is different (mailbox-polling context vs booking).
+ */
+function GmailActions({ authorized }: { authorized: boolean }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [redirect, setRedirect] = useState<string | null>(null);
+
+  async function kickoff() {
+    setErr(null);
+    setBusy(true);
+    try {
+      const returnTo = `${window.location.origin}/admin/integrations`;
+      const r = await apiFetch<{ url: string; redirect_uri: string }>(
+        `/admin/integrations/gmail/authorize?return_to=${encodeURIComponent(returnTo)}`,
+      );
+      setRedirect(r.redirect_uri);
+      window.location.href = r.url;
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : 'Authorize failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-3 rounded-md border border-ink-100 bg-ink-50/40 p-3 text-xs">
+      <p className="text-ink-600">
+        {authorized
+          ? 'Authorized. Re-run if you switch the Sales mailbox or need to re-grant the Gmail scope.'
+          : 'Save the client id + secret above, then click below to authorize as the Sales mailbox. The poller checks every 15 min for a new RARCOA goldsheet email.'}
+      </p>
+      <p className="mt-1 text-[11px] text-ink-400">
+        Google Cloud Console redirect URI must include this exact path:
+        <code className="ml-1 block break-all bg-white px-2 py-1 font-mono text-[10px]">
+          {redirect ?? `${window.location.origin}/api/v1/admin/integrations/gmail/callback`}
+        </code>
+      </p>
+      <p className="mt-1 text-[11px] text-ink-400">
+        Required scope on the OAuth consent screen:
+        <code className="ml-1 bg-white px-1.5 py-0.5 font-mono text-[10px]">
+          gmail.modify
+        </code>
+      </p>
+      <button
+        onClick={kickoff}
+        disabled={busy}
+        className="mt-2 rounded-md bg-ink-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-ink-800 disabled:opacity-60"
+      >
+        {busy ? 'Opening Google…' : authorized ? 'Re-authorize Gmail' : 'Authorize Gmail'}
       </button>
       {err && (
         <div role="alert" className="mt-2 rounded-md bg-red-50 px-3 py-2 text-[11px] text-red-700">

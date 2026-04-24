@@ -22,6 +22,24 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body className="min-h-full antialiased font-sans">
         <Providers>{children}</Providers>
+        {/*
+         * Privacy policy link — kept on every page at the root level so
+         * Google's OAuth consent-screen verifier (which crawls the app's
+         * "Application home page") can discover it. Must be a real,
+         * crawlable anchor — `display: none`, `visibility: hidden`, and
+         * aria-hidden are all treated as cloaking by Google and will fail
+         * verification. Small gray text in a fixed-position footer is the
+         * standard unobtrusive-but-visible pattern.
+         */}
+        <footer className="pointer-events-none fixed inset-x-0 bottom-0 z-0 flex justify-end px-3 py-1 text-[10px] leading-none text-ink-300">
+          <a
+            href="https://atlantagoldandcoin.com/privacy-policy-2/"
+            rel="noopener"
+            className="pointer-events-auto hover:text-ink-500 hover:underline"
+          >
+            Privacy policy
+          </a>
+        </footer>
       </body>
     </html>
   );

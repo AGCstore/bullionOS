@@ -15,6 +15,7 @@ import { CarrierWebhooksController } from './webhooks.controller';
 import { MetalsModule } from '../metals/metals.module';
 import { CalendarModule } from '../calendar/calendar.module';
 import { ClientsModule } from '../clients/clients.module';
+import { GmailModule } from '../gmail/gmail.module';
 
 // Global: many feature modules will inject CarrierService/DocuSignService.
 // Imports MetalsModule because IntegrationsController needs MetalsService
@@ -30,7 +31,16 @@ import { ClientsModule } from '../clients/clients.module';
   // ScheduleModule.forRoot() lives in AppModule — calling it here would
   // create a duplicate scheduler registry and the @Cron decorator on
   // ShipmentPollService silently wouldn't fire.
-  imports: [MetalsModule, forwardRef(() => CalendarModule), ClientsModule],
+  imports: [
+    MetalsModule,
+    forwardRef(() => CalendarModule),
+    ClientsModule,
+    // forwardRef on GmailModule: IntegrationsController injects
+    // GmailService for the admin "Test connection" button, and
+    // GmailService itself injects IntegrationsService. Same shape as
+    // the CalendarModule relationship above.
+    forwardRef(() => GmailModule),
+  ],
   controllers: [
     IntegrationsController,
     CarrierWebhooksController,

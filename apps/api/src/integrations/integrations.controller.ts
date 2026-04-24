@@ -21,6 +21,7 @@ import { DocuSignService } from './docusign.service';
 import { GremindersService } from './greminders.service';
 import { IntegrationsService } from './integrations.service';
 import { MetalsService } from '../metals/metals.service';
+import { GmailService } from '../gmail/gmail.service';
 import { isProvider, type ProviderName } from './integrations.registry';
 
 function parseProvider(raw: string): ProviderName {
@@ -39,6 +40,8 @@ export class IntegrationsController {
     private readonly metals: MetalsService,
     @Inject(forwardRef(() => CalendarService))
     private readonly calendar: CalendarService,
+    @Inject(forwardRef(() => GmailService))
+    private readonly gmail: GmailService,
   ) {}
 
   @Get()
@@ -87,6 +90,8 @@ export class IntegrationsController {
       result = await this.calendar.testConnection();
     } else if (provider === 'greminders') {
       result = await this.greminders.testConnection();
+    } else if (provider === 'gmail') {
+      result = await this.gmail.testConnection();
     } else {
       result = await this.carrier.testConnection(provider as ShipmentCarrier);
     }

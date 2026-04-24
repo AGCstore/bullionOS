@@ -66,6 +66,33 @@ interface SheetRow {
   ingested_at: string;
 }
 
+interface GmailStatus {
+  configured: boolean;
+  authorized: boolean;
+  enabled: boolean;
+  mailbox: string | null;
+  poll_interval_minutes: number | null;
+  last_tested_at: string | null;
+  last_test_ok: boolean | null;
+  last_test_message: string | null;
+}
+
+interface PollResult {
+  checked: boolean;
+  matched: number;
+  ingested: number;
+  details: Array<{
+    message_id: string;
+    from: string | null;
+    subject: string | null;
+    internal_date: string | null;
+    outcome: 'ingested' | 'skipped-no-pdf' | 'skipped-parse-fail' | 'error';
+    as_of_date?: string | null;
+    error?: string | null;
+  }>;
+  skipped_reason?: string;
+}
+
 export default function RarcoaPage() {
   const qc = useQueryClient();
   const { user } = useAuth();
@@ -117,6 +144,27 @@ export default function RarcoaPage() {
     mutationFn: (id: string) =>
       apiFetch(`/admin/rarcoa/${id}`, { method: 'DELETE' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'rarcoa'] }),
+  });
+
+  // Gmail auto-ingest status + manual poll. Pulled alongside the rarcoa
+  // queries so the admin can see at a glance whether auto-ingest is
+  // configured, authorized, and when the next check is likely to fire.
+  const { data: gmailStatus } = useQuery<GmailStatus>({
+    queryKey: ['admin', 'gmail', 'status'],
+    queryFn: () => apiFetch<GmailStatus>('/admin/integrations/gmail/status'),
+    // Re-poll the status after authorization / test-connection changes.
+    refetchInterval: 60_000,
+  });
+  const pollMut = useMutation<PollResult, ApiError, void>({
+    mutationFn: () =>
+      apiFetch<PollResult>('/admin/integrations/gmail/poll', { method: 'POST' }),
+    onSuccess: (r) => {
+      if (r.ingested > 0) {
+        setFlash(`Auto-ingested ${r.ingested} sheet${r.ingested === 1 ? '' : 's'} from Gmail.`);
+        qc.invalidateQueries({ queryKey: ['admin', 'rarcoa'] });
+      }
+      qc.invalidateQueries({ queryKey: ['admin', 'gmail', 'status'] });
+    },
   });
 
   const bySection = useMemo(() => {
@@ -203,6 +251,17 @@ export default function RarcoaPage() {
           busy={upload.isPending}
           flash={flash}
           error={err}
+        />
+      )}
+
+      {/* Gmail auto-ingest status */}
+      {gmailStatus && (
+        <GmailStatusCard
+          status={gmailStatus}
+          onPoll={() => pollMut.mutate()}
+          polling={pollMut.isPending}
+          result={pollMut.data ?? null}
+          error={pollMut.error?.message ?? null}
         />
       )}
 
@@ -690,4 +749,184 @@ function formatDate(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+/* ═════════════ Gmail auto-ingest status ═════════════ */
+
+/**
+ * Gmail auto-ingest status card. Surfaces:
+ *   - whether the Gmail integration is configured/authorized/enabled
+ *   - "Check now" button to fire the poll on demand (same path the cron
+ *     runs every 15 min — useful when the email just landed)
+ *   - per-message outcome list from the most recent poll, so the admin
+ *     can see exactly which RARCOA emails were ingested vs skipped
+ *   - a short "configure it" CTA when the integration is missing
+ */
+function GmailStatusCard({
+  status,
+  onPoll,
+  polling,
+  result,
+  error,
+}: {
+  status: GmailStatus;
+  onPoll: () => void;
+  polling: boolean;
+  result: PollResult | null;
+  error: string | null;
+}) {
+  const ready = status.configured && status.authorized && status.enabled;
+
+  return (
+    <section className="mt-4 rounded-xl border border-ink-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-ink-900">
+            Gmail auto-ingest
+          </h2>
+          <p className="mt-0.5 text-xs text-ink-500">
+            {ready ? (
+              <>
+                Polling{' '}
+                <span className="font-medium text-ink-700">
+                  {status.mailbox ?? 'sales@'}
+                </span>{' '}
+                every {status.poll_interval_minutes ?? 15} min for the daily
+                RARCOA email. New sheets ingest automatically.
+              </>
+            ) : (
+              <>
+                Not yet active. Configure it on{' '}
+                <a
+                  href="/admin/integrations"
+                  className="underline decoration-ink-300 underline-offset-2 hover:text-ink-900"
+                >
+                  Integrations
+                </a>{' '}
+                to skip the manual upload.
+              </>
+            )}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <GmailStatusBadge status={status} />
+          {ready && (
+            <button
+              onClick={onPoll}
+              disabled={polling}
+              className="rounded-md border border-ink-200 px-3 py-1.5 text-xs font-medium text-ink-700 hover:bg-ink-50 disabled:opacity-60"
+            >
+              {polling ? 'Checking…' : 'Check now'}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Most recent poll outcome — folded into the card so the admin
+          doesn't have to hunt for "did it actually work?" */}
+      {error && (
+        <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">
+          {error}
+        </div>
+      )}
+      {result && !error && (
+        <div className="mt-3 rounded-md bg-ink-50/60 p-3 text-xs">
+          {result.skipped_reason ? (
+            <p className="text-ink-500">
+              Poll skipped — {result.skipped_reason}.
+            </p>
+          ) : result.matched === 0 ? (
+            <p className="text-ink-500">
+              No unprocessed RARCOA emails in the last 2 days.
+            </p>
+          ) : (
+            <>
+              <p className="text-ink-700">
+                Matched {result.matched} · ingested{' '}
+                <span className="font-semibold text-ink-900">
+                  {result.ingested}
+                </span>
+              </p>
+              <ul className="mt-2 space-y-1">
+                {result.details.map((d) => (
+                  <li
+                    key={d.message_id}
+                    className="flex items-start gap-2 border-t border-ink-100 pt-1 text-[11px]"
+                  >
+                    <OutcomeBadge outcome={d.outcome} />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-medium text-ink-800">
+                        {d.subject ?? '(no subject)'}
+                      </div>
+                      <div className="truncate text-ink-400">
+                        {d.from ?? '—'}
+                        {d.as_of_date ? ` · sheet ${formatDate(d.as_of_date)}` : ''}
+                      </div>
+                      {d.error && (
+                        <div className="mt-0.5 font-mono text-[10px] text-red-700">
+                          {d.error}
+                        </div>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function GmailStatusBadge({ status }: { status: GmailStatus }) {
+  let tone: 'ok' | 'warn' | 'muted' = 'muted';
+  let label = 'not configured';
+  if (!status.configured) {
+    tone = 'muted';
+    label = 'not configured';
+  } else if (!status.authorized) {
+    tone = 'warn';
+    label = 'not authorized';
+  } else if (!status.enabled) {
+    tone = 'warn';
+    label = 'disabled';
+  } else if (status.last_test_ok === false) {
+    tone = 'warn';
+    label = 'test failed';
+  } else {
+    tone = 'ok';
+    label = 'active';
+  }
+  const cls =
+    tone === 'ok'
+      ? 'bg-green-100 text-green-700'
+      : tone === 'warn'
+      ? 'bg-amber-100 text-amber-700'
+      : 'bg-ink-100 text-ink-500';
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${cls}`}>
+      {label}
+    </span>
+  );
+}
+
+function OutcomeBadge({ outcome }: { outcome: PollResult['details'][number]['outcome'] }) {
+  const { label, cls } = (() => {
+    switch (outcome) {
+      case 'ingested':
+        return { label: 'ingested', cls: 'bg-green-100 text-green-700' };
+      case 'skipped-no-pdf':
+        return { label: 'no pdf', cls: 'bg-ink-100 text-ink-500' };
+      case 'skipped-parse-fail':
+        return { label: 'parse failed', cls: 'bg-amber-100 text-amber-700' };
+      case 'error':
+        return { label: 'error', cls: 'bg-red-100 text-red-700' };
+    }
+  })();
+  return (
+    <span className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${cls}`}>
+      {label}
+    </span>
+  );
 }

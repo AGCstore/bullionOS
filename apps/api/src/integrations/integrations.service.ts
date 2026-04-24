@@ -119,13 +119,14 @@ export class IntegrationsService {
   ): Promise<IntegrationStatus> {
     if (!isProvider(provider)) throw new BadRequestException('Unknown provider');
 
-    // Preserve the OAuth refresh_token on google_calendar edits: the token
-    // is populated by the consent callback, not the admin form. Without
-    // this merge, a Save of the hours/services would wipe auth and force
-    // a re-authorize. Only applies when the incoming payload has empty
-    // or missing refresh_token AND we already have one on file.
+    // Preserve the OAuth refresh_token on edits: the token is populated
+    // by the consent callback, not the admin form. Without this merge, a
+    // Save of non-token fields (poll interval, subject filter, etc.)
+    // would wipe auth and force a re-authorize. Only applies when the
+    // incoming payload has empty or missing refresh_token AND we already
+    // have one on file. Same pattern for any OAuth-backed provider.
     let incoming: Record<string, unknown> = (payload as Record<string, unknown>) ?? {};
-    if (provider === 'google_calendar') {
+    if (provider === 'google_calendar' || provider === 'gmail') {
       const tok = incoming['refresh_token'];
       if (!tok || typeof tok !== 'string' || tok.trim() === '') {
         const existing = await this.getCredentials(provider);
