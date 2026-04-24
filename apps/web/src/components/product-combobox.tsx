@@ -31,7 +31,7 @@ export function ProductCombobox({
   adHoc,
   onChange,
   onPickAdHoc,
-  placeholder = 'Search by SKU, name, or metal…',
+  placeholder = 'Search products…',
 }: {
   products: ComboboxProduct[];
   /** Selected product id, or '' when nothing picked / ad-hoc mode. */
@@ -106,7 +106,7 @@ export function ProductCombobox({
   const displayLabel = adHoc
     ? 'New item'
     : selected
-      ? `${selected.sku} · ${selected.name}`
+      ? selected.name
       : '';
 
   return (
@@ -177,16 +177,7 @@ export function ProductCombobox({
                   isActive ? 'bg-ink-900 text-white' : 'text-ink-900'
                 }`}
               >
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="font-medium">{p.name}</span>
-                  <span
-                    className={`shrink-0 font-mono text-[11px] ${
-                      isActive ? 'text-ink-200' : 'text-ink-400'
-                    }`}
-                  >
-                    {p.sku}
-                  </span>
-                </div>
+                <div className="font-medium">{p.name}</div>
                 <div
                   className={`text-[11px] capitalize ${
                     isActive ? 'text-ink-200' : 'text-ink-400'
@@ -211,23 +202,24 @@ export function ProductCombobox({
 /**
  * Fuzzy scorer. Tokenizes the query on whitespace.
  *
- * Matching rule (tightened Apr 2026):
- *   - Single-token query: token must appear as a substring of
- *     sku/name/metal (the old "match anywhere" behavior).
- *   - Multi-token query: the FULL query string must appear as a
- *     contiguous substring in the name OR the sku. The previous
- *     "any token anywhere" rule was too loose — "1 oz" would
- *     incorrectly match "American Gold Eagle - 1/10 oz" because the
- *     SKU contained a "1" (in 010) and the name contained "oz",
- *     without those two tokens ever appearing next to each other.
+ * Matching rule (loosened Apr 2026 v2):
+ *   - Build a single "haystack" string of `name + metal + sku`.
+ *   - Each token in the query must appear as a substring somewhere
+ *     in that haystack. Order-insensitive — "gold eagle",
+ *     "eagle gold", and "eagle 1oz gold" all match "American Gold
+ *     Eagle 1 oz".
+ *   - Score favors contiguous phrase matches + word-boundary hits +
+ *     name-prefix hits, so typing the operator's actual mental model
+ *     ("1/10 eagle", "mercury dime") still surfaces the right row
+ *     at the top even when the token order doesn't align with the
+ *     stored name.
  *
- * This tradeoff: typing "eagle" finds every Eagle, typing "american
- * eagle" specifically finds "American Eagle" (not American Gold
- * Eagle). When the operator wants a broader sweep they can use a
- * single distinguishing token.
- *
- * Score biases toward SKU hits and prefix matches so typing "AU-E"
- * promotes Eagles to the top instantly.
+ * The previous rule required the full query as a contiguous
+ * substring for multi-token input, which was too strict — typing
+ * "eagle 1/10" against "American Gold Eagle 1/10 oz" failed because
+ * the word "Gold" sits between "Eagle" and "1/10" in the name. This
+ * version accepts that case while still keeping false positives
+ * bounded via the per-token presence check.
  */
 function rank(
   products: ComboboxProduct[],
@@ -238,37 +230,53 @@ function rank(
     return [...products].sort((a, b) => a.name.localeCompare(b.name)).slice(0, 200);
   }
   const tokens = q.split(/\s+/).filter(Boolean);
-  const multiToken = tokens.length > 1;
   const scored: Array<{ p: ComboboxProduct; s: number }> = [];
   for (const p of products) {
     const sku = p.sku.toLowerCase();
     const name = p.name.toLowerCase();
     const metal = p.metal.toLowerCase();
-    let score = 0;
+    // Single haystack for the per-token presence check. Joined with
+    // spaces so tokens can't accidentally bridge two fields
+    // (e.g., "goldamerican" shouldn't match name="gold" + sku="american…").
+    const hay = `${name} ${metal} ${sku}`;
 
-    if (multiToken) {
-      // Contiguous-substring gate: the full query must appear
-      // unbroken in either the name or the sku. metal is excluded
-      // because metal fields are single words and any multi-token
-      // query using metal as one token will also contain another
-      // token that must sit right next to it in name/sku.
-      if (!name.includes(q) && !sku.includes(q)) continue;
-    } else {
-      // Single-token — accept anywhere.
-      if (!sku.includes(q) && !name.includes(q) && !metal.includes(q)) {
-        continue;
+    // Gate: every token must appear somewhere in the haystack.
+    let allPresent = true;
+    for (const t of tokens) {
+      if (!hay.includes(t)) {
+        allPresent = false;
+        break;
       }
     }
+    if (!allPresent) continue;
 
-    if (sku.includes(q)) score += 100;
-    if (sku.startsWith(q)) score += 15;
-    if (name.includes(q)) score += 30;
-    // Word-boundary hit in name (e.g. "eagle" in "American Gold Eagle").
+    // Scoring: we're past the gate, now just rank the survivors.
+    let score = 0;
+
+    // Full-phrase contiguous matches still get top billing — when
+    // "american eagle" appears literally in the name, it should beat
+    // a row where "american" and "eagle" are scattered apart.
+    if (name.includes(q)) score += 120;
+    if (sku.includes(q)) score += 80;
+
+    // Word-boundary hit in name — "eagle" at a word start beats
+    // "eagle" buried inside "spread-eagled". Only relevant for
+    // single-token / whole-query matches.
     if (new RegExp(`\\b${escapeRegex(q)}`).test(name)) score += 60;
-    if (metal.includes(q)) score += 5;
-    // Per-token credit so multi-word queries bubble up rows that hit
-    // each token.
-    score += tokens.length * 20;
+
+    // Prefix bonuses: typing "amer" should push American… to the top.
+    if (name.startsWith(q)) score += 40;
+    if (sku.startsWith(q)) score += 30;
+
+    // Per-token credits — rewards rows that hit multiple tokens at
+    // word boundaries in the name, which usually correlates with a
+    // human-readable match.
+    for (const t of tokens) {
+      if (name.includes(t)) score += 15;
+      if (new RegExp(`\\b${escapeRegex(t)}`).test(name)) score += 10;
+      if (sku.includes(t)) score += 6;
+      if (metal === t) score += 4;
+    }
 
     scored.push({ p, s: score });
   }
