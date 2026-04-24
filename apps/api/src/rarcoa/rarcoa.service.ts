@@ -80,13 +80,53 @@ export class RarcoaService {
       );
     }
 
-    const parsed = this.parser.parseText(text);
-    return this.persist(parsed, {
-      filename: args.filename,
-      ingestedByUserId: args.ingestedByUserId,
-      rawText: text,
-      sourceRef: 'upload',
-    });
+    // The parser's own throws are BadRequestException, but a format-drift
+    // bug could raise a generic Error that would otherwise surface as
+    // an opaque 500 ("Internal server error"). Catch-and-rethrow with a
+    // preview of the extracted text so an operator can eyeball what
+    // actually came out of the PDF and tell us where RARCOA's layout
+    // changed. Admin-only endpoint, so leaking the first 400 chars is OK.
+    let parsed;
+    try {
+      parsed = this.parser.parseText(text);
+    } catch (err) {
+      if (err instanceof BadRequestException) throw err;
+      const preview = text.slice(0, 400).replace(/\s+/g, ' ');
+      this.logger.error(
+        `RARCOA parse failed: ${(err as Error).message}`,
+        (err as Error).stack,
+      );
+      throw new BadRequestException(
+        `Parser error: ${(err as Error).message}. First chars of extracted text: "${preview}"`,
+      );
+    }
+
+    try {
+      return await this.persist(parsed, {
+        filename: args.filename,
+        ingestedByUserId: args.ingestedByUserId,
+        rawText: text,
+        sourceRef: 'upload',
+      });
+    } catch (err) {
+      if (err instanceof BadRequestException) throw err;
+      const msg = (err as Error).message;
+      this.logger.error(
+        `RARCOA persist failed: ${msg}`,
+        (err as Error).stack,
+      );
+      // Translate the usual Postgres culprits so the operator sees
+      // something actionable on the upload card rather than a generic
+      // 500.
+      if (/relation .* does not exist/i.test(msg)) {
+        throw new BadRequestException(
+          `Database schema missing (migration 032_supplier_prices not applied). Run \`pnpm db:migrate\` on the API service and retry.`,
+        );
+      }
+      throw new BadRequestException(
+        `Failed to save RARCOA snapshot: ${msg}`,
+      );
+    }
   }
 
   /**

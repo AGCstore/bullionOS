@@ -791,8 +791,8 @@ function GmailStatusCard({
                 <span className="font-medium text-ink-700">
                   {status.mailbox ?? 'sales@'}
                 </span>{' '}
-                every {status.poll_interval_minutes ?? 15} min for the daily
-                RARCOA email. New sheets ingest automatically.
+                every 15 min for the daily RARCOA email. New sheets ingest
+                automatically.
               </>
             ) : (
               <>

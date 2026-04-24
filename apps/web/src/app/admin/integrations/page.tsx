@@ -155,11 +155,9 @@ const FIELDS: Record<
       label: 'Processed label',
       placeholder: 'RARCOA/Processed',
     },
-    {
-      name: 'poll_interval_minutes',
-      label: 'Poll interval (minutes)',
-      placeholder: '15',
-    },
+    // poll_interval_minutes isn't exposed here — the cron cadence is
+    // fixed at 15 min in GmailService.scheduledPoll and changing this
+    // field wouldn't shift it. Left in the schema for future use.
   ],
 };
 
