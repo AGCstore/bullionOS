@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiFetch, ApiError } from '@/lib/api-client';
+import { apiFetch, ApiError, getAccessToken } from '@/lib/api-client';
 import { useAuth } from '@/lib/auth-context';
 import { PageTint } from '@/components/page-tint';
 import { ProductCombobox } from '@/components/product-combobox';
@@ -544,8 +544,23 @@ export default function NewInvoicePage() {
     setBusy('print');
     try {
       const id = await persistDraft();
-      // Open the PDF in a new tab — does NOT finalize (INV-006).
-      window.open(`/api/v1/admin/invoices/${id}/pdf`, '_blank', 'noopener');
+      // The PDF endpoint is auth-gated. window.open on the URL would
+      // issue an un-authed navigation and 401 — fetch it with the
+      // bearer token instead, then open a blob URL in a new tab.
+      // Same pattern as /admin/invoices/[id]/page.tsx's openPdf.
+      const token = getAccessToken();
+      const res = await fetch(`/api/v1/admin/invoices/${id}/pdf`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        throw new Error(`PDF fetch failed: HTTP ${res.status}`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank', 'noopener');
+      // Revoke after a minute so the page doesn't hold memory for
+      // every print click through the session.
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to open print view');
     } finally {
