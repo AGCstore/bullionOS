@@ -675,12 +675,29 @@ export default function NewInvoicePage() {
         <section className="mt-4 rounded-xl border border-ink-200 bg-white p-5 shadow-sm">
           <SectionHeader step={2} title="Direction" />
 
-          <div className="mt-3 inline-flex rounded-md border border-ink-200 bg-ink-50 p-1">
-            <TypeToggle active={type === 'sell'} onClick={() => setType('sell')}>
-              Sell (we sell to client)
+          {/* Inset "pill rail" — the rail is a subtle recessed tray so
+              the selected pill reads as raised above it. Active pill
+              gets the side-semantic color (sell=green, buy=red),
+              inactive stays ghost-quiet. Same palette the rest of
+              the app uses for invoice direction. */}
+          <div
+            role="tablist"
+            aria-label="Invoice direction"
+            className="mt-3 inline-flex gap-1 rounded-lg border border-ink-200 bg-ink-100/70 p-1 shadow-inner"
+          >
+            <TypeToggle
+              variant="sell"
+              active={type === 'sell'}
+              onClick={() => setType('sell')}
+            >
+              Sell
             </TypeToggle>
-            <TypeToggle active={type === 'buy'} onClick={() => setType('buy')}>
-              Buy (we buy from client)
+            <TypeToggle
+              variant="buy"
+              active={type === 'buy'}
+              onClick={() => setType('buy')}
+            >
+              Buy
             </TypeToggle>
           </div>
         </section>
@@ -1078,20 +1095,41 @@ function SectionHeader({
   );
 }
 
+/**
+ * Sell / Buy direction toggle inside the invoice wizard. Operator
+ * spec Apr 2026: "add depth to the buttons + make it clearer which
+ * is selected." Active pill uses the side-semantic color (sell=
+ * green, buy=red) to match the hero rail on the detail page and
+ * the buy/sell pills across the invoice list + table headers.
+ */
 function TypeToggle({
   active,
+  variant,
   onClick,
   children,
 }: {
   active: boolean;
+  variant: 'sell' | 'buy';
   onClick: () => void;
   children: React.ReactNode;
 }) {
+  // Active pill: solid accent bg + white text + subtle shadow so it
+  // reads as "lifted" above the recessed rail. Inactive: transparent
+  // with muted text; hover nudges the text brighter without jumping
+  // layout.
+  const activeCls =
+    variant === 'sell'
+      ? 'bg-sell-600 text-white shadow-md ring-1 ring-sell-700/30'
+      : 'bg-buy-600 text-white shadow-md ring-1 ring-buy-700/30';
+  const inactiveCls = 'text-ink-500 hover:text-ink-900 hover:bg-white/60';
   return (
     <button
+      type="button"
+      role="tab"
+      aria-selected={active}
       onClick={onClick}
-      className={`rounded px-3 py-1.5 text-sm transition ${
-        active ? 'bg-white text-ink-900 shadow-sm' : 'text-ink-600 hover:text-ink-900'
+      className={`min-w-[88px] rounded-md px-5 py-2 text-sm font-semibold uppercase tracking-wider transition ${
+        active ? activeCls : inactiveCls
       }`}
     >
       {children}

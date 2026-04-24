@@ -85,7 +85,7 @@ function nextStatusesFor(invoice: {
         invoice.type === 'buy' || invoice.client_type !== 'wholesaler';
       return skipFinalize
         ? [
-            { value: 'paid', label: 'Mark paid' },
+            { value: 'paid', label: 'Mark Paid' },
             { value: 'canceled', label: 'Cancel' },
           ]
         : [
@@ -95,16 +95,16 @@ function nextStatusesFor(invoice: {
     }
     case 'finalized':
       return [
-        { value: 'paid', label: 'Mark paid' },
-        { value: 'shipped', label: 'Mark shipped' },
+        { value: 'paid', label: 'Mark Paid' },
+        { value: 'shipped', label: 'Mark Shipped' },
         { value: 'canceled', label: 'Cancel' },
       ];
     case 'paid':
-      return [{ value: 'shipped', label: 'Mark shipped' }];
+      return [{ value: 'shipped', label: 'Mark Shipped' }];
     // shipped → paid supports the wholesale "ship first, pay later"
     // workflow. Invoice stays on Wholesale AR until this fires.
     case 'shipped':
-      return [{ value: 'paid', label: 'Mark paid' }];
+      return [{ value: 'paid', label: 'Mark Paid' }];
     case 'canceled':
     default:
       return [];
@@ -414,7 +414,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
                 className="rounded-md bg-green-600 px-3 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-green-700"
                 title="Record that this wholesaler has paid — removes from outstanding totals"
               >
-                Mark paid
+                Mark Paid
               </button>
             )}
 
@@ -445,7 +445,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
             className="rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-100"
             title="Void this invoice and start a new one with the same fields pre-filled"
           >
-            Void &amp; recreate
+            Void &amp; Recreate
           </button>
           {isAdmin && data.status !== 'shipped' && (
             <button

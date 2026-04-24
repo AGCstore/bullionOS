@@ -127,8 +127,14 @@ export class KpiController {
       ),
       eligible AS (
         -- Live wholesale invoices
+        -- Same bucketing / status fix as the main rollup (Apr 2026):
+        -- bucket wholesale invoices on finalized_at so the per-client
+        -- chart shows them the day revenue was booked, not when the
+        -- draft was created. Status includes 'finalized' so an
+        -- open-AR invoice (goods delivered, payment pending) still
+        -- shows up for the wholesaler who drove it.
         SELECT
-          date_trunc(${period}, (i.created_at AT TIME ZONE 'America/New_York'))::date AS bucket_start,
+          date_trunc(${period}, (COALESCE(i.finalized_at, i.created_at) AT TIME ZONE 'America/New_York'))::date AS bucket_start,
           i.client_id,
           COALESCE(
             NULLIF(TRIM(COALESCE(cl.first_name,'') || ' ' || COALESCE(cl.last_name,'')), ''),
@@ -137,7 +143,7 @@ export class KpiController {
           i.total::numeric AS total
         FROM invoices i
         INNER JOIN clients cl ON cl.id = i.client_id
-        WHERE i.status IN ('paid','shipped')
+        WHERE i.status IN ('finalized','paid','shipped')
           AND cl.client_type = 'wholesaler'
           AND cl.exclude_from_reports = false
 
@@ -329,15 +335,29 @@ export class KpiController {
         ))::date AS bucket_start
       ),
       eligible AS (
+        -- Bucket on COALESCE(finalized_at, created_at). Operator spec
+        -- Apr 2026: wholesale invoices should count in the chart the
+        -- day they're FINALIZED (when revenue is booked), not when
+        -- they were first drafted and not when payment later lands.
+        -- For retail shortcuts (draft → paid direct_sale) we backfill
+        -- finalized_at = paid_at in the service layer, so those also
+        -- bucket on finalized_at correctly. created_at stays as the
+        -- fallback for any legacy row with null finalized_at.
+        --
+        -- Status filter now includes 'finalized' too so a wholesale
+        -- invoice that's been finalized (goods delivered, AR open)
+        -- but not yet paid shows up in the chart the same day it
+        -- finalized. Moving to 'paid' later keeps the same bucket
+        -- (finalized_at didn't change), so no double-counting.
         SELECT
-          date_trunc(${period}, (i.created_at AT TIME ZONE 'America/New_York'))::date AS bucket_start,
+          date_trunc(${period}, (COALESCE(i.finalized_at, i.created_at) AT TIME ZONE 'America/New_York'))::date AS bucket_start,
           i.type,
           c.client_type,
           i.total::numeric AS total,
           NULL::text AS manual_category
         FROM invoices i
         INNER JOIN clients c ON c.id = i.client_id
-        WHERE i.status IN ('paid','shipped')
+        WHERE i.status IN ('finalized','paid','shipped')
           -- Exclude invoices against reports-opted-out clients (owner
           -- test accounts, internal transfers). Flag lives on clients;
           -- see migration 030.
