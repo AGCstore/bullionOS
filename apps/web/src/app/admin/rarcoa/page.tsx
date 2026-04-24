@@ -100,6 +100,10 @@ export default function RarcoaPage() {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // Free-text filter applied across section label + product name. Lets the
+  // counter type "$20", "Morgan", "Liberty", "MS-63" and see only matching
+  // rows without scrolling through 30+ products.
+  const [search, setSearch] = useState('');
 
   const { data: history = [] } = useQuery<SheetRow[]>({
     queryKey: ['admin', 'rarcoa', 'history'],
@@ -175,9 +179,27 @@ export default function RarcoaPage() {
       morgan_dollar: [],
       peace_dollar: [],
     };
-    for (const c of snapshot?.cells ?? []) m[c.section]?.push(c);
+    const needle = search.trim().toLowerCase();
+    for (const c of snapshot?.cells ?? []) {
+      if (needle) {
+        // Search against section label + product name. Grade is a column
+        // header, not a row signal, so filtering by grade would leave rows
+        // with missing columns — not worth the UX cost for power users
+        // who can already scan a row once the product is in view.
+        const hay = `${sectionLabel(c.section)} ${c.product}`.toLowerCase();
+        if (!hay.includes(needle)) continue;
+      }
+      m[c.section]?.push(c);
+    }
     return m;
-  }, [snapshot]);
+  }, [snapshot, search]);
+
+  const totalMatched =
+    bySection.uncertified_gold.length +
+    bySection.uncertified_large_gold.length +
+    bySection.certified_gold.length +
+    bySection.morgan_dollar.length +
+    bySection.peace_dollar.length;
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -244,15 +266,134 @@ export default function RarcoaPage() {
         </div>
       </section>
 
-      {/* Upload */}
-      {isAdmin && (
-        <UploadCard
-          onFile={(f) => upload.mutate(f)}
-          busy={upload.isPending}
-          flash={flash}
-          error={err}
-        />
+      {/* Search + history picker — kept together so the counter's
+          entry point (type product name, scan day) lives above the
+          fold. Upload / Gmail / settings get pushed to the bottom
+          where they don't get in the way of daily use. */}
+      {snapshot && snapshot.as_of_date && (
+        <section className="mt-4 rounded-xl border border-ink-200 bg-white p-3 shadow-sm">
+          <div className="flex flex-wrap items-center gap-3">
+            <SearchInput
+              value={search}
+              onChange={setSearch}
+              placeholder='Filter prices — try "$20", "Morgan", "Liberty", "MS-63"'
+            />
+            {history.length > 1 && (
+              <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                <span className="text-ink-500">Day:</span>
+                <button
+                  onClick={() => setSelectedDate(null)}
+                  className={`rounded-md border px-2 py-1 ${
+                    selectedDate === null
+                      ? 'border-ink-900 bg-ink-900 text-white'
+                      : 'border-ink-200 text-ink-600 hover:text-ink-900'
+                  }`}
+                >
+                  Latest
+                </button>
+                {history.slice(0, 10).map((h) => (
+                  <button
+                    key={h.id}
+                    onClick={() => setSelectedDate(h.as_of_date)}
+                    className={`rounded-md border px-2 py-1 ${
+                      selectedDate === h.as_of_date
+                        ? 'border-ink-900 bg-ink-900 text-white'
+                        : 'border-ink-200 text-ink-600 hover:text-ink-900'
+                    }`}
+                    title={`Basis ${
+                      h.basis_gold !== null ? '$' + h.basis_gold.toFixed(2) : '—'
+                    }`}
+                  >
+                    {formatDate(h.as_of_date)}
+                  </button>
+                ))}
+                {isAdmin && selectedDate && (
+                  <button
+                    onClick={() => {
+                      const row = history.find((h) => h.as_of_date === selectedDate);
+                      if (row && confirm(`Delete the RARCOA sheet for ${formatDate(row.as_of_date)}?`))
+                        deleteMut.mutate(row.id);
+                    }}
+                    className="rounded-md border border-red-200 px-2 py-1 text-red-700 hover:bg-red-50"
+                  >
+                    Delete this day
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </section>
       )}
+
+      {/* Loading / empty states */}
+      {isLoading && !snapshot && (
+        <div className="mt-6 rounded-xl border border-ink-200 bg-white p-12 text-center text-sm text-ink-400">
+          Loading…
+        </div>
+      )}
+      {!isLoading && snapshot && !snapshot.as_of_date && (
+        <div className="mt-6 rounded-xl border border-ink-200 bg-white p-12 text-center text-sm text-ink-400">
+          No RARCOA sheet ingested yet. Upload today&apos;s PDF at the bottom of the page.
+        </div>
+      )}
+
+      {/* Section tables — filtered by `search`. Sections with 0
+          matching rows are hidden entirely; if the whole search
+          returns nothing we render a small empty state so the page
+          doesn't go blank under the picker. */}
+      {snapshot && snapshot.as_of_date && (
+        <>
+          {bySection.uncertified_gold.length > 0 && (
+            <SectionCard
+              title="Uncertified gold · small"
+              subtitle="VF / XF / AU / BU — AGC pays 82% of RARCOA bid."
+              cells={bySection.uncertified_gold}
+              columns={['VF', 'XF', 'AU', 'BU']}
+              showSpots={false}
+            />
+          )}
+          {bySection.uncertified_large_gold.length > 0 && (
+            <SectionCard
+              title="Uncertified gold · large"
+              subtitle="$5/$10/$20 Liberty + St. Gaudens. AGC uses its own buy rates for these — shown here for RARCOA reference only."
+              cells={bySection.uncertified_large_gold}
+              columns={['LP/LT POL', 'VF/XF', 'AU/CU', 'Uncirculated']}
+              showSpots={false}
+              agcPricesOptional
+            />
+          )}
+          {bySection.certified_gold.length > 0 && (
+            <SectionCard
+              title="Certified gold · MS61 – MS66"
+              subtitle="Each grade has a clean and a w/Spots derived price. Spots typically get 92–98% of the clean AGC price."
+              cells={bySection.certified_gold}
+              columns={['MS61', 'MS62', 'MS63', 'MS64', 'MS65', 'MS66']}
+              showSpots
+            />
+          )}
+          {(bySection.morgan_dollar.length > 0 ||
+            bySection.peace_dollar.length > 0) && (
+            <SilverCard
+              morgan={bySection.morgan_dollar}
+              peace={bySection.peace_dollar}
+            />
+          )}
+          {search.trim() !== '' && totalMatched === 0 && (
+            <div className="mt-4 rounded-xl border border-ink-200 bg-white p-8 text-center text-sm text-ink-400">
+              No products match <span className="font-mono text-ink-700">{search}</span>.{' '}
+              <button
+                onClick={() => setSearch('')}
+                className="text-ink-700 underline decoration-ink-300 underline-offset-2 hover:text-ink-900"
+              >
+                Clear search
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── Admin / meta section, pushed to the bottom so the daily
+          use flow (scan prices) isn't cluttered by setup cards. */}
 
       {/* Gmail auto-ingest status */}
       {gmailStatus && (
@@ -265,93 +406,61 @@ export default function RarcoaPage() {
         />
       )}
 
-      {/* History picker */}
-      {history.length > 1 && (
-        <section className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-ink-200 bg-white p-3 text-xs">
-          <span className="text-ink-500">History:</span>
-          <button
-            onClick={() => setSelectedDate(null)}
-            className={`rounded-md border px-2 py-1 ${
-              selectedDate === null
-                ? 'border-ink-900 bg-ink-900 text-white'
-                : 'border-ink-200 text-ink-600 hover:text-ink-900'
-            }`}
-          >
-            Latest
-          </button>
-          {history.slice(0, 20).map((h) => (
-            <button
-              key={h.id}
-              onClick={() => setSelectedDate(h.as_of_date)}
-              className={`rounded-md border px-2 py-1 ${
-                selectedDate === h.as_of_date
-                  ? 'border-ink-900 bg-ink-900 text-white'
-                  : 'border-ink-200 text-ink-600 hover:text-ink-900'
-              }`}
-              title={`Basis ${
-                h.basis_gold !== null ? '$' + h.basis_gold.toFixed(2) : '—'
-              }`}
-            >
-              {formatDate(h.as_of_date)}
-            </button>
-          ))}
-          {isAdmin && selectedDate && (
-            <button
-              onClick={() => {
-                const row = history.find((h) => h.as_of_date === selectedDate);
-                if (row && confirm(`Delete the RARCOA sheet for ${formatDate(row.as_of_date)}?`))
-                  deleteMut.mutate(row.id);
-              }}
-              className="ml-auto rounded-md border border-red-200 px-2 py-1 text-red-700 hover:bg-red-50"
-            >
-              Delete this day
-            </button>
-          )}
-        </section>
+      {/* Upload card — bottom of the page. Admins can still drag
+          in a new sheet when auto-ingest misses one, but the happy
+          path (prices are already here) doesn't surface this. */}
+      {isAdmin && (
+        <UploadCard
+          onFile={(f) => upload.mutate(f)}
+          busy={upload.isPending}
+          flash={flash}
+          error={err}
+        />
       )}
+    </div>
+  );
+}
 
-      {/* Loading / empty states */}
-      {isLoading && !snapshot && (
-        <div className="mt-6 rounded-xl border border-ink-200 bg-white p-12 text-center text-sm text-ink-400">
-          Loading…
-        </div>
-      )}
-      {!isLoading && snapshot && !snapshot.as_of_date && (
-        <div className="mt-6 rounded-xl border border-ink-200 bg-white p-12 text-center text-sm text-ink-400">
-          No RARCOA sheet ingested yet. Upload today&apos;s PDF to get started.
-        </div>
-      )}
+/* ═════════════ Search input ═════════════ */
 
-      {/* Section tables */}
-      {snapshot && snapshot.as_of_date && (
-        <>
-          <SectionCard
-            title="Uncertified gold · small"
-            subtitle="VF / XF / AU / BU — AGC pays 82% of RARCOA bid."
-            cells={bySection.uncertified_gold}
-            columns={['VF', 'XF', 'AU', 'BU']}
-            showSpots={false}
-          />
-          <SectionCard
-            title="Uncertified gold · large"
-            subtitle="$5/$10/$20 Liberty + St. Gaudens. AGC uses its own buy rates for these — shown here for RARCOA reference only."
-            cells={bySection.uncertified_large_gold}
-            columns={['LP/LT POL', 'VF/XF', 'AU/CU', 'Uncirculated']}
-            showSpots={false}
-            agcPricesOptional
-          />
-          <SectionCard
-            title="Certified gold · MS61 – MS66"
-            subtitle="Each grade has a clean and a w/Spots derived price. Spots typically get 92–98% of the clean AGC price."
-            cells={bySection.certified_gold}
-            columns={['MS61', 'MS62', 'MS63', 'MS64', 'MS65', 'MS66']}
-            showSpots
-          />
-          <SilverCard
-            morgan={bySection.morgan_dollar}
-            peace={bySection.peace_dollar}
-          />
-        </>
+function SearchInput({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+}) {
+  return (
+    <div className="relative flex-1 min-w-[240px]">
+      {/* Magnifier icon — hand-rolled so we don't pull in an icon lib. */}
+      <svg
+        aria-hidden
+        viewBox="0 0 20 20"
+        className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+      >
+        <circle cx="9" cy="9" r="6" />
+        <path d="m14 14 4 4" strokeLinecap="round" />
+      </svg>
+      <input
+        type="search"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="w-full rounded-md border border-ink-200 bg-white py-1.5 pl-9 pr-8 text-sm text-ink-900 placeholder:text-ink-400 focus:border-ink-900 focus:outline-none focus:ring-1 focus:ring-ink-900"
+      />
+      {value && (
+        <button
+          onClick={() => onChange('')}
+          aria-label="Clear search"
+          className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-ink-400 hover:bg-ink-100 hover:text-ink-700"
+        >
+          ×
+        </button>
       )}
     </div>
   );
@@ -475,9 +584,13 @@ function SectionCard({
         <p className="mt-0.5 text-xs text-ink-500">{subtitle}</p>
       </div>
       <div className="overflow-x-auto">
+        {/* `divide-x` on every <tr> draws a vertical gridline between
+            cells (Tailwind's divide applies border-left to every
+            non-first child). Row separators are `border-t` per <tr>.
+            Together: full grid without hand-adding borders per cell. */}
         <table className="w-full min-w-[720px] text-sm">
           <thead className="bg-ink-50 text-left text-[11px] font-semibold uppercase tracking-wider text-ink-500">
-            <tr>
+            <tr className="divide-x divide-ink-100">
               <th className="px-4 py-3">Product</th>
               {columns.map((col) => (
                 <th
@@ -499,7 +612,9 @@ function SectionCard({
             {productOrder.map((product, i) => (
               <tr
                 key={product}
-                className={`border-t border-ink-100 ${i % 2 === 1 ? 'bg-ink-50/40' : ''}`}
+                className={`divide-x divide-ink-100 border-t border-ink-100 ${
+                  i % 2 === 1 ? 'bg-ink-50/40' : ''
+                }`}
               >
                 <td className="px-4 py-3 font-medium text-ink-900">
                   {product}
@@ -664,7 +779,7 @@ function SilverCard({
       <div className="overflow-x-auto">
         <table className="w-full min-w-[720px] text-sm">
           <thead className="bg-ink-50 text-left text-[11px] font-semibold uppercase tracking-wider text-ink-500">
-            <tr>
+            <tr className="divide-x divide-ink-100">
               <th className="px-4 py-3">Grade</th>
               <th className="px-4 py-3 text-right">Morgan · NGC</th>
               <th className="px-4 py-3 text-right">Morgan · PCGS</th>
@@ -681,7 +796,7 @@ function SilverCard({
               return (
                 <tr
                   key={g}
-                  className={`border-t border-ink-100 ${
+                  className={`divide-x divide-ink-100 border-t border-ink-100 ${
                     i % 2 === 1 ? 'bg-ink-50/40' : ''
                   }`}
                 >
@@ -736,19 +851,42 @@ function Metric({
   );
 }
 
-function formatDate(iso: string): string {
-  try {
-    // Display as the calendar day the sheet was dated, no tz shift.
-    const [y, m, d] = iso.split('-');
-    const dt = new Date(Number(y), Number(m) - 1, Number(d));
-    return dt.toLocaleDateString(undefined, {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    });
-  } catch {
-    return iso;
+/**
+ * Human-readable section label used for search matching so typing
+ * "morgan" or "peace" or "uncertified" filters to the right section
+ * even though the DB stores the machine-style name.
+ */
+function sectionLabel(s: Section): string {
+  switch (s) {
+    case 'uncertified_gold':
+      return 'uncertified gold';
+    case 'uncertified_large_gold':
+      return 'uncertified gold large';
+    case 'certified_gold':
+      return 'certified gold';
+    case 'morgan_dollar':
+      return 'morgan silver dollar';
+    case 'peace_dollar':
+      return 'peace silver dollar';
   }
+}
+
+function formatDate(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  // Kysely/pg can return DATE columns as either bare 'YYYY-MM-DD' or
+  // full ISO timestamps ('2026-04-24T00:00:00.000Z') depending on how
+  // the row was serialized — slicing the first 10 chars handles both.
+  // Parse into local-tz Date so "Apr 24" never drifts to "Apr 23" in
+  // the operator's timezone.
+  const dateOnly = iso.slice(0, 10);
+  const [y, m, d] = dateOnly.split('-');
+  const dt = new Date(Number(y), Number(m) - 1, Number(d));
+  if (Number.isNaN(dt.getTime())) return iso;
+  return dt.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
 }
 
 /* ═════════════ Gmail auto-ingest status ═════════════ */
