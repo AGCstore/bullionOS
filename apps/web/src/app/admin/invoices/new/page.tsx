@@ -294,13 +294,25 @@ export default function NewInvoicePage() {
   const lineTotals = useMemo(
     () =>
       lines.map((l) => {
-        if (!l.product_id || l.quantity <= 0) return 0;
+        if (l.quantity <= 0) return 0;
+        // Ad-hoc line (no product_id): operator-entered unit price is
+        // the only source of truth — no live quote to fetch. Previously
+        // the early-return on !product_id excluded these from the
+        // running total entirely, so stacking one-off scrap lines
+        // showed $0 at the bottom.
+        const override =
+          l.override_unit_price.trim() !== ''
+            ? Number(l.override_unit_price)
+            : null;
+        if (!l.product_id) {
+          return override !== null && Number.isFinite(override)
+            ? override * l.quantity
+            : 0;
+        }
         const q = quoteMap.get(`${l.product_id}:${l.quantity}`);
         const liveUnit = q
           ? Number(type === 'sell' ? q.sell_unit_price : q.buy_unit_price)
           : null;
-        const override =
-          l.override_unit_price.trim() !== '' ? Number(l.override_unit_price) : null;
         const unit = override ?? liveUnit ?? null;
         return unit === null ? 0 : unit * l.quantity;
       }),

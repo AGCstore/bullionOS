@@ -202,24 +202,22 @@ export function ProductCombobox({
 /**
  * Fuzzy scorer. Tokenizes the query on whitespace.
  *
- * Matching rule (loosened Apr 2026 v2):
+ * Matching rule (Apr 2026 v3 — typo tolerance added):
  *   - Build a single "haystack" string of `name + metal + sku`.
- *   - Each token in the query must appear as a substring somewhere
- *     in that haystack. Order-insensitive — "gold eagle",
- *     "eagle gold", and "eagle 1oz gold" all match "American Gold
- *     Eagle 1 oz".
- *   - Score favors contiguous phrase matches + word-boundary hits +
- *     name-prefix hits, so typing the operator's actual mental model
- *     ("1/10 eagle", "mercury dime") still surfaces the right row
- *     at the top even when the token order doesn't align with the
- *     stored name.
- *
- * The previous rule required the full query as a contiguous
- * substring for multi-token input, which was too strict — typing
- * "eagle 1/10" against "American Gold Eagle 1/10 oz" failed because
- * the word "Gold" sits between "Eagle" and "1/10" in the name. This
- * version accepts that case while still keeping false positives
- * bounded via the per-token presence check.
+ *   - Each token in the query must appear in that haystack, either
+ *     as an exact substring OR as a near-match (Levenshtein edit
+ *     distance ≤ 1 for 4–6 char tokens, ≤ 2 for 7+ char tokens)
+ *     against one of the haystack's words.
+ *   - Order-insensitive — "gold eagle", "eagle gold",
+ *     "eagle 1oz gold" all match "American Gold Eagle 1 oz".
+ *   - Typos tolerated — "eaggle", "krugerand", "amercan" still
+ *     find their targets. Short tokens (< 4 chars) require an
+ *     exact substring match to keep false positives bounded —
+ *     "oz" shouldn't fuzzy-match "of", "at", etc.
+ *   - Score favors exact phrase matches, word-boundary hits, and
+ *     name prefixes. Fuzzy hits are accepted but penalized so a
+ *     row that matches exactly still ranks above one that matches
+ *     via typo tolerance.
  */
 function rank(
   products: ComboboxProduct[],
@@ -239,14 +237,29 @@ function rank(
     // spaces so tokens can't accidentally bridge two fields
     // (e.g., "goldamerican" shouldn't match name="gold" + sku="american…").
     const hay = `${name} ${metal} ${sku}`;
+    // Word list for fuzzy matching. Split on whitespace + common
+    // punctuation so "1/10" tokenizes into "1" + "10" and an operator
+    // typing "1/10 eagle" fuzzy-matches either.
+    const hayWords = hay.split(/[\s\-/._,]+/).filter(Boolean);
 
-    // Gate: every token must appear somewhere in the haystack.
+    // Gate: every token must appear in the haystack, either exactly
+    // or via typo-tolerant match. Track which tokens needed fuzzy so
+    // we can penalize in scoring.
     let allPresent = true;
+    let fuzzyCount = 0;
     for (const t of tokens) {
-      if (!hay.includes(t)) {
+      if (hay.includes(t)) continue;
+      // Fuzzy fallback — only for tokens long enough to make the
+      // typo meaningful.
+      if (t.length < 4) {
         allPresent = false;
         break;
       }
+      if (!anyWordWithinDistance(t, hayWords)) {
+        allPresent = false;
+        break;
+      }
+      fuzzyCount++;
     }
     if (!allPresent) continue;
 
@@ -260,8 +273,7 @@ function rank(
     if (sku.includes(q)) score += 80;
 
     // Word-boundary hit in name — "eagle" at a word start beats
-    // "eagle" buried inside "spread-eagled". Only relevant for
-    // single-token / whole-query matches.
+    // "eagle" buried inside "spread-eagled".
     if (new RegExp(`\\b${escapeRegex(q)}`).test(name)) score += 60;
 
     // Prefix bonuses: typing "amer" should push American… to the top.
@@ -269,8 +281,7 @@ function rank(
     if (sku.startsWith(q)) score += 30;
 
     // Per-token credits — rewards rows that hit multiple tokens at
-    // word boundaries in the name, which usually correlates with a
-    // human-readable match.
+    // word boundaries in the name.
     for (const t of tokens) {
       if (name.includes(t)) score += 15;
       if (new RegExp(`\\b${escapeRegex(t)}`).test(name)) score += 10;
@@ -278,10 +289,72 @@ function rank(
       if (metal === t) score += 4;
     }
 
+    // Penalty per fuzzy-matched token. A row with one typo'd token
+    // (score - 30) stays ahead of random low-score rows but sits
+    // below clean matches. Scales so 2 typos ≈ the full-phrase bonus.
+    score -= fuzzyCount * 30;
+
     scored.push({ p, s: score });
   }
   scored.sort((a, b) => b.s - a.s || a.p.name.localeCompare(b.p.name));
   return scored.slice(0, 200).map((x) => x.p);
+}
+
+/**
+ * Does any word in `words` sit within typo-distance of `token`?
+ * Threshold: 1 edit for short tokens (4–6 chars), 2 edits for
+ * longer tokens. Returns on first hit — the ranker doesn't care
+ * which word matched, only that ONE did.
+ */
+function anyWordWithinDistance(token: string, words: string[]): boolean {
+  const maxEdit = token.length >= 7 ? 2 : 1;
+  for (const w of words) {
+    // Length gate: if the lengths differ by more than maxEdit, no
+    // edit distance can bridge them. Cheap short-circuit before the
+    // full DP.
+    if (Math.abs(w.length - token.length) > maxEdit) continue;
+    if (levenshteinAtMost(token, w, maxEdit) <= maxEdit) return true;
+  }
+  return false;
+}
+
+/**
+ * Bounded Levenshtein — returns the true distance when it's ≤ max,
+ * or max+1 as a "too far" sentinel. Early-exits when every cell in
+ * a row exceeds max, saving work on obviously-unrelated words.
+ *
+ * Standard DP across two rolling rows. Transpositions (Damerau)
+ * aren't handled — they add code weight and only help for adjacent
+ * swaps, which are rare typos in coin-product names.
+ */
+function levenshteinAtMost(a: string, b: string, max: number): number {
+  const la = a.length;
+  const lb = b.length;
+  if (Math.abs(la - lb) > max) return max + 1;
+  if (la === 0) return lb;
+  if (lb === 0) return la;
+  let prev = new Array<number>(lb + 1);
+  let curr = new Array<number>(lb + 1);
+  for (let j = 0; j <= lb; j++) prev[j] = j;
+  for (let i = 1; i <= la; i++) {
+    curr[0] = i;
+    let rowMin = i;
+    for (let j = 1; j <= lb; j++) {
+      const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
+      const v = Math.min(
+        curr[j - 1] + 1, // insert
+        prev[j] + 1, // delete
+        prev[j - 1] + cost, // substitute
+      );
+      curr[j] = v;
+      if (v < rowMin) rowMin = v;
+    }
+    if (rowMin > max) return max + 1;
+    const tmp = prev;
+    prev = curr;
+    curr = tmp;
+  }
+  return prev[lb];
 }
 
 function escapeRegex(s: string): string {
