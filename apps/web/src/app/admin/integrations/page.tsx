@@ -138,7 +138,7 @@ const FIELDS: Record<
     {
       name: 'mailbox_email',
       label: 'Mailbox',
-      placeholder: 'sales@atlantagoldandcoin.com',
+      placeholder: 'sales@atlantagoldandcoinbuyers.com',
     },
     {
       name: 'sender_filter',

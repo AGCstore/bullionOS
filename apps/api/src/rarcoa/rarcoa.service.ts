@@ -46,8 +46,8 @@ export interface RarcoaSnapshot {
  *
  * Phase 2 (not in this patch): Gmail API listener auto-fires the
  * same ingestPdf() path when the daily RARCOA email lands in
- * sales@atlantagoldandcoin.com. `source_ref` + `source_filename`
- * on the sheet row carry the provenance.
+ * sales@atlantagoldandcoinbuyers.com. `source_ref` +
+ * `source_filename` on the sheet row carry the provenance.
  */
 @Injectable()
 export class RarcoaService {

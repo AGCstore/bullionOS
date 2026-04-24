@@ -119,8 +119,8 @@ const googleCalendarCreds = z.object({
  *   2. Add the `https://www.googleapis.com/auth/gmail.modify` scope to
  *      the OAuth consent screen.
  *   3. Save client_id + client_secret here, then click "Authorize with
- *      Google" — sign in as sales@atlantagoldandcoin.com. Google returns
- *      a refresh_token we persist to this row.
+ *      Google" — sign in as sales@atlantagoldandcoinbuyers.com. Google
+ *      returns a refresh_token we persist to this row.
  *
  * The poll cron then runs every `poll_interval_minutes` (default 15),
  * matching `gmail.users.messages.list` against (sender_filter, subject
@@ -138,7 +138,7 @@ const gmailCreds = z.object({
   // Mailbox to poll — informational, matches the account that consents.
   // 'me' works at the API level but the literal email makes this row
   // self-describing.
-  mailbox_email: z.string().email().default('sales@atlantagoldandcoin.com'),
+  mailbox_email: z.string().email().default('sales@atlantagoldandcoinbuyers.com'),
   // Populated by the OAuth callback after the one-time user consent.
   refresh_token: z.string().max(1000).default(''),
   // Gmail search operator for the sender. RARCOA sends from a few
