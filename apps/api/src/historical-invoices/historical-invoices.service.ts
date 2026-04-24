@@ -162,10 +162,17 @@ export class HistoricalInvoicesService {
         .returningAll()
         .executeTakeFirstOrThrow();
       // Fetch with the display-name join so the client gets a
-      // fully-populated row back immediately.
+      // fully-populated row back immediately. Use `input.date` (the
+      // validated YYYY-MM-DD string the caller sent) rather than
+      // `row.date` — Kysely hydrates DATE columns as JS Date objects,
+      // and `String(new Date(...))` renders the locale-formatted
+      // "Sun Apr 19 2026 20:00:00 GMT-0400" which Postgres can't
+      // cast back to DATE on the next query. That was the source of
+      // the "Invalid date. Use the YYYY-MM-DD format." error surfacing
+      // after the insert succeeded.
       const fresh = await this.list({
-        from: String(row.date),
-        to: String(row.date),
+        from: input.date,
+        to: input.date,
         limit: 500,
       });
       return fresh.find((r) => r.id === row.id) ?? (row as unknown as HistoricalInvoiceRow);
