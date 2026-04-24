@@ -10,6 +10,8 @@
     "healthcheckPath": "/api/v1/health",
     "healthcheckTimeout": 60,
     "restartPolicyType": "ON_FAILURE",
-    "restartPolicyMaxRetries": 3
+    "restartPolicyMaxRetries": 3,
+    "//preDeployCommand": "Runs inside the new image before it swaps in. Kysely's FileMigrationProvider reads the compiled migrations in dist/db/migrations. If a migration fails, Railway aborts the deploy and keeps the old container — no half-migrated DB. This closes the gap that left 032_supplier_prices unapplied when the RARCOA ship went out.",
+    "preDeployCommand": "node dist/db/migrator.js up"
   }
 }
