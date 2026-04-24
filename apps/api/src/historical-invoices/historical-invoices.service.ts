@@ -56,7 +56,7 @@ export class HistoricalInvoicesService {
     }
     if (/invalid input syntax for type date/i.test(msg)) {
       throw new BadRequestException(
-        `Invalid date. Use the YYYY-MM-DD format.`,
+        `Invalid date. Use the MM/DD/YYYY format.`,
       );
     }
     if (/value out of range|numeric field overflow/i.test(msg)) {
