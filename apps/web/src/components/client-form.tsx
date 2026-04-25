@@ -301,10 +301,20 @@ export function toDto(v: ClientFormValues) {
     .split(/[\r\n,]+/)
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean);
+  // Identity fields (first/last/company) explicitly send the trimmed
+  // value, including empty strings, so the operator can CLEAR a name
+  // when converting a retail "Money Metals Exchange / ---" personal
+  // record to a wholesaler company-only record. Sending `undefined`
+  // would let JSON.stringify drop the key entirely, which the backend
+  // then treats as "don't update" — the original bug. Service-side,
+  // empty strings on these three are collapsed to NULL before write.
+  // Other text fields keep the `|| undefined` short-circuit to avoid
+  // accidentally tripping field-level validators (e.g., @IsEmail) on
+  // unrelated empty inputs.
   return {
-    first_name: v.first_name.trim() || undefined,
-    last_name: v.last_name.trim() || undefined,
-    company: v.company.trim() || undefined,
+    first_name: v.first_name.trim(),
+    last_name: v.last_name.trim(),
+    company: v.company.trim(),
     email: v.email.trim() || undefined,
     secondary_emails: secondary.length > 0 ? secondary : undefined,
     phone: v.phone.trim() || undefined,
