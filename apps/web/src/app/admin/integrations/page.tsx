@@ -13,7 +13,8 @@ interface IntegrationStatus {
     | 'metals'
     | 'google_calendar'
     | 'greminders'
-    | 'gmail';
+    | 'gmail'
+    | 'aurbitrage';
   label: string;
   configured: boolean;
   enabled: boolean;
@@ -158,6 +159,19 @@ const FIELDS: Record<
     // poll_interval_minutes isn't exposed here — the cron cadence is
     // fixed at 15 min in GmailService.scheduledPoll and changing this
     // field wouldn't shift it. Left in the schema for future use.
+  ],
+  aurbitrage: [
+    {
+      name: 'api_key',
+      label: 'Aurbitrage API key',
+      secret: true,
+      placeholder: 'ak_live_… (from your Aurbitrage account)',
+    },
+    {
+      name: 'url',
+      label: 'API base URL',
+      placeholder: 'https://www.aurbitrage.com/api/v1',
+    },
   ],
 };
 

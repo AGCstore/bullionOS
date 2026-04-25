@@ -93,6 +93,10 @@ const NAV_ITEMS: NavEntry[] = [
       // RARCOA supplier pricing — daily goldsheet ingest + AGC
       // markdown-applied prices. Admin-only upload; staff can view.
       { href: '/admin/rarcoa', label: 'RARCOA' },
+      // Aurbitrage — multi-wholesaler price aggregator. Compare bids/
+      // asks across MTB, Dillon Gage, APMEX, Pinehurst, etc., on the
+      // same product without leaving AGC Desk.
+      { href: '/admin/aurbitrage', label: 'Aurbitrage' },
     ],
   },
   {

@@ -16,6 +16,7 @@ import { MetalsModule } from '../metals/metals.module';
 import { CalendarModule } from '../calendar/calendar.module';
 import { ClientsModule } from '../clients/clients.module';
 import { GmailModule } from '../gmail/gmail.module';
+import { AurbitrageModule } from '../aurbitrage/aurbitrage.module';
 
 // Global: many feature modules will inject CarrierService/DocuSignService.
 // Imports MetalsModule because IntegrationsController needs MetalsService
@@ -40,6 +41,7 @@ import { GmailModule } from '../gmail/gmail.module';
     // GmailService itself injects IntegrationsService. Same shape as
     // the CalendarModule relationship above.
     forwardRef(() => GmailModule),
+    forwardRef(() => AurbitrageModule),
   ],
   controllers: [
     IntegrationsController,

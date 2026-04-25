@@ -522,7 +522,56 @@ export interface DB {
   historical_invoices: HistoricalInvoicesTable;
   supplier_price_sheets: SupplierPriceSheetsTable;
   supplier_prices: SupplierPricesTable;
+  aurbitrage_quotes: AurbitrageQuotesTable;
+  aurbitrage_sync_state: AurbitrageSyncStateTable;
 }
+
+// ===== Aurbitrage quotes (migration 035) =====
+
+/**
+ * One row per (aurbitrage_sku_id, side, dealer) tuple from
+ * Aurbitrage's `/api/v1/pricing/favorites` endpoint. Sync runs wipe
+ * + reinsert the whole table in a transaction (the API returns the
+ * full favorites payload each call).
+ */
+export interface AurbitrageQuotesTable {
+  id: Generated<string>;
+  aurbitrage_sku_id: number;
+  product_name: string;
+  category: string | null;
+  sub_category: string | null;
+  product_type: string | null;
+  metal: string | null;
+  equivalent_oz: Numeric | null;
+  side: 'bid' | 'ask';
+  dealer: string;
+  dealer_id: number | null;
+  price: Numeric;
+  price_format: string | null;
+  format: string | null;
+  price_sign: string | null;
+  data_source: string | null;
+  notes: string | null;
+  shipping_note: string | null;
+  quote_date: Timestamp | null;
+  ingested_at: Generated<Timestamp>;
+}
+export type AurbitrageQuote = Selectable<AurbitrageQuotesTable>;
+export type NewAurbitrageQuote = Insertable<AurbitrageQuotesTable>;
+
+/**
+ * Singleton row tracking the most recent sync attempt — used by the
+ * /admin/aurbitrage page to render "synced 3m ago" + error toasts
+ * when a poll fails.
+ */
+export interface AurbitrageSyncStateTable {
+  id: Generated<number>;
+  last_synced_at: Timestamp | null;
+  last_sync_status: string | null;
+  last_sync_message: string | null;
+  last_sync_quote_count: number | null;
+}
+export type AurbitrageSyncState = Selectable<AurbitrageSyncStateTable>;
 
 // ===== Calendar bookings (migration 023) =====
 

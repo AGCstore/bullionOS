@@ -35,6 +35,7 @@ import { CalendarModule } from './calendar/calendar.module';
 import { RestockModule } from './restock/restock.module';
 import { RarcoaModule } from './rarcoa/rarcoa.module';
 import { GmailModule } from './gmail/gmail.module';
+import { AurbitrageModule } from './aurbitrage/aurbitrage.module';
 import { HealthController } from './health/health.controller';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
@@ -113,6 +114,7 @@ import { AllExceptionsFilter } from './common/filters/http-exception.filter';
     // IntegrationsModule / NotificationsModule — keep this after
     // RarcoaModule so Nest resolves the provider graph top-down.
     GmailModule,
+    AurbitrageModule,
   ],
   controllers: [HealthController],
   providers: [

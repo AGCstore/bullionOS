@@ -160,6 +160,21 @@ const gmailCreds = z.object({
   poll_interval_minutes: z.coerce.number().int().min(5).max(120).default(15),
 });
 
+/**
+ * Aurbitrage (aurbitrage.com) wholesaler-pricing aggregator.
+ *
+ * Setup: paste the API key from your Aurbitrage account dashboard.
+ * Format `ak_live_<random>`. The /admin/aurbitrage page then polls
+ * `/api/v1/pricing/favorites` every 15 min and stores the per-dealer
+ * quotes locally so the operator can compare wholesalers without
+ * leaving AGC Desk.
+ */
+const aurbitrageCreds = z.object({
+  api_key: z.string().min(20).max(200),
+  // Default base URL; overridable in case Aurbitrage moves their host.
+  url: z.string().url().default('https://www.aurbitrage.com/api/v1'),
+});
+
 const gremindersCreds = z.object({
   api_key: z.string().min(20).max(500),
   // User id whose calendar bookings we subscribe to. GReminders routes
@@ -241,6 +256,13 @@ export const PROVIDERS = {
     secretFields: ['client_secret', 'refresh_token'] as const,
     hint: (c: z.infer<typeof gmailCreds>) =>
       `${c.mailbox_email} · ${c.refresh_token ? 'authorized' : 'not authorized'} · poll ${c.poll_interval_minutes}m`,
+  },
+  aurbitrage: {
+    label: 'Aurbitrage (wholesaler price comparison)',
+    schema: aurbitrageCreds,
+    secretFields: ['api_key'] as const,
+    hint: (c: z.infer<typeof aurbitrageCreds>) =>
+      `key ${maskId(c.api_key)} · ${new URL(c.url).host}`,
   },
 } as const;
 

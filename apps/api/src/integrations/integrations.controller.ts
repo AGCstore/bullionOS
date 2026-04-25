@@ -22,6 +22,7 @@ import { GremindersService } from './greminders.service';
 import { IntegrationsService } from './integrations.service';
 import { MetalsService } from '../metals/metals.service';
 import { GmailService } from '../gmail/gmail.service';
+import { AurbitrageService } from '../aurbitrage/aurbitrage.service';
 import { isProvider, type ProviderName } from './integrations.registry';
 
 function parseProvider(raw: string): ProviderName {
@@ -42,6 +43,8 @@ export class IntegrationsController {
     private readonly calendar: CalendarService,
     @Inject(forwardRef(() => GmailService))
     private readonly gmail: GmailService,
+    @Inject(forwardRef(() => AurbitrageService))
+    private readonly aurbitrage: AurbitrageService,
   ) {}
 
   @Get()
@@ -92,6 +95,8 @@ export class IntegrationsController {
       result = await this.greminders.testConnection();
     } else if (provider === 'gmail') {
       result = await this.gmail.testConnection();
+    } else if (provider === 'aurbitrage') {
+      result = await this.aurbitrage.testConnection();
     } else {
       result = await this.carrier.testConnection(provider as ShipmentCarrier);
     }
