@@ -464,27 +464,29 @@ function DealerColumn({
 }
 
 function PriceTag({ quote, accent }: { quote: Quote; accent: 'green' | 'amber' }) {
-  const cls =
-    accent === 'green'
-      ? 'text-green-700'
-      : 'text-amber-700';
-  // We request DollarPerOz from the API, so $-format quotes are
-  // already $/oz. Append the unit so operators can compare dealers
-  // at a glance without second-guessing the basis. Percentage-format
-  // quotes (premiums on dealers that only quote relative to spot)
-  // render as N% — same convention as Aurbitrage's own UI.
+  const cls = accent === 'green' ? 'text-green-700' : 'text-amber-700';
+  // Display rule: convert the stored DollarPerPiece value to $/oz on
+  // this page only, since $/oz is how operators mentally compare
+  // dealers across denominations. Falls back to per-piece display
+  // when equivalent_oz is missing/zero (rare — usually only set-style
+  // products without a clean troy-weight basis). Percentage-format
+  // quotes (premiums-only listings) render as N% with no unit.
   const isPct = quote.format === '%';
-  const formatted = isPct
-    ? `${quote.price.toFixed(2)}%`
-    : `$${quote.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  if (isPct) {
+    return (
+      <span className={`font-mono text-sm font-semibold tabular-nums ${cls}`}>
+        {quote.price.toFixed(2)}%
+      </span>
+    );
+  }
+  const oz = quote.equivalent_oz && quote.equivalent_oz > 0 ? quote.equivalent_oz : null;
+  const perOz = oz !== null ? quote.price / oz : null;
+  const display = perOz !== null ? perOz : quote.price;
+  const unit = perOz !== null ? '/oz' : '/piece';
   return (
     <span className={`font-mono text-sm font-semibold tabular-nums ${cls}`}>
-      {formatted}
-      {!isPct && (
-        <span className="ml-0.5 text-[10px] font-normal text-ink-400">
-          /oz
-        </span>
-      )}
+      ${display.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+      <span className="ml-0.5 text-[10px] font-normal text-ink-400">{unit}</span>
     </span>
   );
 }
