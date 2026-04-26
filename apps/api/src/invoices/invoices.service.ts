@@ -35,6 +35,10 @@ export interface InvoiceWithLines extends Invoice {
   /** Whether the backing client is wholesale — drives the "Mark Paid" button + WH reports. */
   client_type?: 'retail' | 'wholesaler';
   client_company?: string | null;
+  /** Display name of the staff/admin who created this invoice. */
+  created_by_name?: string | null;
+  /** Email of the creator — fallback identifier on the detail page. */
+  created_by_email?: string | null;
   line_items: InvoiceLineItem[];
 }
 
@@ -148,6 +152,11 @@ export class InvoicesService {
     const invoice = await this.db
       .selectFrom('invoices as i')
       .innerJoin('clients as c', 'c.id', 'i.client_id')
+      // Left-join the creator's user record so we can show
+      // "Created by Hunter Rhodes" on the detail page + PDF without
+      // a second roundtrip. Left-join (not inner) because
+      // created_by_user_id is nullable for legacy / imported rows.
+      .leftJoin('users as u', 'u.id', 'i.created_by_user_id')
       .selectAll('i')
       .select([
         sql<string>`coalesce(nullif(trim(coalesce(c.first_name, '') || ' ' || coalesce(c.last_name, '')), ''), c.company, '(unnamed)')`.as(
@@ -158,6 +167,13 @@ export class InvoicesService {
         'c.email as client_email',
         'c.client_type as client_type',
         'c.company as client_company',
+        // Creator display name: full first/last when available, else
+        // the email's local-part (split on '@'). Falls back to null
+        // for legacy invoices with no created_by_user_id.
+        sql<string | null>`coalesce(nullif(trim(coalesce(u.first_name, '') || ' ' || coalesce(u.last_name, '')), ''), split_part(u.email, '@', 1))`.as(
+          'created_by_name',
+        ),
+        'u.email as created_by_email',
       ])
       .where('i.id', '=', id)
       .executeTakeFirst();
@@ -179,6 +195,8 @@ export class InvoicesService {
         client_email: string | null;
         client_type: 'retail' | 'wholesaler';
         client_company: string | null;
+        created_by_name: string | null;
+        created_by_email: string | null;
       }),
       line_items: lines,
     };

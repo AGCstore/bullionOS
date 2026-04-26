@@ -50,6 +50,9 @@ interface InvoiceDetail {
   finalized_at: string | null;
   paid_at: string | null;
   paid_by_user_id?: string | null;
+  /** Display name of the user that created this invoice (joined). */
+  created_by_name?: string | null;
+  created_by_email?: string | null;
   notes: string | null;
   line_items: LineItem[];
 }
@@ -344,6 +347,14 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
             </div>
             <p className="mt-0.5 font-mono text-xs text-ink-400">
               {formatLocalDateTime(data.created_at)}
+              {data.created_by_name && (
+                <>
+                  {' · '}
+                  <span title={data.created_by_email ?? ''}>
+                    Created by {data.created_by_name}
+                  </span>
+                </>
+              )}
             </p>
           </div>
         {/* Apr 2026 polish: header action cluster is broken into three

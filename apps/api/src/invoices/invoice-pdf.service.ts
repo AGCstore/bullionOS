@@ -117,6 +117,18 @@ export class InvoicePdfService {
       .text(`Time: ${timeET}`, { align: 'right', width: 200 })
       .text(`Status: ${invoice.status.toUpperCase()}`, { align: 'right', width: 200 });
 
+    // Created-by attribution. Renders right-aligned under the status
+    // line so the audit trail ("which staff member rang this in?")
+    // is visible on the printed copy without crowding the header.
+    // Skipped for legacy / imported rows where created_by_user_id is
+    // null.
+    if (invoice.created_by_name) {
+      doc.text(`Created by: ${invoice.created_by_name}`, {
+        align: 'right',
+        width: 200,
+      });
+    }
+
     // --- Client / Bill-to ---
     // Anchor below the address block rather than doc.y so the layout is
     // stable regardless of which header branch ran.
