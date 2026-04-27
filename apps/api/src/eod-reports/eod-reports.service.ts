@@ -240,7 +240,34 @@ export class EodReportsService {
         ]),
       )
       .execute();
-    return rows.map((r) => r.email).sort();
+    const fromUsers = rows.map((r) => r.email.toLowerCase());
+
+    // Extra non-user recipients live in `app_settings` under
+    // `eod_report.extra_recipients` as a JSON array of email strings.
+    // Used for shared inboxes (sales@) or external CC's (CPA, etc.)
+    // that shouldn't have a user account but should still get the
+    // daily report. Merged + deduped with the user list below.
+    const extraRow = await this.db
+      .selectFrom('app_settings')
+      .select('value')
+      .where('key', '=', 'eod_report.extra_recipients')
+      .executeTakeFirst();
+    const fromExtras: string[] = [];
+    if (extraRow?.value) {
+      try {
+        const parsed = extraRow.value as unknown;
+        const arr = Array.isArray(parsed) ? parsed : [];
+        for (const v of arr) {
+          if (typeof v === 'string' && v.includes('@')) {
+            fromExtras.push(v.trim().toLowerCase());
+          }
+        }
+      } catch {
+        /* malformed JSON — silently skip */
+      }
+    }
+
+    return Array.from(new Set([...fromUsers, ...fromExtras])).sort();
   }
 
   // ── Date helpers ──────────────────────────────────────────────
