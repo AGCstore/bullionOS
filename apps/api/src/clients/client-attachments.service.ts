@@ -134,6 +134,14 @@ export class ClientAttachmentsService {
             })
             .where('id', '=', inserted.id)
             .execute();
+
+          // Auto-fill the client record. Only fields that are
+          // currently blank get touched — the OCR pass should never
+          // overwrite an operator-entered value with a possibly-noisy
+          // scan result. Confidence gate at 80 keeps low-quality
+          // photos from polluting the row.
+          await this.applyOcrToClient(input.clientId, result.fields);
+
           return {
             ...inserted,
             ocr_status: 'succeeded',
@@ -217,5 +225,104 @@ export class ClientAttachmentsService {
     if (Number(r.numDeletedRows) === 0) {
       throw new NotFoundException('Attachment not found');
     }
+  }
+
+  /**
+   * Apply OCR-extracted fields to the client row, filling only the
+   * columns that are currently blank. Never overwrites operator-
+   * entered values — the safety guarantee here is that uploading an
+   * ID is always additive, even on a noisy scan.
+   *
+   * Confidence gate (min_confidence < 80) skips the entire pass —
+   * Textract reports per-doc minimum confidence and below 80 is
+   * usually a poor photo where a single word might be wildly wrong.
+   * Above 80 each individual field is still trusted on its own
+   * because Textract's per-field confidence is typically 90+ when
+   * the doc-level min is 80+.
+   *
+   * Field mapping:
+   *   FIRST_NAME, LAST_NAME → first_name, last_name
+   *   ADDRESS              → address_line1
+   *   CITY_IN_ADDRESS      → city
+   *   STATE_IN_ADDRESS     → region
+   *   ZIP_CODE_IN_ADDRESS  → postal_code (digits-only normalized)
+   * DOB and document_number aren't auto-applied — clients table has
+   * no DOB column today and document_number is sensitive PII that
+   * deserves a deliberate placement (compliance fields), not a silent
+   * stick-it-on-the-row.
+   */
+  private async applyOcrToClient(
+    clientId: string,
+    fields: import('../ocr/textract.service').IdExtractionFields,
+  ): Promise<void> {
+    if (
+      typeof fields.min_confidence === 'number' &&
+      fields.min_confidence < 80
+    ) {
+      this.logger.log(
+        `Skipped client auto-fill: min_confidence=${fields.min_confidence?.toFixed(1)} below threshold`,
+      );
+      return;
+    }
+
+    const current = await this.db
+      .selectFrom('clients')
+      .select([
+        'first_name',
+        'last_name',
+        'address_line1',
+        'city',
+        'region',
+        'postal_code',
+      ])
+      .where('id', '=', clientId)
+      .executeTakeFirst();
+    if (!current) return;
+
+    const isBlank = (v: string | null | undefined) =>
+      v === null || v === undefined || v.trim() === '';
+
+    const patch: Record<string, string> = {};
+    const applied: string[] = [];
+
+    if (isBlank(current.first_name) && fields.first_name?.trim()) {
+      patch.first_name = fields.first_name.trim();
+      applied.push('first_name');
+    }
+    if (isBlank(current.last_name) && fields.last_name?.trim()) {
+      patch.last_name = fields.last_name.trim();
+      applied.push('last_name');
+    }
+    if (isBlank(current.address_line1) && fields.address_line1?.trim()) {
+      patch.address_line1 = fields.address_line1.trim();
+      applied.push('address_line1');
+    }
+    if (isBlank(current.city) && fields.city?.trim()) {
+      patch.city = fields.city.trim();
+      applied.push('city');
+    }
+    if (isBlank(current.region) && fields.state?.trim()) {
+      patch.region = fields.state.trim();
+      applied.push('region');
+    }
+    if (isBlank(current.postal_code) && fields.postal_code?.trim()) {
+      // Strip whitespace + dashes — Textract sometimes returns
+      // "30309-1234" with a hyphen, sometimes "30309 1234" with a
+      // space. The clients column accepts either, but normalizing
+      // keeps the search index clean.
+      patch.postal_code = fields.postal_code.replace(/[\s-]+/g, '');
+      applied.push('postal_code');
+    }
+
+    if (Object.keys(patch).length === 0) return;
+
+    await this.db
+      .updateTable('clients')
+      .set(patch)
+      .where('id', '=', clientId)
+      .execute();
+    this.logger.log(
+      `Auto-filled client ${clientId} from ID OCR: ${applied.join(', ')}`,
+    );
   }
 }
