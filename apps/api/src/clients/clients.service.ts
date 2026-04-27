@@ -362,7 +362,18 @@ export class ClientsService {
     return { id: created.id, created: true };
   }
 
-  /** Upgrade a walk-in client to a portal user. Returns the one-time initial password. */
+  /**
+   * Upgrade a walk-in client to a portal user, OR re-activate a
+   * previously-disabled portal account. Returns a fresh one-time
+   * initial password in both cases — operators always get a clean
+   * credential to share.
+   *
+   * Re-enable path (Apr 2026 fix): when disablePortal runs, it sets
+   * users.status='disabled' but keeps clients.user_id. The original
+   * enablePortal guard rejected re-enables because user_id was still
+   * set. Now we detect that state, reset the password + flip
+   * users.status back to 'active' instead of refusing.
+   */
   async enablePortal(
     clientId: string,
     actorUserId: string,
@@ -373,14 +384,65 @@ export class ClientsService {
         'Client has no email address. Set one before enabling portal access.',
       );
     }
-    if (client.user_id) {
-      throw new BadRequestException('Client already has portal access');
-    }
 
     const tempPassword = this.generateTempPassword();
     const hash = await bcrypt.hash(tempPassword, this.bcryptCost);
     const email = client.email.toLowerCase();
 
+    // RE-ENABLE path: client.user_id already set + is_portal_enabled
+    // is false. Reactivate the existing user row, reset its password,
+    // flip the flag, and revoke any stale refresh tokens.
+    if (client.user_id && !client.is_portal_enabled) {
+      const linked = await this.db
+        .selectFrom('users')
+        .select(['id', 'status'])
+        .where('id', '=', client.user_id)
+        .executeTakeFirst();
+      if (!linked) {
+        throw new BadRequestException(
+          'Client links to a user_id that no longer exists. Clear the user_id and re-enable.',
+        );
+      }
+      const userId = await this.db.transaction().execute(async (trx) => {
+        await trx
+          .updateTable('users')
+          .set({ password_hash: hash, status: 'active' })
+          .where('id', '=', client.user_id as string)
+          .execute();
+        await trx
+          .updateTable('clients')
+          .set({ is_portal_enabled: true })
+          .where('id', '=', clientId)
+          .execute();
+        // Belt-and-suspenders — disable() already revokes, but if
+        // any token slipped in between, kill it now too.
+        await trx
+          .updateTable('refresh_tokens')
+          .set({ revoked_at: new Date() })
+          .where('user_id', '=', client.user_id as string)
+          .where('revoked_at', 'is', null)
+          .execute();
+        await trx
+          .insertInto('audit_logs')
+          .values({
+            actor_user_id: actorUserId,
+            action: 'client.portal.reenable',
+            entity_type: 'client',
+            entity_id: clientId,
+            metadata: sql`${JSON.stringify({ user_id: client.user_id })}::jsonb`,
+          })
+          .execute();
+        return client.user_id as string;
+      });
+      return { temp_password: tempPassword, user_id: userId };
+    }
+
+    // Already-active path: nothing to do, surface a clear error.
+    if (client.user_id && client.is_portal_enabled) {
+      throw new BadRequestException('Client already has portal access');
+    }
+
+    // FRESH path: no user_id yet — create one.
     // Check the email isn't already used by another user.
     const existing = await this.db
       .selectFrom('users')
