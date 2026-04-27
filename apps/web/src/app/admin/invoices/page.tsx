@@ -16,9 +16,34 @@ interface InvoiceRow {
   total: string;
   created_at: string;
   payment_status: string;
+  /** Legacy single-method column. Set on every invoice with payment. */
+  payment_method: string | null;
+  /** Split-payment array (one element per leg). Used when an invoice
+   *  was paid in multiple methods. May be empty for single-payment
+   *  invoices — `payment_method` covers those. */
+  payment_methods?: Array<{
+    method: string;
+    reference: string | null;
+    amount: string;
+  }>;
   client_name: string;
   client_type: 'retail' | 'wholesaler';
 }
+
+/**
+ * Payment-method filter options. Order matches the dropdown shown
+ * to operators — most-common first. 'any' means no filter applied.
+ */
+const PAYMENT_METHOD_OPTIONS = [
+  { value: 'any', label: 'Any payment' },
+  { value: 'check', label: 'Check' },
+  { value: 'wire', label: 'Wire' },
+  { value: 'cash', label: 'Cash' },
+  { value: 'ach', label: 'ACH' },
+  { value: 'card', label: 'Card' },
+  { value: 'crypto', label: 'Crypto' },
+] as const;
+type PaymentMethodFilter = (typeof PAYMENT_METHOD_OPTIONS)[number]['value'];
 
 type Tab =
   | 'recent'
@@ -84,6 +109,12 @@ export default function InvoicesPage() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
   const [tab, setTab] = useState<Tab>('recent');
+  // Payment-method filter — applied client-side over the fetched
+  // 500-row payload. Default 'any' = no filter. Stays orthogonal to
+  // the tab + Unpaid logic so the operator can stack
+  // "Wholesale + Unpaid + Wire only" without a query rewrite.
+  const [paymentFilter, setPaymentFilter] =
+    useState<PaymentMethodFilter>('any');
   const { data } = useQuery({
     queryKey: ['admin', 'invoices', tab],
     queryFn: () => apiFetch<InvoiceRow[]>(queryFor(tab)),
@@ -113,15 +144,31 @@ export default function InvoicesPage() {
   // payment_status filter, so we strip client-side — the 500-row cap
   // on the list endpoint keeps this trivial.
   const filtered = (data ?? []).filter((inv) => {
-    if (tab === 'canceled') return inv.status === 'canceled';
-    if (tab === 'drafts') return inv.status === 'draft';
-    if (tab === 'unpaid') {
-      return (
-        (inv.status === 'finalized' || inv.status === 'shipped') &&
-        inv.payment_status !== 'paid'
-      );
+    // Tab filter — same as before.
+    if (tab === 'canceled') {
+      if (inv.status !== 'canceled') return false;
+    } else if (tab === 'drafts') {
+      if (inv.status !== 'draft') return false;
+    } else if (tab === 'unpaid') {
+      if (
+        !((inv.status === 'finalized' || inv.status === 'shipped') &&
+          inv.payment_status !== 'paid')
+      ) return false;
+    } else {
+      if (inv.status === 'canceled' || inv.status === 'draft') return false;
     }
-    return inv.status !== 'canceled' && inv.status !== 'draft';
+    // Payment-method filter (orthogonal to the tab). Matches against
+    // both the legacy single `payment_method` column AND any leg of
+    // the split-payment array — operators care that "wire was used,"
+    // not whether it was the primary or a partial method.
+    if (paymentFilter !== 'any') {
+      const primary = inv.payment_method;
+      const legs = inv.payment_methods?.map((m) => m.method) ?? [];
+      const hits =
+        primary === paymentFilter || legs.includes(paymentFilter);
+      if (!hits) return false;
+    }
+    return true;
   });
   // "Recent" is a compact top-N slice of the same payload "All" fetches.
   // Rendered-at-top-of-list is the UX win; the server payload is small
@@ -223,20 +270,58 @@ export default function InvoicesPage() {
         </div>
       </section>
 
-      <nav className="mt-5 flex gap-1 overflow-x-auto border-b border-ink-200 text-sm">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => setTab(t.id)}
-            className={`-mb-px whitespace-nowrap border-b-2 px-3 py-2 transition ${
-              tab === t.id
+      <nav className="mt-5 flex flex-wrap items-center gap-1 border-b border-ink-200 text-sm">
+        <div className="flex flex-1 gap-1 overflow-x-auto">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={`-mb-px whitespace-nowrap border-b-2 px-3 py-2 transition ${
+                tab === t.id
+                  ? 'border-ink-900 font-medium text-ink-900'
+                  : 'border-transparent text-ink-600 hover:text-ink-900'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+        {/* Payment-method filter — sits at the right end of the tab
+            strip so it visually reads as "tab + scope" rather than a
+            separate filter bar. Reset to 'any' to clear. */}
+        <div className="flex items-center gap-2 px-2 py-1.5 text-xs">
+          <label htmlFor="payment-filter" className="text-ink-500">
+            Payment:
+          </label>
+          <select
+            id="payment-filter"
+            value={paymentFilter}
+            onChange={(e) =>
+              setPaymentFilter(e.target.value as PaymentMethodFilter)
+            }
+            className={`rounded-md border bg-white px-2 py-1 text-xs ${
+              paymentFilter !== 'any'
                 ? 'border-ink-900 font-medium text-ink-900'
-                : 'border-transparent text-ink-600 hover:text-ink-900'
+                : 'border-ink-200 text-ink-600'
             }`}
           >
-            {t.label}
-          </button>
-        ))}
+            {PAYMENT_METHOD_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          {paymentFilter !== 'any' && (
+            <button
+              onClick={() => setPaymentFilter('any')}
+              className="text-ink-400 hover:text-ink-700"
+              aria-label="Clear payment filter"
+              title="Clear payment filter"
+            >
+              ×
+            </button>
+          )}
+        </div>
       </nav>
 
       {/* MOB-002: horizontal scroll on narrow viewports instead of clipping.
