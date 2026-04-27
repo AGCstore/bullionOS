@@ -281,7 +281,7 @@ export default function ClientDetailPage({
                   </span>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  {client.is_portal_enabled && (
+                  {client.is_portal_enabled ? (
                     <>
                       <button
                         onClick={resetPassword}
@@ -298,6 +298,20 @@ export default function ClientDetailPage({
                         Disable access
                       </button>
                     </>
+                  ) : (
+                    // Re-enable path: user_id is set but the flag is false
+                    // (previously-enabled then disabled). Backend handles
+                    // this correctly as of the Apr 2026 fix — reactivates
+                    // the existing user, resets the password, returns a
+                    // fresh temp credential. Without this button the
+                    // operator had no UI affordance to do it.
+                    <button
+                      onClick={enablePortal}
+                      disabled={busy}
+                      className="rounded-md bg-ink-900 px-2 py-1 text-xs font-medium text-white hover:bg-ink-800 disabled:opacity-60"
+                    >
+                      Re-enable portal
+                    </button>
                   )}
                 </div>
               </>
