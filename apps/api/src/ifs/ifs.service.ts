@@ -4,7 +4,10 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
-import { Cron } from '@nestjs/schedule';
+// Cron import removed — see scheduledSync() comment for why the
+// auto-sync is currently disabled. Re-add when Phase 2 needs the
+// per-shipment status-refresh hook.
+// import { Cron } from '@nestjs/schedule';
 import { Kysely, sql } from 'kysely';
 import { KYSELY } from '../db/database.module';
 import type { DB } from '../db/types';
@@ -119,11 +122,20 @@ export class IfsService {
   }
 
   /**
-   * Cron entrypoint. Fires every 15 min on the dot; no-op when the
-   * integration isn't configured (cold installs / disabled). Wraps
-   * runSync so a thrown error doesn't bring down the scheduler.
+   * Scheduled sync intentionally disabled (Apr 2026): the IFS API
+   * has no documented "list shipments" endpoint — every shipment-
+   * lookup endpoint requires a tracking_no or shipment_id you
+   * already know. So a periodic full-account sync isn't possible
+   * with the public API. Phase 2 of the integration will populate
+   * `ifs_shipments` from the create-label flow (we'll know the
+   * tracking_no the moment a label is created), at which point
+   * this method can be revived to fetch per-shipment status
+   * updates via #28 (`ca_view_shipment_details.php`).
+   *
+   * The @Cron decorator stays commented out rather than removed so
+   * the rationale + the next-step plan are visible in the source.
    */
-  @Cron('0 */15 * * * *', { name: 'ifs-sync' })
+  // @Cron('0 */15 * * * *', { name: 'ifs-sync' })
   async scheduledSync(): Promise<void> {
     if (!(await this.isAvailable())) return;
     try {
