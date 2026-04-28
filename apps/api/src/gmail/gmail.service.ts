@@ -520,17 +520,33 @@ export class GmailService {
     const res = await gmail.users.labels.list({ userId: 'me' });
     const existing = (res.data.labels ?? []).find((l) => l.name === name);
     if (existing?.id) return existing.id;
-    const created = await gmail.users.labels.create({
-      userId: 'me',
-      requestBody: {
-        name,
-        labelListVisibility: 'labelShow',
-        messageListVisibility: 'show',
-      },
-    });
-    if (!created.data.id) {
-      throw new Error(`Label ${name} created but Google returned no id`);
+    try {
+      const created = await gmail.users.labels.create({
+        userId: 'me',
+        requestBody: {
+          name,
+          labelListVisibility: 'labelShow',
+          messageListVisibility: 'show',
+        },
+      });
+      if (!created.data.id) {
+        throw new Error(`Label ${name} created but Google returned no id`);
+      }
+      return created.data.id;
+    } catch (err) {
+      // Race: another process (or a manual operator action in the
+      // Gmail UI) may have created the label between our list and
+      // create calls. Gmail returns 409 + "Label name exists or
+      // conflicts" — re-list to grab the now-existing id rather than
+      // failing the whole poll. Pre-fix, this error fired every 15
+      // min in prod and blocked RARCOA ingestion entirely.
+      const msg = (err as Error).message || '';
+      if (msg.includes('exists or conflicts') || msg.includes('409')) {
+        const recheck = await gmail.users.labels.list({ userId: 'me' });
+        const found = (recheck.data.labels ?? []).find((l) => l.name === name);
+        if (found?.id) return found.id;
+      }
+      throw err;
     }
-    return created.data.id;
   }
 }

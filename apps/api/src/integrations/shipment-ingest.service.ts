@@ -64,6 +64,16 @@ export class ShipmentIngestService {
 
       // Insert the event row. ON CONFLICT on (shipment_id, carrier_event_id)
       // lets webhook + poll races dedupe themselves.
+      //
+      // The unique index this targets is PARTIAL (migration 013 —
+      // `WHERE carrier_event_id IS NOT NULL`) because we still want
+      // to insert null-event-id rows from poll-only carriers like the
+      // IFS reseller that don't expose stable event ids. Postgres
+      // requires the ON CONFLICT WHERE predicate to match the index
+      // predicate exactly — without it the planner can't pick the
+      // partial index and raises:
+      //   "there is no unique or exclusion constraint matching the
+      //    ON CONFLICT specification"
       if (update.carrier_event_id) {
         await trx
           .insertInto('shipment_tracking_events')
@@ -79,7 +89,10 @@ export class ShipmentIngestService {
             source: update.source as TrackingEventSource,
           })
           .onConflict((oc) =>
-            oc.columns(['shipment_id', 'carrier_event_id']).doNothing(),
+            oc
+              .columns(['shipment_id', 'carrier_event_id'])
+              .where('carrier_event_id', 'is not', null)
+              .doNothing(),
           )
           .execute();
       } else {

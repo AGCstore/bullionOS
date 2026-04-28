@@ -47,6 +47,19 @@ export interface EodReportData {
   month_to_date: PeriodTotals;
   /** True when there were no qualifying invoices in the day. */
   empty_today: boolean;
+  /**
+   * Forecasted buy purchases for the next calendar day, grouped by
+   * metal. Sources from BUY invoices with COALESCE(finalized_at,
+   * created_at)::date = tomorrow — i.e. forward-dated drafts +
+   * finalized + paid invoices that the operator has committed to.
+   * Excludes canceled. Empty MetalBreakdown when nothing is on the
+   * book yet for tomorrow.
+   */
+  tomorrow_forecast: MetalBreakdown;
+  /** "Apr 28, 2026" label for the forecast row. */
+  label_tomorrow: string;
+  /** Number of distinct buy invoices that contribute to the forecast. */
+  tomorrow_invoice_count: number;
 }
 
 interface SendResult {
@@ -153,6 +166,12 @@ export class EodReportsService {
     const monthStart = target.slice(0, 7) + '-01';
     const mtd = await this.totalsFor(monthStart, target);
 
+    // Tomorrow's forecast: forward-dated buy invoices the operator
+    // has on the books for the next calendar day. See tomorrowForecast()
+    // for the data semantics.
+    const tomorrow = this.addDays(target, 1);
+    const forecast = await this.tomorrowForecast(tomorrow);
+
     const empty = today.invoice_count === 0;
     return {
       label_today: this.labelDate(target),
@@ -161,6 +180,9 @@ export class EodReportsService {
       week_to_date: wtd,
       month_to_date: mtd,
       empty_today: empty,
+      tomorrow_forecast: forecast.totals,
+      label_tomorrow: this.labelDate(tomorrow),
+      tomorrow_invoice_count: forecast.invoice_count,
     };
   }
 
@@ -235,6 +257,74 @@ export class EodReportsService {
 
   private zero(): MetalBreakdown {
     return { gold: 0, silver: 0, platinum: 0, palladium: 0, other: 0, total: 0 };
+  }
+
+  /**
+   * Forward-looking forecast for `dateIso` (typically tomorrow). Sums
+   * line_total per metal across BUY invoices whose recognition
+   * timestamp (COALESCE(finalized_at, created_at)) falls on that
+   * day. Excludes canceled. **Includes drafts** — drafts are how
+   * operators stage in-progress walk-in / wholesale purchases the
+   * day before they finalize, so they're the most useful signal for
+   * "what we've got on the books for tomorrow." Excludes clients
+   * flagged exclude_from_reports for parity with the rest of the
+   * report.
+   */
+  private async tomorrowForecast(
+    dateIso: string,
+  ): Promise<{ totals: MetalBreakdown; invoice_count: number }> {
+    const rows = await this.db
+      .selectFrom('invoice_line_items as li')
+      .innerJoin('invoices as i', 'i.id', 'li.invoice_id')
+      .innerJoin('clients as c', 'c.id', 'i.client_id')
+      .leftJoin('products as p', 'p.id', 'li.product_id')
+      .select([
+        sql<string | null>`p.metal`.as('metal'),
+        sql<string>`coalesce(li.line_total, 0)`.as('line_total'),
+      ])
+      .where('i.type', '=', 'buy')
+      .where('i.status', '!=', 'canceled')
+      .where('c.exclude_from_reports', '=', false)
+      .where(
+        sql<boolean>`coalesce(i.finalized_at, i.created_at)::date = ${dateIso}::date`,
+      )
+      .execute();
+
+    const invoiceIds = await this.db
+      .selectFrom('invoices as i')
+      .innerJoin('clients as c', 'c.id', 'i.client_id')
+      .select('i.id')
+      .where('i.type', '=', 'buy')
+      .where('i.status', '!=', 'canceled')
+      .where('c.exclude_from_reports', '=', false)
+      .where(
+        sql<boolean>`coalesce(i.finalized_at, i.created_at)::date = ${dateIso}::date`,
+      )
+      .execute();
+
+    const totals = this.zero();
+    for (const r of rows) {
+      const amt = Number(r.line_total ?? 0);
+      const m = (r.metal ?? '') as Metal;
+      if ((METALS as readonly string[]).includes(m)) {
+        totals[m] = new Decimal(totals[m]).plus(amt).toNumber();
+      } else {
+        totals.other = new Decimal(totals.other).plus(amt).toNumber();
+      }
+      totals.total = new Decimal(totals.total).plus(amt).toNumber();
+    }
+    return { totals, invoice_count: invoiceIds.length };
+  }
+
+  /** Add `n` days to a YYYY-MM-DD string. Local cal, no TZ shift. */
+  private addDays(iso: string, n: number): string {
+    const [y, m, d] = iso.split('-').map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    dt.setUTCDate(dt.getUTCDate() + n);
+    const yy = dt.getUTCFullYear();
+    const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(dt.getUTCDate()).padStart(2, '0');
+    return `${yy}-${mm}-${dd}`;
   }
 
   // ── Recipients ────────────────────────────────────────────────
@@ -489,6 +579,7 @@ export class EodReportsService {
         </p>
       </td>
     </tr>
+    ${this.renderForecastBlock(d, esc, dollars, metalColors)}
     <tr>
       <td style="padding:14px 24px;background:#fafafb;border-top:1px solid #f0f0f3;font-size:11px;color:#888;">
         Sent automatically by AGC Desk · <a href="https://agcdesk.com/admin/kpi" style="color:#888;text-decoration:underline;">Open KPI dashboard →</a>
@@ -496,6 +587,79 @@ export class EodReportsService {
     </tr>
   </table>
 </body></html>`;
+  }
+
+  /**
+   * Forecast block — renders the next-day buy-pipeline breakdown.
+   * Shown unconditionally so operators can confirm "no buys booked
+   * for tomorrow" rather than wondering if the section was missing.
+   */
+  private renderForecastBlock(
+    d: EodReportData,
+    esc: (s: string) => string,
+    dollars: (n: number) => string,
+    metalColors: Record<Metal, string>,
+  ): string {
+    const f = d.tomorrow_forecast;
+    const empty = f.total === 0;
+    return `
+    <tr>
+      <td style="padding:0 24px 24px;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:#888;margin-bottom:8px;">
+          Tomorrow's forecast · ${esc(d.label_tomorrow)}
+        </div>
+        ${
+          empty
+            ? `<p style="margin:0;font-size:13px;color:#888;background:#fafafb;border:1px solid #e5e5ea;border-radius:6px;padding:12px;">
+                 No buys forecasted for ${esc(d.label_tomorrow)}. Forward-date a buy invoice on /admin/invoices to schedule one.
+               </p>`
+            : `
+              <table cellpadding="0" cellspacing="0" border="0" style="width:100%;border:1px solid #e5e5ea;border-radius:6px;border-collapse:separate;border-spacing:0;">
+                <thead>
+                  <tr style="background:#fafafb;">
+                    <th colspan="2" style="padding:8px 10px;text-align:left;font-size:10px;font-weight:700;letter-spacing:0.4px;text-transform:uppercase;color:#888;">
+                      Estimated buys · ${d.tomorrow_invoice_count} invoice${d.tomorrow_invoice_count === 1 ? '' : 's'}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${(METALS as readonly Metal[])
+                    .filter((m) => f[m] > 0)
+                    .map(
+                      (m) => `
+                    <tr>
+                      <td style="padding:6px 10px;border-top:1px solid #e5e5ea;font-size:12px;color:#222;">
+                        <span style="display:inline-block;width:8px;height:8px;background:${metalColors[m]};border-radius:2px;vertical-align:middle;margin-right:6px;"></span>
+                        ${esc(m.charAt(0).toUpperCase() + m.slice(1))}
+                      </td>
+                      <td style="padding:6px 10px;border-top:1px solid #e5e5ea;font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace;text-align:right;color:#a14848;">${dollars(f[m])}</td>
+                    </tr>`,
+                    )
+                    .join('')}
+                  ${
+                    f.other > 0
+                      ? `
+                    <tr>
+                      <td style="padding:6px 10px;border-top:1px solid #e5e5ea;font-size:12px;color:#222;">
+                        <span style="display:inline-block;width:8px;height:8px;background:#cccccc;border-radius:2px;vertical-align:middle;margin-right:6px;"></span>
+                        Other / scrap
+                      </td>
+                      <td style="padding:6px 10px;border-top:1px solid #e5e5ea;font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace;text-align:right;color:#a14848;">${dollars(f.other)}</td>
+                    </tr>`
+                      : ''
+                  }
+                  <tr style="background:#fafafb;">
+                    <td style="padding:8px 10px;border-top:2px solid #e5e5ea;font-size:11px;font-weight:700;color:#222;">Total</td>
+                    <td style="padding:8px 10px;border-top:2px solid #e5e5ea;font-size:13px;font-family:ui-monospace,Menlo,Consolas,monospace;text-align:right;color:#a14848;font-weight:700;">${dollars(f.total)}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <p style="margin:10px 0 0;font-size:11px;color:#888;line-height:1.45;">
+                Forward-dated buy invoices (status: draft, finalized, paid, or shipped — anything not canceled) recognized on ${esc(d.label_tomorrow)}.
+              </p>`
+        }
+      </td>
+    </tr>`;
   }
 
   /** Plaintext fallback for clients that strip HTML. */
@@ -521,6 +685,22 @@ export class EodReportsService {
         lines.push(`    ${m.padEnd(10)} sell ${$(period.sells[m]).padStart(8)}   buy ${$(period.buys[m]).padStart(8)}`);
       }
       lines.push('');
+    }
+    // ── Tomorrow's forecast ──
+    lines.push(`Tomorrow's forecast — ${d.label_tomorrow}:`);
+    if (d.tomorrow_forecast.total === 0) {
+      lines.push('  No buys forecasted.');
+    } else {
+      lines.push(
+        `  Total: ${$(d.tomorrow_forecast.total)} across ${d.tomorrow_invoice_count} invoice${d.tomorrow_invoice_count === 1 ? '' : 's'}`,
+      );
+      for (const m of METALS) {
+        if (d.tomorrow_forecast[m] === 0) continue;
+        lines.push(`    ${m.padEnd(10)} ${$(d.tomorrow_forecast[m]).padStart(8)}`);
+      }
+      if (d.tomorrow_forecast.other > 0) {
+        lines.push(`    other      ${$(d.tomorrow_forecast.other).padStart(8)}`);
+      }
     }
     return lines.join('\n');
   }
