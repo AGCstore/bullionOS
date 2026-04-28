@@ -18,6 +18,14 @@ export interface SendMailInput {
   attachments?: MailAttachment[];
   /** Optional reply-to override — defaults to the configured SMTP_FROM. */
   replyTo?: string;
+  /**
+   * Optional From header override — defaults to the configured SMTP_FROM.
+   * Note: Gmail SMTP only accepts From addresses that match the
+   * authenticated user OR a configured "Send mail as" alias. Using a
+   * non-aliased domain causes Gmail to silently rewrite the header back
+   * to the SMTP_USER, so verify the alias is set up before relying on it.
+   */
+  from?: string;
 }
 
 /**
@@ -83,7 +91,7 @@ export class EmailService implements OnModuleInit {
     }
     try {
       const info = await this.transporter.sendMail({
-        from: this.from,
+        from: input.from ?? this.from,
         to: input.to,
         subject: input.subject,
         text: input.text,

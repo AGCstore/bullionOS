@@ -106,6 +106,17 @@ export class EodReportsService {
     const html = this.renderHtml(data);
     const subject = `AGC End-of-Day · ${data.label_today} · ${data.empty_today ? 'no activity' : '$' + data.today.sells.total.toFixed(0) + ' sells / $' + data.today.buys.total.toFixed(0) + ' buys'}`;
 
+    // EOD reports go out under info@atlantagoldandcoin.com (vs. the
+    // sales@…buyers.com SMTP_FROM default that the rest of the app
+    // uses). Operator preference — keeps customer-facing
+    // notifications under the sales@ identity while routine internal
+    // dispatches use the generic info@ inbox.
+    //
+    // Gmail SMTP requires this address to be configured as a "Send
+    // mail as" alias under sales@'s account; otherwise Gmail silently
+    // rewrites the From back to sales@.
+    const eodFrom = 'Atlanta Gold & Coin <info@atlantagoldandcoin.com>';
+
     // Send one BCC blast — keeps recipient list private and avoids
     // looking like a reply-all chain. EmailService swallows per-send
     // failures so a single bad address can't break the whole batch,
@@ -116,6 +127,7 @@ export class EodReportsService {
         subject,
         html,
         text: this.renderPlaintext(data),
+        from: eodFrom,
       });
     }
     return {
