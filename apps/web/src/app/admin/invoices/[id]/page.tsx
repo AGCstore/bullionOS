@@ -1160,6 +1160,15 @@ function EditHeaderSection({ invoice }: { invoice: InvoiceDetail }) {
       });
       await qc.invalidateQueries({ queryKey: ['admin', 'invoice', invoice.id] });
       await qc.invalidateQueries({ queryKey: ['admin', 'invoices'] });
+      // A date edit retroactively moves the invoice between report
+      // buckets. Wipe the KPI keys (covers the daily/weekly/monthly
+      // chart + wholesale-owed under ['admin','kpi','wholesale-owed'])
+      // so the user sees fresh numbers when they navigate away.
+      // Dashboard totals + per-invoice list are already covered by the
+      // ['admin','invoices'] invalidate above.
+      if (body.transacted_at) {
+        await qc.invalidateQueries({ queryKey: ['admin', 'kpi'] });
+      }
       setOk('Saved.');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Save failed');

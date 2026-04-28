@@ -517,7 +517,20 @@ export class InvoicesService {
         patch.payment_method = dto.payment_methods[0].method;
       }
     }
-    if (dto.transacted_at) patch.created_at = new Date(dto.transacted_at);
+    if (dto.transacted_at) {
+      const newDate = new Date(dto.transacted_at);
+      patch.created_at = newDate;
+      // KPI buckets, EOD reports, and wholesale-AR aging all key off
+      // COALESCE(finalized_at, created_at). Once an invoice exits draft,
+      // finalized_at is non-null so created_at alone has no effect on
+      // those reports — the operator's date edit appears to do nothing.
+      // Realign finalized_at + paid_at to keep the invoice's date
+      // representation consistent across every consumer.
+      // (Audit log below records previous_finalized_at + previous_paid_at
+      // so the original timestamps stay recoverable.)
+      if (existing.finalized_at) patch.finalized_at = newDate;
+      if (existing.paid_at) patch.paid_at = newDate;
+    }
 
     // Recompute total when tax/shipping moves. Subtotal stays as-is
     // because line items are unchanged.
@@ -551,6 +564,16 @@ export class InvoicesService {
         metadata: sql`${JSON.stringify({
           changed_fields: Object.keys(patch),
           previous_status: existing.status,
+          // Capture the prior timestamps when transacted_at moves any of
+          // them so the original values are recoverable from the audit
+          // log if a date correction needs to be undone.
+          ...(dto.transacted_at
+            ? {
+                previous_created_at: existing.created_at,
+                previous_finalized_at: existing.finalized_at,
+                previous_paid_at: existing.paid_at,
+              }
+            : {}),
         })}::jsonb`,
       })
       .execute();
