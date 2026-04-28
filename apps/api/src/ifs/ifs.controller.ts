@@ -79,6 +79,19 @@ export class IfsController {
     return this.ifs.runSync();
   }
 
+  /**
+   * Manual trigger for the IFS-side status refresh. Walks every
+   * non-terminal ifs_shipments row and asks IFS for the current
+   * FedEx status, propagating to the linked shipments row when one
+   * exists. Useful when the operator just created a label and wants
+   * to see status without waiting for the next 15-min cron tick.
+   */
+  @Post('refresh-status')
+  @HttpCode(200)
+  refreshStatus() {
+    return this.ifs.runStatusRefresh();
+  }
+
   // ----- Phase 2: create-label wizard -----
 
   @Get('basic-data')

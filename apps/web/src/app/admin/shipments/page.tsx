@@ -57,15 +57,30 @@ export default function AdminShipmentsPage() {
     setPolling(true);
     setPollFlash(null);
     try {
-      const res = await apiFetch<{
-        scanned: number;
-        updated: number;
-        failed: number;
-        skipped: number;
-      }>('/admin/shipments/poll-now', { method: 'POST' });
+      // Two pollers run side-by-side: the carrier-direct adapters (UPS,
+      // FedEx, USPS — when configured) and the IFS-side per-shipment
+      // refresh that polls IFS Clients for FedEx status when AGC doesn't
+      // have direct FedEx creds. Fire both so the operator gets one
+      // unified "everything is current" button.
+      const [carrier, ifs] = await Promise.all([
+        apiFetch<{
+          scanned: number;
+          updated: number;
+          failed: number;
+          skipped: number;
+        }>('/admin/shipments/poll-now', { method: 'POST' }),
+        apiFetch<{ scanned: number; updated: number; failed: number }>(
+          '/admin/ifs/refresh-status',
+          { method: 'POST' },
+        ).catch(() => null),
+      ]);
+      const ifsBit = ifs
+        ? ` · IFS scanned ${ifs.scanned} updated ${ifs.updated}`
+        : '';
       setPollFlash(
-        `Scanned ${res.scanned} · updated ${res.updated}` +
-          (res.failed > 0 ? ` · ${res.failed} failed` : ''),
+        `Scanned ${carrier.scanned} · updated ${carrier.updated}` +
+          (carrier.failed > 0 ? ` · ${carrier.failed} failed` : '') +
+          ifsBit,
       );
       await qc.invalidateQueries({ queryKey: ['admin', 'shipments'] });
     } catch (err) {

@@ -4,17 +4,15 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
-// Cron import removed — see scheduledSync() comment for why the
-// auto-sync is currently disabled. Re-add when Phase 2 needs the
-// per-shipment status-refresh hook.
-// import { Cron } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
 import { Kysely, sql } from 'kysely';
 import { KYSELY } from '../db/database.module';
-import type { DB } from '../db/types';
+import type { DB, ShipmentStatus } from '../db/types';
 import { IntegrationsService } from '../integrations/integrations.service';
 import type { CredentialsFor } from '../integrations/integrations.registry';
 import { toDbString } from '../common/money';
 import { ShipmentsService } from '../shipments/shipments.service';
+import { ShipmentIngestService } from '../integrations/shipment-ingest.service';
 
 /**
  * IFS Clients (ifsclients.com) integration.
@@ -336,6 +334,7 @@ export class IfsService {
     @Inject(KYSELY) private readonly db: Kysely<DB>,
     private readonly integrations: IntegrationsService,
     private readonly shipments: ShipmentsService,
+    private readonly shipmentIngest: ShipmentIngestService,
   ) {}
 
   async isAvailable(): Promise<boolean> {
@@ -372,34 +371,217 @@ export class IfsService {
     }
   }
 
-  /**
-   * Scheduled sync intentionally disabled (Apr 2026): the IFS API
-   * has no documented "list shipments" endpoint — every shipment-
-   * lookup endpoint requires a tracking_no or shipment_id you
-   * already know. So a periodic full-account sync isn't possible
-   * with the public API. Phase 2 of the integration will populate
-   * `ifs_shipments` from the create-label flow (we'll know the
-   * tracking_no the moment a label is created), at which point
-   * this method can be revived to fetch per-shipment status
-   * updates via #28 (`ca_view_shipment_details.php`).
-   *
-   * The @Cron decorator stays commented out rather than removed so
-   * the rationale + the next-step plan are visible in the source.
-   */
-  // @Cron('0 */15 * * * *', { name: 'ifs-sync' })
-  async scheduledSync(): Promise<void> {
+  // ===== Phase 2: scheduled per-shipment status refresh =====
+  //
+  // Operators don't have direct FedEx API credentials — labels are
+  // created through IFS Clients (a FedEx reseller) so AGC's only
+  // tracking-status path is IFS's #28 ca_view_shipment_details.php.
+  // We poll non-terminal ifs_shipments rows on a windowed cron (the
+  // operator's working hours, ET) and pipe each update through
+  // ShipmentIngestService.ingest() so any linked invoice-tied shipment
+  // row advances and notifications fire — same machinery the FedEx
+  // adapter would use if creds were present. Single source of truth.
+  //
+  // Cadence policy: 15-min ticks during business hours only. FedEx
+  // tracking events don't move minute-to-minute and we want to be a
+  // polite IFS reseller-API consumer. ~23 fires/business-day × ~10
+  // open shipments = ~230 calls/day at peak.
+  //
+  // Three @Cron decorators because the afternoon window straddles
+  // 5:30pm — that's not a clean cron-hour boundary, so the simplest
+  // expression is to split.
+
+  /** 8:00 → 11:45 ET, every 15 min, Mon-Fri. */
+  @Cron('*/15 8-11 * * 1-5', {
+    name: 'ifs-status-morning',
+    timeZone: 'America/New_York',
+  })
+  async statusRefreshMorning(): Promise<void> {
+    await this.runStatusRefreshSafe();
+  }
+
+  /** 16:00 → 16:45 ET, every 15 min, Mon-Fri. */
+  @Cron('*/15 16 * * 1-5', {
+    name: 'ifs-status-afternoon-1',
+    timeZone: 'America/New_York',
+  })
+  async statusRefreshAfternoon1(): Promise<void> {
+    await this.runStatusRefreshSafe();
+  }
+
+  /** 17:00, 17:15, 17:30 ET Mon-Fri (last poll at 5:30pm). */
+  @Cron('0,15,30 17 * * 1-5', {
+    name: 'ifs-status-afternoon-2',
+    timeZone: 'America/New_York',
+  })
+  async statusRefreshAfternoon2(): Promise<void> {
+    await this.runStatusRefreshSafe();
+  }
+
+  private async runStatusRefreshSafe(): Promise<void> {
     if (!(await this.isAvailable())) return;
     try {
-      const r = await this.runSync();
+      const r = await this.runStatusRefresh();
       this.logger.log(
-        `IFS sync: ${r.ok ? 'ok' : 'error'} · ${r.count} shipments`,
+        `IFS status refresh: scanned=${r.scanned} updated=${r.updated} failed=${r.failed}`,
       );
     } catch (err) {
       this.logger.error(
-        `IFS sync failed: ${(err as Error).message}`,
+        `IFS status refresh failed: ${(err as Error).message}`,
         (err as Error).stack,
       );
     }
+  }
+
+  /**
+   * Walk every non-terminal ifs_shipments row and refresh its status
+   * via #28. Updates the local cache + (when a linked shipments row
+   * exists) pipes through ShipmentIngestService so the invoice-tied
+   * row advances + the client gets notified. Idempotent — calling
+   * twice in a row makes no extra changes once IFS has nothing new.
+   */
+  async runStatusRefresh(): Promise<{
+    scanned: number;
+    updated: number;
+    failed: number;
+  }> {
+    const open = await this.db
+      .selectFrom('ifs_shipments')
+      .select([
+        'id',
+        'ifs_shipment_id',
+        'tracking_number',
+        'label_status',
+        'delivered_at',
+        'voided_at',
+      ])
+      .where('voided_at', 'is', null)
+      .where('delivered_at', 'is', null)
+      .execute();
+
+    let updated = 0;
+    let failed = 0;
+
+    // Serial — be polite to the reseller API. Volume is bounded; even
+    // at hundreds of open shipments this stays well under a minute.
+    for (const row of open) {
+      try {
+        const details = await this.viewShipmentDetails({
+          shipment_id: row.ifs_shipment_id,
+        });
+        const fedexStatusRaw = (details.fedex_status || '').trim();
+        const mapped = this.mapFedexStatusToShipmentStatus(fedexStatusRaw);
+        const isDelivered = mapped === 'delivered';
+        const deliveredAt = isDelivered
+          ? this.parseDeliveredAt(details.delivered_date) ?? new Date()
+          : null;
+
+        // Update the local IFS cache row when anything moved.
+        const patch: Record<string, unknown> = {};
+        if (fedexStatusRaw && fedexStatusRaw !== row.label_status) {
+          patch.label_status = fedexStatusRaw;
+        }
+        if (deliveredAt) {
+          patch.delivered_at = deliveredAt;
+        }
+        if (Object.keys(patch).length > 0) {
+          await this.db
+            .updateTable('ifs_shipments')
+            .set(patch)
+            .where('id', '=', row.id)
+            .execute();
+        }
+
+        // Propagate to the linked shipments row (if any) so the
+        // invoice detail page + /admin/shipments + client notification
+        // all stay in sync. Skip if no tracking number (shouldn't
+        // happen post-create) or no mappable status yet.
+        if (row.tracking_number && mapped) {
+          await this.shipmentIngest.ingest({
+            carrier: 'fedex',
+            tracking_number: row.tracking_number,
+            status: mapped,
+            description: fedexStatusRaw || null,
+            occurred_at: deliveredAt ?? new Date(),
+            // IFS doesn't expose an event id we can dedupe on, so we
+            // skip carrier_event_id and accept that re-polling may
+            // record duplicate event rows — ingest's status guard
+            // ensures the shipment row only advances forward.
+            carrier_event_id: null,
+            raw_payload: details.raw,
+            source: 'poll',
+            eta: null,
+          });
+        }
+
+        if (Object.keys(patch).length > 0) updated += 1;
+      } catch (err) {
+        failed += 1;
+        this.logger.warn(
+          `IFS status refresh failed for ifs_shipment_id=${row.ifs_shipment_id}: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    return { scanned: open.length, updated, failed };
+  }
+
+  /**
+   * IFS's #28 surfaces FedEx's status string verbatim. We don't get a
+   * formal enum from IFS, so this matches keyword + 2-letter-code
+   * variants defensively. Returns null when the string doesn't look
+   * like any known FedEx status (then the local cache still updates
+   * but the shipments-row propagation is skipped — better than a
+   * misclassification firing the wrong notification).
+   */
+  private mapFedexStatusToShipmentStatus(
+    raw: string,
+  ): ShipmentStatus | null {
+    const t = raw.trim().toLowerCase();
+    if (!t) return null;
+    // Order matters — "out for delivery" must beat "delivery" / "delivered".
+    if (t === 'rs' || t.includes('return')) return 'returned';
+    if (t === 'od' || t.includes('out for')) return 'out_for_delivery';
+    if (
+      t === 'de' ||
+      t === 'hd' ||
+      t.includes('exception') ||
+      t.includes('hold for') ||
+      t.includes('address correction')
+    ) {
+      return 'exception';
+    }
+    if (t === 'dl' || t.includes('deliver')) return 'delivered';
+    if (
+      t === 'pu' ||
+      t === 'it' ||
+      t === 'ar' ||
+      t === 'dp' ||
+      t.includes('transit') ||
+      t.includes('picked') ||
+      t.includes('arrived') ||
+      t.includes('departed') ||
+      t.includes('shipment information')
+    ) {
+      return 'in_transit';
+    }
+    if (
+      t === 'oc' ||
+      t === 'ma' ||
+      t.includes('label') ||
+      t.includes('manifest') ||
+      t.includes('created')
+    ) {
+      return 'label_created';
+    }
+    return null;
+  }
+
+  /** IFS returns delivered_date as a free-form string. Best-effort parse. */
+  private parseDeliveredAt(s: string | null): Date | null {
+    if (!s) return null;
+    const d = new Date(s);
+    return Number.isNaN(d.getTime()) ? null : d;
   }
 
   /**
