@@ -161,6 +161,23 @@ const gmailCreds = z.object({
 });
 
 /**
+ * IFS Clients (ifsclients.com) — FedEx label reseller AGC uses for
+ * every outbound package. Three credentials per request: AppUserName,
+ * AppPassword, account_id. The integration mirrors the IFS dashboard
+ * inside /admin/shipments and (Phase 2) lets operators create labels
+ * without leaving AGC Desk.
+ */
+const ifsCreds = z.object({
+  app_user_name: z.string().min(1).max(120),
+  app_password: z.string().min(1).max(120),
+  account_id: z.string().min(1).max(40),
+  url: z
+    .string()
+    .url()
+    .default('https://www.ifsclients.com/client-app-api'),
+});
+
+/**
  * Aurbitrage (aurbitrage.com) wholesaler-pricing aggregator.
  *
  * Setup: paste the API key from your Aurbitrage account dashboard.
@@ -263,6 +280,13 @@ export const PROVIDERS = {
     secretFields: ['api_key'] as const,
     hint: (c: z.infer<typeof aurbitrageCreds>) =>
       `key ${maskId(c.api_key)} · ${new URL(c.url).host}`,
+  },
+  ifs: {
+    label: 'IFS Clients (FedEx labels)',
+    schema: ifsCreds,
+    secretFields: ['app_password'] as const,
+    hint: (c: z.infer<typeof ifsCreds>) =>
+      `acct ${mask(c.account_id)} · user ${maskId(c.app_user_name)}`,
   },
 } as const;
 

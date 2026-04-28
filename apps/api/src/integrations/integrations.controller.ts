@@ -23,6 +23,7 @@ import { IntegrationsService } from './integrations.service';
 import { MetalsService } from '../metals/metals.service';
 import { GmailService } from '../gmail/gmail.service';
 import { AurbitrageService } from '../aurbitrage/aurbitrage.service';
+import { IfsService } from '../ifs/ifs.service';
 import { isProvider, type ProviderName } from './integrations.registry';
 
 function parseProvider(raw: string): ProviderName {
@@ -45,6 +46,8 @@ export class IntegrationsController {
     private readonly gmail: GmailService,
     @Inject(forwardRef(() => AurbitrageService))
     private readonly aurbitrage: AurbitrageService,
+    @Inject(forwardRef(() => IfsService))
+    private readonly ifs: IfsService,
   ) {}
 
   @Get()
@@ -97,6 +100,8 @@ export class IntegrationsController {
       result = await this.gmail.testConnection();
     } else if (provider === 'aurbitrage') {
       result = await this.aurbitrage.testConnection();
+    } else if (provider === 'ifs') {
+      result = await this.ifs.testConnection();
     } else {
       result = await this.carrier.testConnection(provider as ShipmentCarrier);
     }

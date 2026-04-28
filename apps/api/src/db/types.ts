@@ -524,7 +524,56 @@ export interface DB {
   supplier_prices: SupplierPricesTable;
   aurbitrage_quotes: AurbitrageQuotesTable;
   aurbitrage_sync_state: AurbitrageSyncStateTable;
+  ifs_shipments: IfsShipmentsTable;
+  ifs_sync_state: IfsSyncStateTable;
 }
+
+// ===== IFS shipments (migration 036) =====
+
+/**
+ * Cached snapshot of one shipment from ifsclients.com. Sync runs wipe
+ * + reinsert the table; we keep the raw_payload around for reparsing
+ * without re-hitting the IFS API.
+ */
+export interface IfsShipmentsTable {
+  id: Generated<string>;
+  ifs_shipment_id: string;
+  tracking_number: string | null;
+  carrier: string | null;
+  service_type: string | null;
+  label_status: string | null;
+  sender_name: string | null;
+  sender_company: string | null;
+  sender_address: string | null;
+  recipient_name: string | null;
+  recipient_company: string | null;
+  recipient_address: string | null;
+  recipient_city: string | null;
+  recipient_state: string | null;
+  recipient_zip: string | null;
+  recipient_country: string | null;
+  declared_value: Numeric | null;
+  cost: Numeric | null;
+  ship_date: string | null;
+  delivered_at: Timestamp | null;
+  voided_at: Timestamp | null;
+  label_url: string | null;
+  tracking_url: string | null;
+  reference: string | null;
+  raw_payload: ColumnType<unknown, unknown, unknown> | null;
+  synced_at: Generated<Timestamp>;
+}
+export type IfsShipment = Selectable<IfsShipmentsTable>;
+export type NewIfsShipment = Insertable<IfsShipmentsTable>;
+
+export interface IfsSyncStateTable {
+  id: Generated<number>;
+  last_synced_at: Timestamp | null;
+  last_sync_status: string | null;
+  last_sync_message: string | null;
+  last_sync_count: number | null;
+}
+export type IfsSyncState = Selectable<IfsSyncStateTable>;
 
 // ===== Aurbitrage quotes (migration 035) =====
 

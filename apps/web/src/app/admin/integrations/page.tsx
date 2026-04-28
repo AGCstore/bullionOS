@@ -14,7 +14,8 @@ interface IntegrationStatus {
     | 'google_calendar'
     | 'greminders'
     | 'gmail'
-    | 'aurbitrage';
+    | 'aurbitrage'
+    | 'ifs';
   label: string;
   configured: boolean;
   enabled: boolean;
@@ -171,6 +172,29 @@ const FIELDS: Record<
       name: 'url',
       label: 'API base URL',
       placeholder: 'https://www.aurbitrage.com/api/v1',
+    },
+  ],
+  ifs: [
+    {
+      name: 'app_user_name',
+      label: 'AppUserName',
+      placeholder: 'IFS API user name',
+    },
+    {
+      name: 'app_password',
+      label: 'AppPassword',
+      secret: true,
+      placeholder: 'IFS API password',
+    },
+    {
+      name: 'account_id',
+      label: 'Account ID',
+      placeholder: 'Your IFS account_id',
+    },
+    {
+      name: 'url',
+      label: 'API base URL',
+      placeholder: 'https://www.ifsclients.com/client-app-api',
     },
   ],
 };
