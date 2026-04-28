@@ -219,19 +219,42 @@ export function ProductCombobox({
  *     row that matches exactly still ranks above one that matches
  *     via typo tolerance.
  */
+/**
+ * Normalize weight expressions so "1oz" and "1 oz" tokenize identically.
+ * Applied to BOTH the query and the haystack before any matching, so
+ * the search is unit-spacing-agnostic across every size in the catalog.
+ *
+ * Insertions:
+ *   1oz       → 1 oz       1 oz       → 1 oz       (idempotent)
+ *   1/10oz    → 1/10 oz    1/10 oz    → 1/10 oz
+ *   1/2oz     → 1/2 oz     1.5oz      → 1.5 oz
+ *   100gram   → 100 gram   100grams   → 100 grams
+ *   5kg       → 5 kg       50g        → 50 g
+ *
+ * Decimals + fractions both supported. The unit token must be a real
+ * weight unit (oz / g / kg / gram / grams) at a word boundary so we
+ * don't accidentally split tokens like "20g" inside an ID number.
+ */
+function normalizeWeights(s: string): string {
+  return s.replace(
+    /(\d+(?:[/.]\d+)?)\s*(oz|kg|grams?|g)\b/gi,
+    '$1 $2',
+  );
+}
+
 function rank(
   products: ComboboxProduct[],
   rawQuery: string,
 ): ComboboxProduct[] {
-  const q = rawQuery.trim().toLowerCase();
+  const q = normalizeWeights(rawQuery.trim().toLowerCase());
   if (!q) {
     return [...products].sort((a, b) => a.name.localeCompare(b.name)).slice(0, 200);
   }
   const tokens = q.split(/\s+/).filter(Boolean);
   const scored: Array<{ p: ComboboxProduct; s: number }> = [];
   for (const p of products) {
-    const sku = p.sku.toLowerCase();
-    const name = p.name.toLowerCase();
+    const sku = normalizeWeights(p.sku.toLowerCase());
+    const name = normalizeWeights(p.name.toLowerCase());
     const metal = p.metal.toLowerCase();
     // Single haystack for the per-token presence check. Joined with
     // spaces so tokens can't accidentally bridge two fields
