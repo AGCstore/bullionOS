@@ -86,14 +86,23 @@ export default function AdminShipmentsPage() {
           </p>
         </div>
         <div className="flex flex-col items-end gap-1">
-          <button
-            onClick={pollNow}
-            disabled={polling}
-            className="rounded-md border border-ink-200 px-3 py-1.5 text-xs font-medium hover:bg-ink-50 disabled:opacity-60"
-            title="Ask every carrier for the latest tracking now, instead of waiting for the 2-min cron."
-          >
-            {polling ? 'Polling…' : 'Refresh from carriers'}
-          </button>
+          <div className="flex items-center gap-2">
+            <Link
+              href="/admin/shipments/new-label"
+              className="rounded-md bg-ink-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-ink-800"
+              title="Create a FedEx label via IFS Clients (Phase 2 wizard)"
+            >
+              + New FedEx label · IFS
+            </Link>
+            <button
+              onClick={pollNow}
+              disabled={polling}
+              className="rounded-md border border-ink-200 px-3 py-1.5 text-xs font-medium hover:bg-ink-50 disabled:opacity-60"
+              title="Ask every carrier for the latest tracking now, instead of waiting for the 2-min cron."
+            >
+              {polling ? 'Polling…' : 'Refresh from carriers'}
+            </button>
+          </div>
           {pollFlash && (
             <span className="text-[11px] text-ink-500">{pollFlash}</span>
           )}

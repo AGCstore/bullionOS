@@ -796,8 +796,20 @@ function ShipmentSection({
         )
       ) : (
         <div className="mt-4 border-t border-ink-100 pt-4">
-          <div className="mb-2 text-[11px] font-medium text-ink-500">
-            {hasAny ? 'Add another shipment' : 'Create shipment'}
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <span className="text-[11px] font-medium text-ink-500">
+              {hasAny ? 'Add another shipment' : 'Create shipment'}
+            </span>
+            {/* IFS Phase 2: launch the FedEx-label wizard pre-filled with this
+                invoice's recipient. On submit it writes back to the
+                shipments table, so the label appears in the list above. */}
+            <Link
+              href={`/admin/shipments/new-label?invoice_id=${invoiceId}`}
+              className="rounded-md border border-ink-200 bg-white px-2.5 py-1 text-[11px] font-medium text-ink-700 hover:bg-ink-50"
+              title="Create a FedEx label via IFS — pre-filled with this invoice's recipient"
+            >
+              + Create FedEx label via IFS
+            </Link>
           </div>
           <div className="flex flex-col gap-2 md:flex-row md:flex-wrap">
             <select

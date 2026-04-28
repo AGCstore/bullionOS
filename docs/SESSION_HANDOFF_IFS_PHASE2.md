@@ -1,92 +1,193 @@
-# IFS Phase 2 — Handoff for next session
+# IFS Phase 2 — Handoff (post-build)
 
 ## TL;DR
 
-We tried to mirror ifsclients.com's shipment dashboard inside `/admin/shipments` (Phase 1). **The IFS public API has no list endpoint** — every shipment lookup requires a `tracking_no` or `shipment_id` you already know. Phase 1 panel was removed; the Phase 2 plan is to build the create-label wizard so AGC Desk learns each shipment's tracking number at creation time, then enriches with details via `#28 ca_view_shipment_details.php`.
+Phase 2 wizard shipped. `/admin/shipments/new-label` walks the operator
+through IFS Clients' create-label flow (sender → recipient → service →
+package/insurance → cost preview → submit). Successful labels get
+persisted to `ifs_shipments` and — when the wizard was launched with
+`?invoice_id=X` — also to the local `shipments` table so they appear
+on the invoice detail page alongside UPS/USPS labels. International,
+multi-ship (PR/SR), pickup-scheduling, and email-notification flows
+are explicitly out of scope; Hunter does those on ifsclients.com.
 
-## What's already in place (don't redo)
+## What's in place after this build
 
-### Backend infrastructure (commit `520ee63`, hardening in subsequent commit)
-- **Migration 036** — `ifs_shipments` cache table (one row per shipment, `raw_payload` jsonb for reparse) + `ifs_sync_state` singleton. Both live in prod.
-- **`apps/api/src/ifs/ifs.service.ts`**
-  - `callIfs(creds, endpoint, extra)` — single transport helper. POST form-data with `AppUserName` / `AppPassword` / `account_id` on every request, 30s timeout, surfaces non-JSON error bodies. **Reuse this for every IFS endpoint in Phase 2.**
-  - `testConnection()` — works against `ca_basic_data.php`. Confirms creds reach IFS cleanly.
-  - `runSync()` / `listShipments()` / `getSyncState()` / `mapShipmentRow()` / `extractShipmentArray()` — built but currently dead code (no list endpoint exists). Keep for reference; Phase 2 will likely repurpose `mapShipmentRow` to ingest the `#28` per-shipment response.
-  - `scheduledSync()` — `@Cron` decorator commented out so it doesn't fire against a broken URL every 15 min. Re-enable for per-shipment status refresh once Phase 2 has tracking numbers to refresh.
-- **`apps/api/src/ifs/ifs.controller.ts`** — exposes admin-only:
-  - `GET /admin/ifs/state` (sync metadata)
-  - `GET /admin/ifs/shipments?q=…` (currently returns empty since runSync isn't running)
-  - `POST /admin/ifs/sync` (currently broken — no list endpoint)
-- **Integrations registry** (`integrations.registry.ts`) — `ifs` provider with `app_user_name` / `app_password` / `account_id` / `url`. Test button works.
-- **Credentials are saved encrypted in prod** under `integrations.provider='ifs'` — Hunter has already configured them and confirmed the test passed. **Do not ask him to re-enter creds.**
+### Backend — `apps/api/src/ifs/`
+- **`ifs.service.ts`** — added 16 Phase 2 methods (one per IFS endpoint),
+  all routed through the existing `callIfs()` transport. New helpers:
+  `requireCreds()`, `requireSuccess()`, `compactStrings()`, `toBool()`,
+  `toOptions()`, `joinAddr()`, `buildLabelForm()`. In-memory 1h cache
+  for `ca_basic_data.php` (#2) so the wizard mount is fast. The
+  Phase 1 `runSync()` / `listShipments()` / `mapShipmentRow()` /
+  `scheduledSync()` are unchanged.
+- **`ifs.controller.ts`** — admin-only routes:
+  - `GET /admin/ifs/basic-data` (#2)
+  - `GET /admin/ifs/senders` (#3)
+  - `POST /admin/ifs/senders/get` (#4)
+  - `GET /admin/ifs/recipients?term=…` (#5)
+  - `POST /admin/ifs/service-restriction` (#8)
+  - `POST /admin/ifs/verify-address` (#9)
+  - `POST /admin/ifs/accept-corrected` (#11)
+  - `POST /admin/ifs/zone` (#13)
+  - `POST /admin/ifs/packaging-restriction` (#14)
+  - `POST /admin/ifs/check-weight` (#16)
+  - `POST /admin/ifs/check-declare-value` (#17)
+  - `POST /admin/ifs/hold-for-pickup` (#19)
+  - `POST /admin/ifs/calculate-cost` (#20)
+  - `POST /admin/ifs/labels` (#26 — main submit, takes `{invoice_id?, payload}`)
+  - `POST /admin/ifs/shipment-details` (#28)
+  - `POST /admin/ifs/void` (#31, admin-only)
+- **`dto/wizard.dto.ts`** — class-validator DTOs for every wizard
+  endpoint. `LabelPayloadDto` covers both #20 and #26 (same shape).
+  `pickup_date` is regex-validated as MM-DD-YYYY.
+- **`ifs.module.ts`** — now imports `ShipmentsModule` so
+  `IfsService.createLabel()` can call `ShipmentsService.create()` to
+  link the new label back to its invoice.
 
-### Frontend (after cleanup commit)
-- **`/admin/integrations` IFS card** — fully functional, shows "active" status, Test connection works.
-- **`/admin/shipments` IFS panel** — **REMOVED**. Page is back to its pre-IFS state (just the "Linked to invoices" carrier-tracked table).
+### Frontend — `apps/web/src/app/admin/shipments/new-label/page.tsx`
+- Single-page wizard, 6 stepped sections rendered as collapsible cards
+  with a top stepper bar. Sticky "Back / Next" buttons; each "Next"
+  runs the relevant validator before advancing.
+- **Sender step**: dropdown of saved senders (#3), auto-selects the
+  AGC default by matching `address1.includes('8480 holcomb bridge')`.
+  Falls back to IFS's `primary_id`, then to a literal hardcoded
+  fallback. Operator can edit any field before continuing.
+- **Recipient step**: typeahead search (#5) + free-form. When launched
+  with `?invoice_id=X`, pre-fills from the invoice's client (name,
+  email, phone, address). On Next runs #9 — if FedEx returns a
+  different address, prompts via `window.confirm`; if accepted and
+  the recipient came from the address book, fires #11 to persist.
+- **Service step**: `service_type`, `packaging_type`, `signature_type1`,
+  pickup date, Saturday delivery, residential. On Next: #8 (ZIP/service
+  compat) + #13 (zone_id).
+- **Package step**: weight, dimensions (only when packaging_type =
+  YOUR_PACKAGING), insurance, payment type. On Next: #16 weight check
+  (warning + override on dim mismatch) + #17 insurance check (popup
+  chain via `window.confirm` for >$75k single-piece) + #20 cost
+  preview.
+- **Cost step**: renders `final_amount` + `CostDisplayHtmlArray`
+  table. "Create label" submits #26.
+- **Success step**: tracking number (links to FedEx tracking page),
+  IFS shipment id, label PDF / receipt / return label buttons,
+  "Create another" (preserves sender), "Done" (back to invoice or
+  shipments list), and a Void button (#31) with the loud warning that
+  voiding only cancels the IFS Inforsure insurance — the FedEx label
+  stays scannable.
 
-## What Phase 2 needs to do
+### UI hooks
+- **`/admin/shipments`** — added "+ New FedEx label · IFS" button next
+  to "Refresh from carriers".
+- **`/admin/invoices/[id]` ShipmentSection** — added "+ Create FedEx
+  label via IFS" link next to "Add another shipment" / "Create
+  shipment". Pre-fills via `?invoice_id=...`.
 
-### The create-label wizard
-Build `/admin/shipments/new-label` (or a modal on the invoice detail page) that walks the operator through IFS's create-label flow. Endpoint #26 (`ca_create_label.php`) takes 80+ fields. The wizard mirrors IFS's own UI:
+### Persistence on label-create
+On a successful #26, `IfsService.createLabel()`:
+1. Inserts into `ifs_shipments` with `carrier='FedEx'`,
+   `label_status='ACTIVE'`, sender/recipient/cost/declared_value
+   fields from the wizard payload, `raw_payload` = full
+   `{input, response}` JSON for reparse.
+2. If `invoice_id` was passed, calls `ShipmentsService.create()` with
+   `carrier='fedex'`, `tracking_number=tracking_no`,
+   `weight_lbs=package_weight`, `insurance_amount=declare_value`,
+   `notes='Created via IFS · {ifs_shipment_id}'`. That triggers the
+   standard client notification + makes the row visible everywhere
+   FedEx labels are shown.
+3. The invoice-link insert is wrapped in try/catch — if it fails
+   (e.g. invoice canceled mid-flow), the IFS label still exists and
+   the failure is logged. Operator can manually link via the standard
+   "Add shipment" form.
 
-1. **Sender** — dropdown of saved senders (call `#3 ca_client_address_list.php` → `#4 ca_client_address_data.php` to populate). Default to the first sender.
-2. **Recipient** — search saved recipients (`#5 ca_recipient_list.php`) + free-form entry. On entry, run `#9 ca_verify_recipient_address.php` → if FedEx returns a corrected address, prompt operator to accept (`#11 ca_update_recipient_address.php`).
-3. **Service + packaging** — `service_type` (FedEx, etc.) + `packaging_type`. Restrictions API: `#8 ca_change_zipcode_service.php` (zip+service combo) + `#14 ca_restrict_service_type_from_package_type.php`. `#13 ca_get_zone_id.php` returns the zone_id needed for create.
-4. **Weight + dimensions + insurance** — fields on the form. Validate via `#16 ca_check_package_weight.php` + `#17 ca_check_declare_value.php`.
-5. **Cost preview** — `#20 ca_calculate_cost.php` shows the price before commit.
-6. **Submit** — POST to `#26 ca_create_label.php` with all 80+ fields. Response includes `tracking_no` + label PDF URL/bytes.
-7. **Persist locally** — write a row into `ifs_shipments` (using the existing `mapShipmentRow` shape) AND optionally into the existing `shipments` table tied to an invoice if one was selected at the start of the wizard.
+### Reference doc
+`docs/IFS_API_REFERENCE.md` — extracted spec for every wizard
+endpoint (request fields, response shapes, wizard-step mapping).
+Sourced from the Postman collection + the .docx (since the Postman
+`response: []` arrays are all empty).
 
-### Tying labels to invoices
-The existing `shipments` table (migration 002) already supports multi-shipment per invoice (commit `00784aa`). When the wizard starts from `/admin/invoices/[id]`, default the recipient to the invoice's client + pre-fill the address, and on label-create write a row into `shipments` with the new tracking number. That makes the label appear on the invoice detail page automatically alongside any UPS/USPS/etc labels.
+## What's intentionally NOT done
 
-### Other endpoints worth wiring
-- `#19 ca_get_hold_for_pickup_location.php` — for "Hold at FedEx location" deliveries
-- `#28 ca_view_shipment_details.php` — pull updated tracking + delivery status for a known shipment_id. Use this in a per-shipment "Refresh" button on the invoice detail page. Eventually re-enable the `scheduledSync` cron to refresh all known IFS shipments via this endpoint.
-- `#31 ca_void_shipment.php` — cancel a label. Add a "Void" button on the IFS shipment detail row.
+These are direct extensions once the happy path proves out — they
+were scoped out per Hunter:
 
-## Key files to read before starting Phase 2
+1. **International / customs / AES** — `ProductsID[]`, all `lbp_*`
+   fields, `lb_loading_port_*`, `is_allow_diff_international_customs_value`.
+   Hunter does international labels on ifsclients.com.
+2. **PR/SR multi-ship auto-split** — when #17's popup chain forces a
+   split for >$75k multi-piece, the wizard surfaces an error telling
+   the operator to use ifsclients.com. The `final_amount_2` /
+   `line_items_2` fields ARE rendered in cost preview if IFS returns
+   them, so a future fix can wire the second-parcel inputs without
+   reshuffling the FE.
+3. **FedEx pickup scheduling** (`lb_is_pickup` block) — operators
+   schedule pickups separately.
+4. **Email-notification block** (`NotificationName1` etc.) — clients
+   already get an AGC Desk notification when the local `shipments`
+   row is written.
+5. **Save-as-draft** — `gen_label_save` is hardcoded to `1`. Wire a
+   "Save draft" button + #30 lookup to revive draft mid-flow if needed.
+6. **Recipient hydration via #6** — typeahead returns id+name; the
+   operator currently fills the address themselves. Adding `getRecipient(id)`
+   and pre-filling from #6 is a 30-line addition.
+7. **Per-shipment Refresh button on invoice detail** — `viewShipmentDetails`
+   (#28) is wired backend-side but not exposed on the UI yet.
+   Easy add to `ShipmentSection`.
+8. **Re-enable `scheduledSync` cron** — the `@Cron` decorator on
+   `IfsService.scheduledSync` is still commented out. Once Phase 2 has
+   created enough shipments, flip it on and have the cron iterate
+   `ifs_shipments` calling #28 to refresh `fedex_status` /
+   `delivered_at`.
+9. **Real popup component for #17 popup chain** — currently uses
+   `window.confirm` (functional but ugly). A modal component would
+   show the multi-line message + buttons more cleanly.
 
-- `apps/api/src/ifs/ifs.service.ts` — has the working transport (`callIfs`), the row-mapper (`mapShipmentRow`), and the disabled cron with rationale comments.
-- `apps/api/src/integrations/integrations.registry.ts` — IFS provider definition. **Don't add a new provider** — extend this one.
-- `E:/Coin Photos - iStock/IFS Client App v2.1 O.postman_collection` — full endpoint catalog with field names + descriptions. The .docx in the same folder has more detail (response shapes, enum values) — extract via PowerShell `Expand-Archive` if needed.
-- `apps/api/src/db/migrations/036_ifs_shipments.ts` + `apps/api/src/db/types.ts` (`IfsShipmentsTable`) — local cache shape, already in prod.
-- `apps/web/src/app/admin/invoices/[id]/page.tsx` — `ShipmentSection` component shows how shipments are currently rendered + how the multi-shipment-per-invoice flow works. Phase 2's "tie label to invoice" hook plugs in there.
+## Operational notes (still relevant)
 
-## Decisions already made (don't relitigate)
+- **Hunter is the operator** (id `fb56cd44-523d-4ebb-8809-d286f656d7e0`,
+  hunter@atlantagoldandcoin.com).
+- **Default sender**: "Your ATL Taxidermy / 8480 Holcomb Bridge Rd
+  #200 / Alpharetta, GA 30022". The wizard auto-picks this entry from
+  IFS's saved senders by address-substring match.
+- **Railway deploys auto-run migrations** via `preDeployCommand`. No
+  new migrations in this build — Phase 2 reuses `ifs_shipments`
+  (036) + `shipments` (002, multi per migration 034).
+- **Prod DB public proxy URL**:
+  `railway variables --service agc-postgres --kv | grep DATABASE_PUBLIC_URL`.
+  Internal hostname only resolves inside Railway.
+- **APP_ENCRYPTION_KEY** + **JWT_ACCESS_SECRET** in Railway env (see
+  prior handoff for one-off-script auth recipe).
 
-- **Single transport pattern**: every IFS request goes through `callIfs()` so auth is centralized. Don't sprinkle fetch calls.
-- **Snake-case + camelCase tolerance**: `mapShipmentRow` accepts both. IFS isn't consistent.
-- **Provider-agnostic integration storage**: creds stay in `integrations` table encrypted. Don't add an `ifs_credentials` table.
-- **Backend-side error translation**: surface real Postgres / IFS errors to the admin UI via `BadRequestException` rather than the 500 mask. See `historical-invoices.service.ts` for the pattern.
+## Suggested test plan
 
-## Operational notes
+End-to-end smoke from Hunter (or staff):
 
-- **Hunter is the operator**. He's the admin user with id `fb56cd44-523d-4ebb-8809-d286f656d7e0`. Email: hunter@atlantagoldandcoin.com.
-- **Railway deploys auto-run migrations** via `preDeployCommand` (`node dist/db/migrator.js up`). New migrations apply on push.
-- **APP_ENCRYPTION_KEY** is in Railway env (32-byte base64). For one-off scripts that need to read encrypted credentials, decrypt with AES-256-GCM: nonce=blob[0:12], tag=blob[-16:], ct=blob[12:-16].
-- **Prod DB**: pull the public proxy URL from Railway with `railway variables --service agc-postgres --kv | grep DATABASE_PUBLIC_URL`. The internal hostname `agc-postgres.railway.internal` is only resolvable from inside Railway containers, so local scripts need the public proxy URL.
-- **JWT_ACCESS_SECRET**: in Railway env. For local script auth against prod API, mint with `expiresIn: '15m'` matching the `AccessTokenPayload` shape `{sub, email, role, typ:'access'}`.
-
-## What to ask Hunter at session start
-
-1. Did IFS support reply about an undocumented list endpoint? (He said he'd email them.) If yes, we can revive Phase 1 quickly. If no or no reply, proceed with Phase 2.
-2. Should the Phase 2 wizard live as a standalone `/admin/shipments/new-label` page, or a modal on the invoice detail page (or both)? Default: both — the modal is the common path (creating a label for an invoice we just made), the standalone page handles the rare "ship something not tied to an invoice" case.
-3. What's AGC's default sender? The wizard should pre-fill it. Likely the first entry returned by `#3 ca_client_address_list.php`.
+1. From `/admin/integrations` confirm the IFS card still shows "active"
+   and "Test connection" passes.
+2. Navigate to `/admin/shipments/new-label` directly (no invoice).
+   - Sender dropdown should auto-pick the AGC default.
+   - Type a known recipient (search → typeahead).
+   - Pick FedEx Ground / FedEx Envelope, today's date.
+   - Weight 1 lb, insurance $0.
+   - Cost preview should populate.
+   - Submit; success screen shows tracking + label PDF link.
+   - Click "Void"; should succeed with the warning modal.
+3. From a finalized invoice's detail page, click "+ Create FedEx label
+   via IFS" — should land on the wizard with recipient pre-filled.
+   Submit; verify the new shipment appears in the invoice's Shipments
+   section with `carrier='FEDEX'` and the tracking number.
+4. Negative tests:
+   - Submit with an invalid ZIP / international country → IFS error
+     surfaced as a 400 with the message in the wizard.
+   - Insurance > $75k → first/second popup chain renders.
 
 ## Most-recent commits (context)
 
 ```
-[next] cleanup IFS Phase 1 + handoff
+[next] feat(ifs): Phase 2 — create-label wizard
+       (16 service methods, controller routes, DTOs, /admin/shipments/new-label
+        wizard page, invoice + standalone entry points)
+[prior] cleanup IFS Phase 1 + handoff
 520ee63 feat(ifs): Phase 1 — mirror ifsclients.com shipment dashboard
 70cae43 feat(invoices): unit-spacing-agnostic fuzzy product search
-32a89bf feat(invoices): payment-method filter on the list page
-4b7ac0c fix(clients): show 'Re-enable portal' button for disabled-but-linked accounts
-351e1ab fix(clients): re-enable portal access works after disable
-ba48d8f feat(clients): auto-fill client record from ID OCR (blank fields only)
-efff95f fix(invoices): getById 500 — users table has no first_name column
-1b457e7 feat(invoices): show Created By on invoice detail + PDF
-6babf97 chore(eod-reports): shift cron from 18:00 to 17:00 ET
-0bb5a07 feat(eod-reports): merge app_settings extra_recipients into send list
-29965a6 feat(eod-reports): daily 5pm Mon-Fri summary email
+…
 ```
