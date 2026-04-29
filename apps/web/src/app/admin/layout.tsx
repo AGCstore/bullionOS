@@ -99,6 +99,20 @@ const NAV_ITEMS: NavEntry[] = [
       { href: '/admin/aurbitrage', label: 'Aurbitrage' },
     ],
   },
+  // Scrap workflows live under their own parent so the calculator
+  // and the buy/sell scrap-invoice flow are visible without burying
+  // them inside Invoices. Lines created here are ad-hoc only — no
+  // catalog products, so scrap never appears on /admin/pricesheet
+  // or the buy/sell sheets. KPI rolls scrap under "other" until
+  // operators ask for per-metal categorization.
+  {
+    href: '/admin/scrap/calculator',
+    label: 'Scrap',
+    children: [
+      { href: '/admin/scrap/calculator', label: 'Scrap Calculator' },
+      { href: '/admin/scrap/invoice', label: 'Scrap Invoice' },
+    ],
+  },
   {
     href: '/admin/settings',
     label: 'Settings',
