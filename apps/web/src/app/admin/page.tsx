@@ -112,12 +112,16 @@ export default function AdminDashboard() {
             <Stat label="Committed invoices" value={String(committed.length)} />
             <Stat
               label="Buy volume"
-              value={invoices ? `$${buyTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '—'}
+              // Whole-dollar precision on the dashboard rollup — the
+              // cents are noise at the daily-summary aggregation level
+              // and used to push 8+ digit values past the card's right
+              // edge on mobile (grid-cols-2 → ~170px wide each).
+              value={invoices ? `$${buyTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}
               tone="buy"
             />
             <Stat
               label="Sell volume"
-              value={invoices ? `$${sellTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '—'}
+              value={invoices ? `$${sellTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}
               tone="sell"
             />
           </section>
@@ -156,9 +160,17 @@ function Stat({
   const valueColor =
     tone === 'buy' ? 'text-buy-700' : tone === 'sell' ? 'text-sell-700' : 'text-ink-900';
   return (
-    <div className={`rounded-xl border p-5 ${accent}`}>
+    // overflow-hidden + min-w-0 + truncate on the inner value lets the
+    // card shrink correctly inside a 2-col grid on narrow phones.
+    // text-xl on mobile / text-2xl on md+ keeps headline values
+    // readable without forcing the operator to scroll horizontally
+    // when daily volume runs to 6-7 digits.
+    <div className={`rounded-xl border p-5 ${accent} overflow-hidden`}>
       <div className="text-xs font-medium uppercase tracking-wide text-ink-400">{label}</div>
-      <div className={`mt-2 text-2xl font-semibold tabular-nums ${valueColor}`}>
+      <div
+        className={`mt-2 truncate text-xl font-semibold tabular-nums md:text-2xl ${valueColor}`}
+        title={value}
+      >
         {value}
       </div>
     </div>

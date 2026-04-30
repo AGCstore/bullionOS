@@ -12,8 +12,13 @@ interface TokenResponse {
 interface AuthState {
   user: MeResponse | null;
   loading: boolean;
-  login: (input: LoginInput) => Promise<void>;
-  register: (input: RegisterInput) => Promise<void>;
+  /**
+   * Resolves with the freshly-fetched user. Returning the value lets
+   * callers (e.g. the login page) make role-based routing decisions
+   * without waiting for a React re-render to surface the new state.
+   */
+  login: (input: LoginInput) => Promise<MeResponse>;
+  register: (input: RegisterInput) => Promise<MeResponse>;
   logout: () => Promise<void>;
   refreshMe: () => Promise<void>;
 }
@@ -40,29 +45,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [refreshMe]);
 
   const login = useCallback(
-    async (input: LoginInput) => {
+    async (input: LoginInput): Promise<MeResponse> => {
       const tokens = await apiFetch<TokenResponse>(
         '/auth/login',
         { method: 'POST', body: JSON.stringify(input) },
         { skipAuth: true },
       );
       setAccessToken(tokens.access_token);
-      await refreshMe();
+      // Inline /auth/me fetch (vs. refreshMe()) so we can return the
+      // user synchronously to the caller. State setter is fire-and-
+      // forget — React batches it before the next render.
+      const me = await apiFetch<MeResponse>('/auth/me');
+      setUser(me);
+      return me;
     },
-    [refreshMe],
+    [],
   );
 
   const register = useCallback(
-    async (input: RegisterInput) => {
+    async (input: RegisterInput): Promise<MeResponse> => {
       const res = await apiFetch<{ tokens: TokenResponse }>(
         '/auth/register',
         { method: 'POST', body: JSON.stringify(input) },
         { skipAuth: true },
       );
       setAccessToken(res.tokens.access_token);
-      await refreshMe();
+      const me = await apiFetch<MeResponse>('/auth/me');
+      setUser(me);
+      return me;
     },
-    [refreshMe],
+    [],
   );
 
   const logout = useCallback(async () => {

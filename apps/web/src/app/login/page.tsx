@@ -25,8 +25,15 @@ export default function LoginPage() {
     }
     setSubmitting(true);
     try {
-      await login(parsed.data);
-      router.replace('/dashboard');
+      const me = await login(parsed.data);
+      // Admins + staff land on the back-office; clients on the portal.
+      // Operators previously had to take an extra click via the
+      // "Admin →" link from /dashboard every time they signed in.
+      const dest =
+        me.role === 'admin' || me.role === 'staff'
+          ? '/admin'
+          : '/dashboard';
+      router.replace(dest);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Login failed');
     } finally {
