@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useState } from 'react';
+import { use, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -633,6 +633,8 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
       <PaymentMethodsPanel invoice={data} />
 
       <EditHeaderSection invoice={data} />
+
+      <InvoiceAttachmentsSection invoiceId={data.id} />
 
       <ShipmentSection invoiceId={data.id} invoiceStatus={data.status} />
     </div>
@@ -1388,4 +1390,265 @@ function formatPaymentMethod(s: string): string {
   const upper = s.toUpperCase();
   if (upper === 'ACH') return 'ACH';
   return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+}
+
+/**
+ * Operator-only photo / file attachments tied to this invoice.
+ * Surfaces the three compliance buckets the scrap invoice flow
+ * captures (ID, client photo, items), but renders them inline for
+ * any invoice that has attachments — operators can also add more
+ * here after the fact (forgot to take the photo at intake, etc.).
+ *
+ * Visibility note: this section is rendered ONLY on the admin
+ * detail page; the PDF generator and the client-portal invoice
+ * view both ignore the underlying invoice_attachments table by
+ * design.
+ */
+interface InvoiceAttachmentMeta {
+  id: string;
+  invoice_id: string;
+  kind: string;
+  filename: string;
+  mime: string;
+  size_bytes: number;
+  created_at: string;
+}
+
+const ATTACHMENT_BUCKETS: Array<{
+  kind: 'id' | 'client_photo' | 'item' | 'other';
+  label: string;
+  help: string;
+  single: boolean;
+}> = [
+  {
+    kind: 'id',
+    label: 'ID',
+    help: "Customer's driver's license, passport, or government photo ID.",
+    single: false,
+  },
+  {
+    kind: 'client_photo',
+    label: 'Client photo',
+    help: 'Customer themselves, ideally with the items.',
+    single: true,
+  },
+  {
+    kind: 'item',
+    label: 'Items',
+    help: 'Each piece of scrap or a wide shot covering all of it.',
+    single: false,
+  },
+  {
+    kind: 'other',
+    label: 'Other',
+    help: 'Anything else relevant to this transaction.',
+    single: false,
+  },
+];
+
+function InvoiceAttachmentsSection({ invoiceId }: { invoiceId: string }) {
+  const qc = useQueryClient();
+  const { data: attachments } = useQuery<InvoiceAttachmentMeta[]>({
+    queryKey: ['admin', 'invoice', invoiceId, 'attachments'],
+    queryFn: () =>
+      apiFetch<InvoiceAttachmentMeta[]>(
+        `/admin/invoices/${invoiceId}/attachments`,
+      ),
+  });
+
+  const grouped = useMemo(() => {
+    const out: Record<string, InvoiceAttachmentMeta[]> = {};
+    for (const a of attachments ?? []) {
+      (out[a.kind] ??= []).push(a);
+    }
+    return out;
+  }, [attachments]);
+
+  // Hide the section entirely when there's nothing attached AND no
+  // bucket has staged uploads in flight — saves vertical space on the
+  // 99% of invoices (regular bullion buys/sells) where compliance
+  // photos aren't part of the workflow.
+  const hasAny = (attachments ?? []).length > 0;
+
+  const [openAdd, setOpenAdd] = useState(false);
+
+  return (
+    <section className="mt-8 rounded-xl border border-ink-200 bg-white p-5">
+      <div className="flex items-baseline justify-between gap-3">
+        <div>
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-ink-400">
+            Attachments
+            {hasAny && ` · ${attachments!.length}`}
+          </h2>
+          <p className="mt-1 text-[11px] text-ink-400">
+            Operator-only — not shown on the printed or client-portal invoice.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setOpenAdd((v) => !v)}
+          className="rounded-md border border-ink-200 px-2.5 py-1 text-xs font-medium hover:bg-ink-50"
+        >
+          {openAdd ? 'Cancel' : hasAny ? '+ Add more' : '+ Add photos'}
+        </button>
+      </div>
+
+      {hasAny && (
+        <div className="mt-4 space-y-4">
+          {ATTACHMENT_BUCKETS.map((bucket) => {
+            const items = grouped[bucket.kind] ?? [];
+            if (items.length === 0) return null;
+            return (
+              <div key={bucket.kind}>
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-500">
+                  {bucket.label} · {items.length}
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+                  {items.map((a) => (
+                    <AttachmentThumb
+                      key={a.id}
+                      meta={a}
+                      onDeleted={() =>
+                        qc.invalidateQueries({
+                          queryKey: ['admin', 'invoice', invoiceId, 'attachments'],
+                        })
+                      }
+                    />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {openAdd && (
+        <div className="mt-5 space-y-3 border-t border-ink-100 pt-4">
+          {ATTACHMENT_BUCKETS.map((bucket) => (
+            <AttachmentUploader
+              key={bucket.kind}
+              invoiceId={invoiceId}
+              bucket={bucket}
+              onUploaded={() =>
+                qc.invalidateQueries({
+                  queryKey: ['admin', 'invoice', invoiceId, 'attachments'],
+                })
+              }
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function AttachmentThumb({
+  meta,
+  onDeleted,
+}: {
+  meta: InvoiceAttachmentMeta;
+  onDeleted: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  // The /api/v1 prefix is wired by the rewrite rule in next.config.mjs;
+  // we hit /api/v1/admin/invoice-attachments/:id/file and the proxy
+  // forwards it to the API with cookie + auth header attached.
+  const url = `/api/v1/admin/invoice-attachments/${meta.id}/file`;
+  const isImage = meta.mime.startsWith('image/');
+  async function remove() {
+    if (!window.confirm(`Remove "${meta.filename}"? This cannot be undone.`))
+      return;
+    setBusy(true);
+    try {
+      await apiFetch(`/admin/invoice-attachments/${meta.id}`, {
+        method: 'DELETE',
+      });
+      onDeleted();
+    } catch (err) {
+      alert(err instanceof ApiError ? err.message : 'Delete failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="relative overflow-hidden rounded-md border border-ink-200 bg-ink-50">
+      <a href={url} target="_blank" rel="noopener noreferrer">
+        {isImage ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={url}
+            alt={meta.filename}
+            className="aspect-square w-full object-cover"
+          />
+        ) : (
+          <div className="flex aspect-square w-full items-center justify-center text-xs text-ink-500">
+            {meta.mime}
+          </div>
+        )}
+      </a>
+      <button
+        type="button"
+        onClick={remove}
+        disabled={busy}
+        title="Remove"
+        className="absolute right-1 top-1 rounded-full bg-white/90 px-2 py-0.5 text-xs text-red-700 shadow hover:bg-white disabled:opacity-50"
+      >
+        ✕
+      </button>
+      <div className="px-2 py-1 text-[10px] text-ink-500 truncate" title={meta.filename}>
+        {meta.filename}
+      </div>
+    </div>
+  );
+}
+
+function AttachmentUploader({
+  invoiceId,
+  bucket,
+  onUploaded,
+}: {
+  invoiceId: string;
+  bucket: (typeof ATTACHMENT_BUCKETS)[number];
+  onUploaded: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  async function pick(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    setBusy(true);
+    try {
+      for (const file of Array.from(files)) {
+        const fd = new FormData();
+        fd.append('file', file, file.name);
+        await apiFetch(
+          `/admin/invoices/${invoiceId}/attachments?kind=${bucket.kind}`,
+          { method: 'POST', body: fd },
+        );
+      }
+      onUploaded();
+    } catch (err) {
+      alert(err instanceof ApiError ? err.message : 'Upload failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <label className="flex cursor-pointer items-center justify-between gap-3 rounded-md border border-dashed border-ink-300 bg-ink-50/40 px-3 py-2 hover:bg-ink-50">
+      <div>
+        <div className="text-xs font-semibold text-ink-700">{bucket.label}</div>
+        <div className="text-[10px] text-ink-400">{bucket.help}</div>
+      </div>
+      <span className="text-xs text-ink-600">
+        {busy ? 'Uploading…' : '+ Take / upload'}
+      </span>
+      <input
+        type="file"
+        accept="image/*"
+        capture="environment"
+        multiple={!bucket.single}
+        onChange={(e) => pick(e.target.files)}
+        className="hidden"
+        disabled={busy}
+      />
+    </label>
+  );
 }

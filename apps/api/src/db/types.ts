@@ -526,7 +526,32 @@ export interface DB {
   aurbitrage_sync_state: AurbitrageSyncStateTable;
   ifs_shipments: IfsShipmentsTable;
   ifs_sync_state: IfsSyncStateTable;
+  invoice_attachments: InvoiceAttachmentsTable;
 }
+
+// ===== Invoice attachments (migration 037) =====
+
+/**
+ * Per-invoice photo / file attachments. Operator-only (PDF gen and
+ * client portal both ignore this table). Used by the scrap-invoice
+ * flow to record the customer's ID, a photo of the customer, and
+ * photo(s) of the items at the time of intake — Georgia precious-
+ * metal-dealer compliance + general fraud-prevention audit trail.
+ */
+export interface InvoiceAttachmentsTable {
+  id: Generated<string>;
+  invoice_id: string;
+  /** 'id' | 'client_photo' | 'item' | 'other' — text, no DB enum. */
+  kind: ColumnType<string, string | undefined, string>;
+  filename: string;
+  mime: string;
+  bytes: Buffer;
+  size_bytes: number;
+  uploaded_by_user_id: string | null;
+  created_at: Generated<Timestamp>;
+}
+export type InvoiceAttachment = Selectable<InvoiceAttachmentsTable>;
+export type NewInvoiceAttachment = Insertable<InvoiceAttachmentsTable>;
 
 // ===== IFS shipments (migration 036) =====
 

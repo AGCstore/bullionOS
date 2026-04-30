@@ -4,11 +4,13 @@ import { SettingsModule } from '../settings/settings.module';
 import { AdminInvoicesController } from './invoices.controller';
 import { InvoicePdfService } from './invoice-pdf.service';
 import { InvoicesService } from './invoices.service';
+import { InvoiceAttachmentsController } from './invoice-attachments.controller';
+import { InvoiceAttachmentsService } from './invoice-attachments.service';
 
 @Module({
   imports: [PricingModule, SettingsModule],
-  controllers: [AdminInvoicesController],
-  providers: [InvoicesService, InvoicePdfService],
+  controllers: [AdminInvoicesController, InvoiceAttachmentsController],
+  providers: [InvoicesService, InvoicePdfService, InvoiceAttachmentsService],
   exports: [InvoicesService, InvoicePdfService],
 })
 export class InvoicesModule {}

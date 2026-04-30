@@ -32,6 +32,7 @@ import {
   snapshotName,
   type ScrapRow,
 } from '../_lib/scrap-types';
+import { PhotoCapture, type PendingPhoto } from '../_lib/photo-capture';
 
 type PaymentMethod =
   | 'wire'
@@ -81,7 +82,16 @@ export default function ScrapInvoicePage() {
   const [txDate, setTxDate] = useState(localDateInput());
   const [txTime, setTxTime] = useState(localTimeInput());
   const [submitting, setSubmitting] = useState(false);
+  const [submitProgress, setSubmitProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Compliance photos held in memory until the invoice POST returns
+  // an id; then each is uploaded to the new invoice in a follow-up
+  // pass. Three buckets so the operator's mental model maps 1:1 to
+  // the UI labels (ID, Client photo, Items).
+  const [idPhotos, setIdPhotos] = useState<PendingPhoto[]>([]);
+  const [clientPhotos, setClientPhotos] = useState<PendingPhoto[]>([]);
+  const [itemPhotos, setItemPhotos] = useState<PendingPhoto[]>([]);
 
   // ----- Hydration: from calculator sessionStorage if present -----
   useEffect(() => {
@@ -194,6 +204,7 @@ export default function ScrapInvoicePage() {
       return;
     }
     setSubmitting(true);
+    setSubmitProgress('Creating invoice…');
     try {
       const usableRows = rows.filter(
         (r) => parseFloat(r.weight) > 0 && parseFloat(r.spot_per_oz) > 0,
@@ -226,11 +237,54 @@ export default function ScrapInvoicePage() {
         '/admin/invoices',
         { method: 'POST', body: JSON.stringify(payload) },
       );
-      // Refetch the invoice list + dashboard so the new row appears.
+
+      // Upload compliance photos (if any) to the freshly-created
+      // invoice. Done sequentially per kind so the progress UI can
+      // report which bucket is active. Failures here don't roll back
+      // the invoice — the operator can retry uploads from the invoice
+      // detail page (which surfaces an attachments section). Surface
+      // the failure as an inline error so they see it before nav.
+      const buckets: Array<{ kind: 'id' | 'client_photo' | 'item'; files: PendingPhoto[]; label: string }> = [
+        { kind: 'id', files: idPhotos, label: 'ID' },
+        { kind: 'client_photo', files: clientPhotos, label: 'client photo' },
+        { kind: 'item', files: itemPhotos, label: 'item' },
+      ];
+      const failed: string[] = [];
+      for (const bucket of buckets) {
+        for (let i = 0; i < bucket.files.length; i++) {
+          const photo = bucket.files[i];
+          setSubmitProgress(
+            `Uploading ${bucket.label} (${i + 1}/${bucket.files.length})…`,
+          );
+          try {
+            const fd = new FormData();
+            fd.append('file', photo.file, photo.file.name);
+            await apiFetch(
+              `/admin/invoices/${created.id}/attachments?kind=${bucket.kind}`,
+              { method: 'POST', body: fd },
+            );
+          } catch (err) {
+            failed.push(
+              `${bucket.label}: ${err instanceof ApiError ? err.message : 'upload failed'}`,
+            );
+          }
+        }
+      }
+
       await qc.invalidateQueries({ queryKey: ['admin', 'invoices'] });
+
+      if (failed.length > 0) {
+        setError(
+          `Invoice created, but some uploads failed: ${failed.join('; ')}. Retry from the invoice detail page.`,
+        );
+        setSubmitProgress(null);
+        // Still navigate — the invoice exists, attachments can be
+        // re-added from /admin/invoices/[id].
+      }
       router.push(`/admin/invoices/${created.id}`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to create invoice');
+      setSubmitProgress(null);
       setSubmitting(false);
     }
   }
@@ -485,6 +539,38 @@ export default function ScrapInvoicePage() {
         />
       </section>
 
+      {/* Compliance photos.
+          These three buckets cover Georgia's precious-metal-dealer
+          requirements + general fraud-prevention practice. All three
+          are operator-only — they DO NOT appear on the printed
+          invoice or the client-portal view. Stored against the
+          invoice via /admin/invoices/:id/attachments after the
+          invoice POST returns its id. */}
+      <div className="mt-4 space-y-3">
+        <p className="text-[11px] uppercase tracking-wide text-ink-400">
+          Compliance photos · operator-only · not shown on printed or digital invoice
+        </p>
+        <PhotoCapture
+          label="Attach ID"
+          help="Customer's driver's license, passport, or government-issued photo ID. Front + back if needed."
+          files={idPhotos}
+          onChange={setIdPhotos}
+        />
+        <PhotoCapture
+          label="Client Photo"
+          help="Customer themselves, ideally with the items they're selling."
+          single
+          files={clientPhotos}
+          onChange={setClientPhotos}
+        />
+        <PhotoCapture
+          label="Item(s)"
+          help="Each piece of scrap or a wide shot covering all of it. Multiple photos OK."
+          files={itemPhotos}
+          onChange={setItemPhotos}
+        />
+      </div>
+
       {error && (
         <div className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
           {error}
@@ -504,7 +590,9 @@ export default function ScrapInvoicePage() {
           disabled={submitting}
           className="rounded-md bg-ink-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-ink-800 disabled:opacity-60"
         >
-          {submitting ? 'Creating…' : `Create ${type} invoice →`}
+          {submitting
+            ? submitProgress ?? 'Working…'
+            : `Create ${type} invoice →`}
         </button>
       </div>
     </div>
