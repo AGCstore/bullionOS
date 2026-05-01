@@ -75,6 +75,7 @@ const NAV_ITEMS: NavEntry[] = [
     href: '/admin/clients',
     label: 'Clients',
     children: [
+      { href: '/admin/clients/tracking', label: 'Client tracking' },
       { href: '/admin/requests', label: 'Deal requests' },
       { href: '/admin/quotes', label: 'Quotes' },
     ],

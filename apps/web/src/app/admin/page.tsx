@@ -128,6 +128,14 @@ export default function AdminDashboard() {
         );
       })()}
 
+      {/* New / Returning client KPI — sits above the daily update so
+          it's the first thing operators see after the volume row.
+          Sourced from calendar event titles ("(N)" / "(R)") via
+          /admin/clients/tracking. */}
+      <section className="mt-10">
+        <ClientTypeKpi />
+      </section>
+
       {/* Daily update card — the main feed element. Comments thread below. */}
       <section className="mt-10">
         <DailyUpdateCard />
@@ -173,6 +181,183 @@ function Stat({
       >
         {value}
       </div>
+    </div>
+  );
+}
+
+// ─── Client Type KPI (New vs Returning, month-over-month) ─────────────
+
+interface TrackingBucket {
+  bucket_start: string;
+  bucket_label: string;
+  new_count: number;
+  returning_count: number;
+  cumulative_new: number;
+  total: number;
+}
+
+/**
+ * Dashboard widget rolling up calendar bookings tagged "(N)" / "(R)"
+ * by operators in the appointment title. Shows current month + prior
+ * month side-by-side with a delta and a 6-month sparkline of new
+ * clients. Source endpoint: GET /admin/clients/tracking.
+ */
+function ClientTypeKpi() {
+  const { data, isLoading, error } = useQuery<{
+    months: number;
+    buckets: TrackingBucket[];
+  }>({
+    queryKey: ['admin', 'clients', 'tracking', 6],
+    queryFn: () =>
+      apiFetch<{ months: number; buckets: TrackingBucket[] }>(
+        '/admin/clients/tracking?months=6',
+      ),
+    // Operators add (N)/(R) to titles a couple times a day at most;
+    // 5-min stale window is plenty fresh for a dashboard tile.
+    staleTime: 5 * 60_000,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="rounded-xl border border-ink-200 bg-white p-5 text-sm text-ink-400">
+        Loading client tracking…
+      </div>
+    );
+  }
+  if (error || !data || data.buckets.length === 0) {
+    return (
+      <div className="rounded-xl border border-amber-200 bg-amber-50 p-5">
+        <div className="text-xs font-semibold uppercase tracking-wide text-amber-800">
+          Client tracking
+        </div>
+        <p className="mt-2 text-sm text-amber-900">
+          {error
+            ? 'Calendar integration not configured — can\'t pull (N)/(R) tags right now.'
+            : 'No calendar events with (N) or (R) tags found.'}
+        </p>
+      </div>
+    );
+  }
+
+  // Buckets are oldest-first; current month is last, prior is second-to-last.
+  const buckets = data.buckets;
+  const current = buckets[buckets.length - 1];
+  const prior = buckets.length >= 2 ? buckets[buckets.length - 2] : null;
+  const newDelta = prior ? current.new_count - prior.new_count : null;
+  const retDelta = prior ? current.returning_count - prior.returning_count : null;
+  const maxNew = Math.max(1, ...buckets.map((b) => b.new_count));
+
+  return (
+    <div className="rounded-xl border border-ink-200 bg-white p-5">
+      <div className="flex items-baseline justify-between gap-3">
+        <div>
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-ink-400">
+            Client tracking · this month
+          </h2>
+          <p className="mt-0.5 text-[11px] text-ink-400">
+            From calendar titles tagged (N) / (R). Untagged events skipped.
+          </p>
+        </div>
+        <Link
+          href="/admin/clients/tracking"
+          className="text-xs text-ink-500 underline-offset-2 hover:underline"
+        >
+          full history →
+        </Link>
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-3">
+        <KpiTile
+          label={`New · ${current.bucket_label}`}
+          value={current.new_count}
+          delta={newDelta}
+          deltaLabel={prior ? `vs ${prior.bucket_label}` : null}
+          tone="emerald"
+        />
+        <KpiTile
+          label={`Returning · ${current.bucket_label}`}
+          value={current.returning_count}
+          delta={retDelta}
+          deltaLabel={prior ? `vs ${prior.bucket_label}` : null}
+          tone="sky"
+        />
+        <div className="col-span-2 md:col-span-1">
+          <div className="text-[11px] font-medium uppercase tracking-wide text-ink-400">
+            Last 6 months · new
+          </div>
+          <div className="mt-2 flex h-16 items-end gap-1">
+            {buckets.map((b) => {
+              const h = b.new_count > 0 ? Math.max(6, (b.new_count / maxNew) * 100) : 4;
+              const isCurrent = b === current;
+              return (
+                <div
+                  key={b.bucket_start}
+                  title={`${b.bucket_label}: ${b.new_count} new · ${b.returning_count} returning`}
+                  className="flex-1 cursor-default"
+                >
+                  <div
+                    className={
+                      'rounded-sm ' +
+                      (isCurrent ? 'bg-emerald-600' : 'bg-emerald-300')
+                    }
+                    style={{ height: `${h}%` }}
+                  />
+                  <div className="mt-1 truncate text-center text-[9px] text-ink-400">
+                    {b.bucket_label.slice(0, 3)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function KpiTile({
+  label,
+  value,
+  delta,
+  deltaLabel,
+  tone,
+}: {
+  label: string;
+  value: number;
+  delta: number | null;
+  deltaLabel: string | null;
+  tone: 'emerald' | 'sky';
+}) {
+  const accent =
+    tone === 'emerald'
+      ? 'border-emerald-200 bg-emerald-50'
+      : 'border-sky-200 bg-sky-50';
+  const valueColor = tone === 'emerald' ? 'text-emerald-800' : 'text-sky-800';
+  const deltaSign = delta !== null && delta > 0 ? '+' : '';
+  const deltaColor =
+    delta === null
+      ? 'text-ink-400'
+      : delta > 0
+        ? 'text-emerald-700'
+        : delta < 0
+          ? 'text-red-700'
+          : 'text-ink-500';
+  return (
+    <div className={`rounded-md border p-3 ${accent}`}>
+      <div className="text-[11px] font-medium uppercase tracking-wide text-ink-500 truncate">
+        {label}
+      </div>
+      <div
+        className={`mt-1 text-2xl font-semibold tabular-nums ${valueColor}`}
+      >
+        {value}
+      </div>
+      {delta !== null && deltaLabel && (
+        <div className={`mt-0.5 text-[11px] ${deltaColor}`}>
+          {deltaSign}
+          {delta} {deltaLabel}
+        </div>
+      )}
     </div>
   );
 }

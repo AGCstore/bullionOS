@@ -299,6 +299,117 @@ export class CalendarService {
     }));
   }
 
+  /**
+   * New / Returning client tracking from calendar event titles.
+   *
+   * Operators tag bookings in Google Calendar with "(N)" for new
+   * clients and "(R)" for returning clients in the event title.
+   * Aggregates events into monthly buckets in America/New_York wall-
+   * clock time. Skips:
+   *   - events without an (N) or (R) tag
+   *   - events whose title contains "cancel" / "canceled" / "cancelled"
+   *     (operators sometimes prefix the title with the cancel marker
+   *     instead of deleting the event)
+   *   - events with Google status === 'cancelled' (the API filters
+   *     these out by default with showDeleted=false, but check
+   *     defensively in case the call configuration changes)
+   *
+   * Returns one bucket per month in the requested range, oldest first,
+   * including months with zero qualifying events.
+   */
+  async getClientTrackingMonthly(months: number): Promise<
+    Array<{
+      bucket_start: string; // YYYY-MM-01 in ET
+      bucket_label: string; // "April 2026"
+      new_count: number;
+      returning_count: number;
+    }>
+  > {
+    const safeMonths = Math.max(1, Math.min(48, Math.floor(months)));
+    const creds = await this.requireReadyCreds();
+    const calendar = this.calendar(creds);
+
+    // Anchor to the first of the current month in ET, then walk back
+    // safeMonths months. UTC math — ET vs UTC offset doesn't change
+    // the calendar-month boundary for an "Apr 1 00:00 ET" anchor.
+    const tz = creds.timezone || 'America/New_York';
+    const now = new Date();
+    const etYM = etYearMonth(now, tz);
+    const startMonth = addMonths(etYM, -(safeMonths - 1));
+    const endMonth = addMonths(etYM, 1); // exclusive upper bound
+
+    const timeMinIso = etMonthStartIso(startMonth, tz);
+    const timeMaxIso = etMonthStartIso(endMonth, tz);
+
+    // Walk pagination — events.list caps at 250/page. AGC's volume
+    // (a few hundred bookings/month tops) usually fits in 1-2 pages
+    // even at 12 months, but the loop is safe against any range.
+    const items: calendar_v3.Schema$Event[] = [];
+    let pageToken: string | undefined;
+    do {
+      const res = await calendar.events.list({
+        calendarId: creds.calendar_id,
+        timeMin: timeMinIso,
+        timeMax: timeMaxIso,
+        singleEvents: true,
+        orderBy: 'startTime',
+        maxResults: 250,
+        pageToken,
+        showDeleted: false,
+      });
+      for (const ev of res.data.items ?? []) items.push(ev);
+      pageToken = res.data.nextPageToken ?? undefined;
+    } while (pageToken);
+
+    // Pre-build the bucket array so months with zero qualifying events
+    // still appear in the response — KPI / chart rendering simpler.
+    const buckets = new Map<
+      string,
+      { bucket_start: string; bucket_label: string; new_count: number; returning_count: number }
+    >();
+    for (let i = 0; i < safeMonths; i++) {
+      const ym = addMonths(startMonth, i);
+      const key = ymKey(ym);
+      buckets.set(key, {
+        bucket_start: `${key}-01`,
+        bucket_label: ymLabel(ym),
+        new_count: 0,
+        returning_count: 0,
+      });
+    }
+
+    for (const ev of items) {
+      const title = (ev.summary ?? '').trim();
+      if (!title) continue;
+      // Exclude cancelled events even though showDeleted=false should
+      // already filter them — defense-in-depth, plus catch operator
+      // titles like "(canceled) Buy appt — John".
+      if (ev.status === 'cancelled') continue;
+      if (/\bcancell?ed\b/i.test(title)) continue;
+
+      // Check for the (N) / (R) marker. Word-boundary safe: a literal
+      // "(N)" or "(R)" surrounded by non-letter chars. Case-insensitive
+      // so "(n)" / "(r)" land in the same buckets.
+      const isNew = /\((?:n|new)\)/i.test(title);
+      const isReturning = /\((?:r|return|returning)\)/i.test(title);
+      if (!isNew && !isReturning) continue;
+
+      const startIso =
+        (ev.start?.dateTime ?? ev.start?.date) ?? '';
+      if (!startIso) continue;
+      const start = new Date(startIso);
+      if (Number.isNaN(start.getTime())) continue;
+
+      const ym = etYearMonth(start, tz);
+      const bucket = buckets.get(ymKey(ym));
+      if (!bucket) continue; // outside range; rare but possible
+      if (isNew) bucket.new_count += 1;
+      else if (isReturning) bucket.returning_count += 1;
+    }
+
+    return Array.from(buckets.values());
+  }
+
   /** Admin: cancel an event on the target calendar. */
   async cancelEvent(eventId: string, sendUpdates: 'all' | 'none' = 'all'): Promise<void> {
     const creds = await this.requireReadyCreds();
@@ -500,4 +611,67 @@ function tzOffsetMinutes(tz: string, when: Date): number {
   const h = Number(m[2]);
   const mm = Number(m[3] ?? '0');
   return sign * (h * 60 + mm);
+}
+
+/** Year + month tuple, 1-indexed month — keeps the helpers below readable. */
+interface YearMonth {
+  year: number;
+  month: number; // 1..12
+}
+
+/** YYYY-MM key for bucket lookup. */
+function ymKey(ym: YearMonth): string {
+  return `${ym.year}-${String(ym.month).padStart(2, '0')}`;
+}
+
+/** Display label like "April 2026". Pure formatting, no tz dance. */
+function ymLabel(ym: YearMonth): string {
+  return new Date(Date.UTC(ym.year, ym.month - 1, 1)).toLocaleDateString(
+    'en-US',
+    { month: 'long', year: 'numeric', timeZone: 'UTC' },
+  );
+}
+
+/** Add (or subtract) months, normalizing across year boundaries. */
+function addMonths(ym: YearMonth, n: number): YearMonth {
+  const total = ym.year * 12 + (ym.month - 1) + n;
+  return {
+    year: Math.floor(total / 12),
+    month: (((total % 12) + 12) % 12) + 1,
+  };
+}
+
+/**
+ * Year/month of `when` in the given IANA tz. Uses Intl.DateTimeFormat
+ * to project the UTC instant into the target wall-clock — handles DST
+ * boundaries correctly, no manual offset math.
+ */
+function etYearMonth(when: Date, tz: string): YearMonth {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+  }).formatToParts(when);
+  const y = Number(parts.find((p) => p.type === 'year')?.value ?? '1970');
+  const m = Number(parts.find((p) => p.type === 'month')?.value ?? '1');
+  return { year: y, month: m };
+}
+
+/**
+ * RFC3339 timestamp for the first instant of `ym` in `tz`. Used to
+ * build the timeMin / timeMax range for events.list.
+ */
+function etMonthStartIso(ym: YearMonth, tz: string): string {
+  // Use a representative point inside the target month (12:00 UTC on
+  // the 1st) to compute the tz offset, then construct the wall-clock
+  // 00:00:00 with that offset. DST flips between months land on the
+  // first/last weekend of a month, never the 1st at noon-ish UTC, so
+  // this is stable.
+  const probe = new Date(Date.UTC(ym.year, ym.month - 1, 1, 12));
+  const off = tzOffsetMinutes(tz, probe);
+  const sign = off >= 0 ? '+' : '-';
+  const abs = Math.abs(off);
+  const hh = String(Math.floor(abs / 60)).padStart(2, '0');
+  const mm = String(abs % 60).padStart(2, '0');
+  return `${ym.year}-${String(ym.month).padStart(2, '0')}-01T00:00:00${sign}${hh}:${mm}`;
 }

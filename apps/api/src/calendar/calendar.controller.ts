@@ -362,6 +362,38 @@ export class CalendarController {
     };
   }
 
+  /**
+   * New / Returning client tracking, derived from calendar event
+   * titles (operator marks "(N)" or "(R)" inline). Returns one bucket
+   * per month over the requested range, oldest first.
+   *
+   * Mounted under /admin/clients/tracking so the new "Client Tracking"
+   * page lives under the Clients nav group in the UI; the data itself
+   * is still calendar-derived, hence the implementation in this
+   * controller.
+   */
+  @Get('admin/clients/tracking')
+  @Roles('admin', 'staff')
+  async clientTracking(@Query('months') monthsRaw?: string) {
+    const months = Math.max(
+      1,
+      Math.min(48, Number(monthsRaw) || 12),
+    );
+    const buckets = await this.calendar.getClientTrackingMonthly(months);
+    // Cumulative running total of NEW clients — drives the tracking
+    // page's running-total column without redundant client-side math.
+    let runningNew = 0;
+    const withRunning = buckets.map((b) => {
+      runningNew += b.new_count;
+      return {
+        ...b,
+        cumulative_new: runningNew,
+        total: b.new_count + b.returning_count,
+      };
+    });
+    return { months, buckets: withRunning };
+  }
+
   @Post('admin/calendar/events')
   @Roles('admin', 'staff')
   async adminCreateEvent(@Body() dto: CreateAdminEventDto) {
