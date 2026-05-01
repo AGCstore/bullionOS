@@ -120,6 +120,67 @@ export default function InvoicesPage() {
     queryFn: () => apiFetch<InvoiceRow[]>(queryFor(tab)),
   });
 
+  // Multi-select state — only surfaces UI on the Drafts tab. Cleared
+  // on tab change so a stale selection from one tab doesn't carry
+  // over and accidentally bulk-delete the wrong invoices on the next.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  // Reset selection when the tab changes — defensive against the
+  // operator clicking from Drafts → All → Drafts and finding 5 rows
+  // pre-checked from the previous visit.
+  if (tab !== 'drafts' && selected.size > 0) {
+    setTimeout(() => setSelected(new Set()), 0);
+  }
+
+  function toggleOne(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function toggleAll(visibleIds: string[], allSelected: boolean) {
+    setSelected((prev) => {
+      if (allSelected) {
+        const next = new Set(prev);
+        for (const id of visibleIds) next.delete(id);
+        return next;
+      }
+      const next = new Set(prev);
+      for (const id of visibleIds) next.add(id);
+      return next;
+    });
+  }
+
+  async function bulkDelete() {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    if (
+      !confirm(
+        `Permanently delete ${ids.length} draft invoice${ids.length === 1 ? '' : 's'}?\n\nThis removes the rows and their line items. The audit log retains the delete events, but the invoice history itself is gone.`,
+      )
+    )
+      return;
+    setBulkDeleting(true);
+    try {
+      const res = await apiFetch<{
+        deleted_count: number;
+        invoice_numbers: string[];
+      }>('/admin/invoices/bulk-delete-drafts', {
+        method: 'POST',
+        body: JSON.stringify({ ids }),
+      });
+      await qc.invalidateQueries({ queryKey: ['admin', 'invoices'] });
+      setSelected(new Set());
+      alert(`Deleted ${res.deleted_count} draft${res.deleted_count === 1 ? '' : 's'}.`);
+    } catch (err) {
+      alert(err instanceof ApiError ? err.message : 'Bulk delete failed');
+    } finally {
+      setBulkDeleting(false);
+    }
+  }
+
   async function deleteRow(id: string, invoiceNumber: string) {
     // Canceled-invoice deletion is admin-only + audit-logged on the
     // server. We still confirm on the client because it's terminal.
@@ -324,6 +385,34 @@ export default function InvoicesPage() {
         </div>
       </nav>
 
+      {/* Bulk-action bar — only renders on the Drafts tab when ≥1 row
+          is selected. Sticks just above the table so it's visible
+          while scrolling a long list of drafts. */}
+      {tab === 'drafts' && selected.size > 0 && (
+        <div className="sticky top-3 z-10 mt-4 flex items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 shadow-sm">
+          <div className="text-sm text-amber-900">
+            <span className="font-semibold tabular-nums">{selected.size}</span>{' '}
+            draft{selected.size === 1 ? '' : 's'} selected
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setSelected(new Set())}
+              disabled={bulkDeleting}
+              className="rounded-md border border-ink-200 bg-white px-3 py-1.5 text-xs font-medium hover:bg-ink-50 disabled:opacity-60"
+            >
+              Clear
+            </button>
+            <button
+              onClick={bulkDelete}
+              disabled={bulkDeleting}
+              className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-60"
+            >
+              {bulkDeleting ? 'Deleting…' : `Delete ${selected.size} draft${selected.size === 1 ? '' : 's'}`}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* MOB-002: horizontal scroll on narrow viewports instead of clipping.
           Apr 2026 polish: card matches the hero (rounded-xl + shadow-sm),
           zebra striping on even rows, colored type badges, tabular-nums
@@ -332,6 +421,24 @@ export default function InvoicesPage() {
         <table className="w-full min-w-[780px] text-sm">
           <thead className="bg-ink-50 text-left text-[11px] font-semibold uppercase tracking-wider text-ink-500">
             <tr>
+              {tab === 'drafts' && (
+                <th className="w-10 px-3 py-3">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all visible drafts"
+                    checked={
+                      displayRows.length > 0 &&
+                      displayRows.every((r) => selected.has(r.id))
+                    }
+                    onChange={() =>
+                      toggleAll(
+                        displayRows.map((r) => r.id),
+                        displayRows.every((r) => selected.has(r.id)),
+                      )
+                    }
+                  />
+                </th>
+              )}
               <th className="px-4 py-3">Invoice</th>
               <th className="px-4 py-3">Client</th>
               <th className="px-4 py-3">Type</th>
@@ -348,8 +455,19 @@ export default function InvoicesPage() {
                 key={inv.id}
                 className={`border-t border-ink-100 transition hover:bg-ink-50 ${
                   idx % 2 === 1 ? 'bg-ink-50/40' : ''
-                }`}
+                } ${selected.has(inv.id) ? 'bg-amber-50/60' : ''}`}
               >
+                {tab === 'drafts' && (
+                  <td className="w-10 px-3 py-3">
+                    <input
+                      type="checkbox"
+                      aria-label={`Select draft ${inv.invoice_number}`}
+                      checked={selected.has(inv.id)}
+                      onChange={() => toggleOne(inv.id)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </td>
+                )}
                 <td className="px-4 py-3 font-mono">
                   {/* Drafts deep-link straight into the wizard so operators
                       can keep adding line items without detouring through
@@ -429,7 +547,10 @@ export default function InvoicesPage() {
             ))}
             {displayRows.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-12 text-center text-sm text-ink-400">
+                <td
+                  colSpan={tab === 'drafts' ? 8 : 7}
+                  className="px-4 py-12 text-center text-sm text-ink-400"
+                >
                   No invoices in this view.
                 </td>
               </tr>

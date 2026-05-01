@@ -921,6 +921,107 @@ export class InvoicesService {
    * (`invoice.draft.delete` or `invoice.canceled.delete`) so the
    * action log stays precise.
    */
+  /**
+   * Bulk-delete a set of draft invoices in a single transaction.
+   * Refuses to touch anything that isn't `status = 'draft'` — matches
+   * the safety guarantee of the per-row deleteDraft() flow. If any
+   * invoice in the batch is not a draft, the whole transaction rolls
+   * back and the caller gets a clear error listing the offenders.
+   *
+   * Audit log:
+   *   - One `invoice.draft.delete` row per invoice (so existing
+   *     downstream consumers + filters keep working unchanged).
+   *   - One additional `invoice.bulk_delete` row that ties the batch
+   *     together with the full id list, for forensic correlation.
+   */
+  async bulkDeleteDrafts(
+    ids: string[],
+    actor: Actor,
+  ): Promise<{ deleted_count: number; invoice_numbers: string[] }> {
+    if (ids.length === 0) {
+      throw new BadRequestException('No invoices selected.');
+    }
+    if (ids.length > 200) {
+      // Guardrail — at this volume the operator is doing something
+      // they should think twice about. The endpoint can lift later
+      // if a real workflow needs it.
+      throw new BadRequestException('Cannot bulk-delete more than 200 invoices at once.');
+    }
+    // Dedupe defensively in case the UI sends a doubled id from a
+    // double-click race.
+    const unique = Array.from(new Set(ids));
+
+    const rows = await this.db
+      .selectFrom('invoices')
+      .select(['id', 'status', 'invoice_number', 'client_id'])
+      .where('id', 'in', unique)
+      .execute();
+
+    const missing = unique.filter((id) => !rows.some((r) => r.id === id));
+    if (missing.length > 0) {
+      throw new NotFoundException(
+        `Invoice not found: ${missing.slice(0, 5).join(', ')}${missing.length > 5 ? '…' : ''}`,
+      );
+    }
+    const offenders = rows.filter((r) => r.status !== 'draft');
+    if (offenders.length > 0) {
+      throw new BadRequestException(
+        `Bulk delete only operates on drafts. Non-draft rows: ${offenders
+          .slice(0, 5)
+          .map((r) => `${r.invoice_number} (${r.status})`)
+          .join(', ')}${offenders.length > 5 ? '…' : ''}`,
+      );
+    }
+
+    const numbers = rows.map((r) => r.invoice_number);
+
+    await this.db.transaction().execute(async (trx) => {
+      await trx
+        .deleteFrom('invoice_line_items')
+        .where('invoice_id', 'in', unique)
+        .execute();
+      await trx.deleteFrom('invoices').where('id', 'in', unique).execute();
+      // Per-invoice audit rows so the existing audit-log filter UI
+      // (action='invoice.draft.delete') keeps surfacing each one.
+      for (const r of rows) {
+        await trx
+          .insertInto('audit_logs')
+          .values({
+            actor_user_id: actor.id,
+            action: 'invoice.draft.delete',
+            entity_type: 'invoice',
+            entity_id: r.id,
+            metadata: sql`${JSON.stringify({
+              invoice_number: r.invoice_number,
+              client_id: r.client_id,
+              prior_status: 'draft',
+              bulk: true,
+            })}::jsonb`,
+          })
+          .execute();
+      }
+      // Parent batch entry for forensic correlation. Using a "fake"
+      // entity_id of one of the deleted UUIDs because audit_logs
+      // requires non-null. Operators search by action='invoice.bulk_delete'.
+      await trx
+        .insertInto('audit_logs')
+        .values({
+          actor_user_id: actor.id,
+          action: 'invoice.bulk_delete',
+          entity_type: 'invoice',
+          entity_id: rows[0].id,
+          metadata: sql`${JSON.stringify({
+            ids: unique,
+            invoice_numbers: numbers,
+            count: unique.length,
+          })}::jsonb`,
+        })
+        .execute();
+    });
+
+    return { deleted_count: unique.length, invoice_numbers: numbers };
+  }
+
   async deleteDraft(id: string, actor: Actor): Promise<{ invoice_number: string }> {
     const current = await this.db
       .selectFrom('invoices')

@@ -148,6 +148,26 @@ export class AdminInvoicesController {
    * mechanic to PRODUCT_DELETE_PIN — it's a "are you sure?" wall, not
    * cryptographic auth.
    */
+  /**
+   * Bulk-delete drafts. Body: { ids: string[] }. Validates each is a
+   * draft inside a transaction; rejects the whole batch if any aren't.
+   * Declared BEFORE the @Delete(':id') route so Nest's matcher picks
+   * this up — otherwise "bulk-delete" would parse as a UUID id and
+   * fail ParseUUIDPipe.
+   */
+  @Post('bulk-delete-drafts')
+  @HttpCode(200)
+  bulkDeleteDrafts(
+    @Body() dto: { ids?: string[] },
+    @CurrentUser() user: RequestUser,
+  ) {
+    const ids = Array.isArray(dto?.ids) ? dto.ids : [];
+    return this.invoices.bulkDeleteDrafts(ids, {
+      id: user.id,
+      role: user.role,
+    });
+  }
+
   @Delete(':id')
   @HttpCode(200)
   deleteInvoice(
