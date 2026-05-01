@@ -46,7 +46,11 @@ export default function ClientTrackingPage() {
     queryKey: ['admin', 'clients', 'tracking', months],
     queryFn: () =>
       apiFetch<{ months: number; buckets: TrackingBucket[] }>(
-        `/admin/clients/tracking?months=${months}`,
+        // Path moved off /admin/clients/* to dodge AdminClientsController's
+        // @Get(':id') route — "tracking" was getting matched as a UUID
+        // and failing ParseUUIDPipe. Frontend URL still lives under
+        // /admin/clients/tracking; only the API path differs.
+        `/admin/calendar/client-tracking?months=${months}`,
       ),
     staleTime: 5 * 60_000,
   });

@@ -367,12 +367,14 @@ export class CalendarController {
    * titles (operator marks "(N)" or "(R)" inline). Returns one bucket
    * per month over the requested range, oldest first.
    *
-   * Mounted under /admin/clients/tracking so the new "Client Tracking"
-   * page lives under the Clients nav group in the UI; the data itself
-   * is still calendar-derived, hence the implementation in this
-   * controller.
+   * Path note: lives under /admin/calendar/* not /admin/clients/* to
+   * avoid being shadowed by AdminClientsController's @Get(':id') —
+   * routing the bare path "tracking" as a client UUID would 400 the
+   * request before it reaches this handler. Frontend paths still
+   * read /admin/clients/tracking (UI nav grouping); only the API
+   * lives over here.
    */
-  @Get('admin/clients/tracking')
+  @Get('admin/calendar/client-tracking')
   @Roles('admin', 'staff')
   async clientTracking(@Query('months') monthsRaw?: string) {
     const months = Math.max(

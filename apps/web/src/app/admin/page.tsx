@@ -200,7 +200,9 @@ interface TrackingBucket {
  * Dashboard widget rolling up calendar bookings tagged "(N)" / "(R)"
  * by operators in the appointment title. Shows current month + prior
  * month side-by-side with a delta and a 6-month sparkline of new
- * clients. Source endpoint: GET /admin/clients/tracking.
+ * clients. Source endpoint: GET /admin/calendar/client-tracking
+ * (lives under /admin/calendar/* to avoid being shadowed by
+ * AdminClientsController's @Get(':id') UUID route).
  */
 function ClientTypeKpi() {
   const { data, isLoading, error } = useQuery<{
@@ -210,7 +212,7 @@ function ClientTypeKpi() {
     queryKey: ['admin', 'clients', 'tracking', 6],
     queryFn: () =>
       apiFetch<{ months: number; buckets: TrackingBucket[] }>(
-        '/admin/clients/tracking?months=6',
+        '/admin/calendar/client-tracking?months=6',
       ),
     // Operators add (N)/(R) to titles a couple times a day at most;
     // 5-min stale window is plenty fresh for a dashboard tile.
