@@ -187,6 +187,14 @@ function Stat({
 
 // ─── Client Type KPI (New vs Returning, month-over-month) ─────────────
 
+/**
+ * Monthly target for new clients. Drives the baseline indicator on
+ * the dashboard "New · {month}" tile. Hard-coded for now — operator
+ * preference (Hunter) until/unless we need per-month or per-period
+ * targets, in which case it'd move to app_settings.
+ */
+const NEW_CLIENTS_BASELINE = 72;
+
 interface TrackingBucket {
   bucket_start: string;
   bucket_label: string;
@@ -275,6 +283,12 @@ function ClientTypeKpi() {
           delta={newDelta}
           deltaLabel={prior ? `vs ${prior.bucket_label}` : null}
           tone="emerald"
+          // Monthly target. Shown beside the headline number with a
+          // small progress bar so operators can eyeball "on track vs.
+          // behind" at a glance. If the target moves, change here —
+          // not stored in app_settings yet because there's only one
+          // metric tracking against a baseline today.
+          baseline={NEW_CLIENTS_BASELINE}
         />
         <KpiTile
           label={`Returning · ${current.bucket_label}`}
@@ -323,18 +337,27 @@ function KpiTile({
   delta,
   deltaLabel,
   tone,
+  baseline,
 }: {
   label: string;
   value: number;
   delta: number | null;
   deltaLabel: string | null;
   tone: 'emerald' | 'sky';
+  /**
+   * Monthly target. When set, renders alongside the headline number
+   * as "X / N" plus a small progress bar (capped at 100%) so the
+   * tile shows both the actual count and how far through the goal
+   * the operator is.
+   */
+  baseline?: number;
 }) {
   const accent =
     tone === 'emerald'
       ? 'border-emerald-200 bg-emerald-50'
       : 'border-sky-200 bg-sky-50';
   const valueColor = tone === 'emerald' ? 'text-emerald-800' : 'text-sky-800';
+  const barColor = tone === 'emerald' ? 'bg-emerald-500' : 'bg-sky-500';
   const deltaSign = delta !== null && delta > 0 ? '+' : '';
   const deltaColor =
     delta === null
@@ -344,18 +367,40 @@ function KpiTile({
         : delta < 0
           ? 'text-red-700'
           : 'text-ink-500';
+  // Clamp the progress bar at 100% — overshooting the goal still
+  // shows a full bar (the "X / N" text carries the actual ratio).
+  const pctOfBaseline =
+    baseline && baseline > 0
+      ? Math.min(100, Math.round((value / baseline) * 100))
+      : null;
   return (
     <div className={`rounded-md border p-3 ${accent}`}>
       <div className="text-[11px] font-medium uppercase tracking-wide text-ink-500 truncate">
         {label}
       </div>
-      <div
-        className={`mt-1 text-2xl font-semibold tabular-nums ${valueColor}`}
-      >
-        {value}
+      <div className="mt-1 flex items-baseline gap-2">
+        <div
+          className={`text-2xl font-semibold tabular-nums ${valueColor}`}
+        >
+          {value}
+        </div>
+        {baseline !== undefined && (
+          <div className="text-[11px] text-ink-500">
+            / <span className="font-mono tabular-nums">{baseline}</span>{' '}
+            baseline
+          </div>
+        )}
       </div>
+      {pctOfBaseline !== null && (
+        <div className="mt-2 h-1 overflow-hidden rounded-full bg-white/70">
+          <div
+            className={`h-full rounded-full ${barColor} transition-all`}
+            style={{ width: `${pctOfBaseline}%` }}
+          />
+        </div>
+      )}
       {delta !== null && deltaLabel && (
-        <div className={`mt-0.5 text-[11px] ${deltaColor}`}>
+        <div className={`mt-1 text-[11px] ${deltaColor}`}>
           {deltaSign}
           {delta} {deltaLabel}
         </div>
