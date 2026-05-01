@@ -21,6 +21,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, ApiError } from '@/lib/api-client';
 import { useLiveSpot } from '@/lib/use-live-spot';
 import { ClientCombobox, type ComboboxClient } from '@/components/client-combobox';
+import { QuickAddClient } from '@/components/quick-add-client';
 import {
   ScrapRowBuilder,
   ScrapTotals,
@@ -351,28 +352,24 @@ export default function ScrapInvoicePage() {
         <h2 className="text-xs font-semibold uppercase tracking-wide text-ink-400">
           Client
         </h2>
-        <div className="mt-3">
-          {clients ? (
-            <ClientCombobox
-              clients={clients}
-              value={clientId}
-              onChange={setClientId}
-              placeholder="Search by name, company, email, phone…"
-            />
-          ) : (
-            <div className="text-sm text-ink-400">Loading clients…</div>
-          )}
+        <div className="mt-3 flex flex-wrap items-start gap-2">
+          <div className="min-w-0 flex-1">
+            {clients ? (
+              <ClientCombobox
+                clients={clients}
+                value={clientId}
+                onChange={setClientId}
+                placeholder="Search by name, company, email, phone…"
+              />
+            ) : (
+              <div className="text-sm text-ink-400">Loading clients…</div>
+            )}
+          </div>
+          <QuickAddClient onCreated={(c) => setClientId(c.id)} />
         </div>
         <p className="mt-2 text-xs text-ink-400">
-          Need a new client?{' '}
-          <Link
-            href="/admin/clients/new"
-            className="underline-offset-2 hover:underline"
-          >
-            Add one
-          </Link>{' '}
-          and come back — your rows will still be here (they're held in
-          local state until you submit or refresh).
+          Inline new-client form keeps your rows. Full client editing
+          available later on the client detail page.
         </p>
       </section>
 

@@ -8,6 +8,7 @@ import { useAuth } from '@/lib/auth-context';
 import { PageTint } from '@/components/page-tint';
 import { ProductCombobox } from '@/components/product-combobox';
 import { ClientCombobox, type ComboboxClient } from '@/components/client-combobox';
+import { QuickAddClient } from '@/components/quick-add-client';
 
 /**
  * Source invoice shape used by both:
@@ -689,11 +690,17 @@ export default function NewInvoicePage() {
         <section className="mt-6 rounded-xl border border-ink-200 bg-white p-5 shadow-sm">
           <SectionHeader step={1} title="Client" />
 
-          <div className="mt-3">
-            <ClientCombobox
-              clients={clients ?? []}
-              value={clientId}
-              onChange={setClientId}
+          <div className="mt-3 flex flex-wrap items-start gap-2">
+            <div className="min-w-0 flex-1">
+              <ClientCombobox
+                clients={clients ?? []}
+                value={clientId}
+                onChange={setClientId}
+              />
+            </div>
+            <QuickAddClient
+              onCreated={(c) => setClientId(c.id)}
+              defaultType={type === 'buy' ? 'retail' : 'retail'}
             />
           </div>
           {selectedClient && (
@@ -806,6 +813,38 @@ export default function NewInvoicePage() {
                 />
               ))}
             </div>
+          </div>
+          {/* Explicit free-form line shortcut. The product-combobox already
+              has an "ad-hoc" path, but operators kept asking for a one-click
+              "just give me a blank line" button — especially for scrap and
+              one-off items that should never enter the catalog. Clicking
+              here appends a pre-configured ad-hoc line (product_id='',
+              custom_name=''); the existing auto-append effect then drops
+              another blank below as soon as the operator fills name +
+              price, so chains of free-form lines work without re-clicking. */}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() =>
+                setLines((ls) => [
+                  ...ls,
+                  {
+                    product_id: '',
+                    quantity: 1,
+                    custom_name: '',
+                    override_unit_price: '',
+                  },
+                ])
+              }
+              className="rounded-md border border-ink-200 bg-white px-3 py-1.5 text-xs font-medium hover:bg-ink-50"
+              title="Add a blank free-form line — no product selection, won't be saved to the catalog."
+            >
+              + Free-form line
+            </button>
+            <span className="text-[11px] text-ink-400">
+              For one-off items like scrap or custom pieces. Doesn&apos;t
+              add to the product list.
+            </span>
           </div>
         </section>
 
