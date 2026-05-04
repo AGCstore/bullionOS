@@ -1,7 +1,23 @@
-# AGC CRM + Trading + Client Portal
+# BullionOS Desk
 
-Precious-metals trading desk, client portal, and integrated CRM.
-NestJS + Kysely + PostgreSQL + Redis + Next.js monorepo.
+Precious-metals trading desk, client portal, and integrated CRM. Licensable to coin dealers as a per-tenant deploy.
+
+NestJS + Kysely + PostgreSQL + Redis + Next.js monorepo. Forked from `agc-crm` (Atlanta Gold and Coin's internal system); de-tenanted so each customer runs a private instance pulled from the same `main` branch.
+
+## For operators
+
+- **`docs/PROVISIONING.md`** — how to spin up a new tenant on Railway + Vercel (~30–45 min the first time).
+- **`docs/OPERATOR_GUIDE.md`** — day-to-day reference: branding, features, pricing, imports, integrations, common operations.
+- **`apps/metals-proxy/README.md`** — the central metals.dev fan-out service that consolidates all tenants onto one upstream API key.
+- **`scripts/provision-tenant.sh <tenant-slug>`** — generates the per-tenant secrets + a paste-ready Railway env block.
+
+## Repo layout
+
+- `apps/api/` — NestJS API, runs on Railway. Per-tenant deploy.
+- `apps/web/` — Next.js admin + client portal, runs on Vercel. Per-tenant deploy.
+- `apps/metals-proxy/` — small Express service for shared metals.dev access. ONE central deploy that all tenants share.
+- `docs/` — operator + provisioning guides.
+- `scripts/` — provisioning + one-off tooling.
 
 ---
 
