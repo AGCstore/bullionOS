@@ -8,6 +8,102 @@
   }
 }
 
+/* ── BullionOS dark theme override layer ───────────────────────────
+ *
+ * Scoped to `.bos-theme` (applied on AdminLayout root) so the dark
+ * surfaces only appear inside the admin shell. Login, public booking,
+ * register, and the client portal all sit OUTSIDE this scope and
+ * keep their original light tones unchanged.
+ *
+ * Strategy: redefine the most-used Tailwind color utilities inside
+ * the `.bos-theme` selector. CSS specificity (`.bos-theme .bg-white`
+ * > `.bg-white`) lets these win over Tailwind's atomic utilities
+ * without touching a single per-feature page. Only four "categories"
+ * are remapped:
+ *
+ *   1. Surfaces  (bg-white / bg-ink-50 / bg-ink-100 / bg-ink-200)
+ *      → layered dark tones (#0f1320 → #1a1f2e), creating a card
+ *      hierarchy that mirrors the light theme's white → gray-50 →
+ *      gray-100 ramp.
+ *
+ *   2. Borders   (border-ink-100 / 200 / 300)
+ *      → subtle white-alpha borders (6%, 10%, 14%). Soft enough that
+ *      cards still feel surfaced without harsh edges.
+ *
+ *   3. Text      (text-ink-900 / 800 / 700 / 600 / 500 / 400)
+ *      → white-alpha ramp (100% / 92% / 85% / 70% / 55% / 45%).
+ *      Matches WCAG contrast at every tier.
+ *
+ *   4. Primary buttons (bg-ink-900 + text-white pattern)
+ *      → bg-ink-900 lifts to a slightly-lighter elevated dark so the
+ *      button still pops against the page bg. text-white stays.
+ *
+ * Status pills (bg-emerald-50, bg-red-50, etc.) and semantic colors
+ * (buy-50/600, sell-50/600, gold-*) intentionally pass through —
+ * they keep their tuned contrast and are the easiest way to read
+ * "this is delivered / this is paid / this is wholesale" at a glance.
+ *
+ * If a specific page surface looks wrong inside the dark scope, the
+ * fix is to add a more-specific override here (or a one-off class on
+ * that surface) rather than reverting the whole layer.
+ * ─────────────────────────────────────────────────────────────── */
+@layer utilities {
+  /* === Surfaces === */
+  .bos-theme .bg-white               { background-color: #0f1320; }
+  .bos-theme .bg-ink-50              { background-color: #05060d; }
+  .bos-theme .bg-ink-100             { background-color: #131726; }
+  .bos-theme .bg-ink-200             { background-color: #1a1f2e; }
+
+  /* Translucent variants — bg-ink-50/40, bg-ink-50/60, etc. Tailwind
+     emits these with opacity baked into the rgb(...) functional form,
+     so we restate the same value with our dark base. */
+  .bos-theme .bg-ink-50\/40          { background-color: rgba(19, 23, 38, 0.4); }
+  .bos-theme .bg-ink-50\/60          { background-color: rgba(19, 23, 38, 0.6); }
+  .bos-theme .bg-ink-100\/40         { background-color: rgba(26, 31, 46, 0.4); }
+  .bos-theme .bg-ink-100\/60         { background-color: rgba(26, 31, 46, 0.6); }
+  .bos-theme .bg-white\/90           { background-color: rgba(15, 19, 32, 0.9); }
+  .bos-theme .bg-white\/70           { background-color: rgba(15, 19, 32, 0.7); }
+
+  /* Hover states — subtle elevate (vs. light theme's slight darken) */
+  .bos-theme .hover\:bg-ink-50:hover { background-color: rgba(255, 255, 255, 0.04); }
+  .bos-theme .hover\:bg-white:hover  { background-color: rgba(255, 255, 255, 0.06); }
+
+  /* === Borders === */
+  .bos-theme .border-ink-100         { border-color: rgba(255, 255, 255, 0.06); }
+  .bos-theme .border-ink-200         { border-color: rgba(255, 255, 255, 0.10); }
+  .bos-theme .border-ink-300         { border-color: rgba(255, 255, 255, 0.14); }
+  .bos-theme .ring-ink-200           { --tw-ring-color: rgba(255, 255, 255, 0.10); }
+  .bos-theme .divide-ink-100 > * + * { border-color: rgba(255, 255, 255, 0.06); }
+  .bos-theme .divide-ink-200 > * + * { border-color: rgba(255, 255, 255, 0.10); }
+
+  /* === Text === */
+  .bos-theme .text-ink-900           { color: #ffffff; }
+  .bos-theme .text-ink-800           { color: rgba(255, 255, 255, 0.92); }
+  .bos-theme .text-ink-700           { color: rgba(255, 255, 255, 0.85); }
+  .bos-theme .text-ink-600           { color: rgba(255, 255, 255, 0.70); }
+  .bos-theme .text-ink-500           { color: rgba(255, 255, 255, 0.55); }
+  .bos-theme .text-ink-400           { color: rgba(255, 255, 255, 0.45); }
+  /* Hover text states */
+  .bos-theme .hover\:text-ink-900:hover { color: #ffffff; }
+
+  /* === Primary buttons (bg-ink-900 + text-white pattern) ===
+   * In the light theme `bg-ink-900` is the very dark primary CTA
+   * background. On the dark page bg it would be invisible — lift to
+   * an elevated dark that's distinguishable from the surrounding
+   * surface and keep text-white. Hover stays a touch lighter. */
+  .bos-theme .bg-ink-900             { background-color: #1f2638; }
+  .bos-theme .hover\:bg-ink-800:hover { background-color: #2a3147; }
+
+  /* === Form input override ===
+   * The .input component class bakes in `bg-white` + `text-ink-900`
+   * + `border-ink-200` — those are already covered above. The
+   * placeholder color isn't, so explicitly soften it. */
+  .bos-theme .input::placeholder     { color: rgba(255, 255, 255, 0.35); }
+  .bos-theme select.input,
+  .bos-theme input.input,
+  .bos-theme textarea.input          { color-scheme: dark; }
+}
+
 :root {
   color-scheme: light;
 }

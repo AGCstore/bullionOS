@@ -181,7 +181,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }
 
   return (
-    <div className="flex min-h-screen bg-bos-black text-ink-900">
+    <div className="bos-theme flex min-h-screen bg-bos-black text-ink-900">
+      {/* `.bos-theme` scopes the dark-mode CSS overrides in globals.css
+          to the admin shell only — login / public booking / register
+          pages outside this tree keep their original light surfaces. */}
       {/* Desktop sidebar — BullionOS night surface with subtle gold
           edge. Sidebar background is pure-dark; content rendering is
           unchanged inside (NavLink / NavGroupLinks restyle inline). */}
@@ -227,12 +230,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           <NotificationsBell />
         </header>
         <main className="flex-1 bg-bos-black px-4 py-6 md:px-10">
-          {/* Card surfaces inside `children` keep their light tones —
-              the dark backdrop around them is what gives the brand
-              read. Content inside is unchanged. */}
-          <div className="rounded-xl bg-ink-50 px-4 py-6 shadow-[0_0_0_1px_rgba(255,255,255,0.04)] md:px-8">
-            {children}
-          </div>
+          {/* Per-page content. Card surfaces inside `children` are
+              re-styled to the dark theme via the .bos-theme CSS
+              overrides in globals.css — no per-page edits required.
+              The overrides target the heaviest-used utility classes
+              (bg-white, bg-ink-50/100/200, border-ink-100/200, and
+              the text-ink-* scale) so existing markup flips dark in
+              place. */}
+          {children}
         </main>
         <AdminFooter />
       </div>
@@ -305,7 +310,7 @@ function SidebarBody({
         </a>
         <button
           onClick={onLogout}
-          className="w-full rounded-md border border-bos-line px-3 py-1.5 text-left text-bos-text hover:bg-white/5 hover:text-white"
+          className="w-full rounded-md border border-bos-line px-3 py-1.5 text-center text-bos-text hover:bg-white/5 hover:text-white"
         >
           Sign out
         </button>
