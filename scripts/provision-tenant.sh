@@ -36,8 +36,14 @@ if [[ ! "$TENANT" =~ ^[a-z0-9-]+$ ]]; then
 fi
 
 # ── Generate secrets ──────────────────────────────────────────────
+# JWT_SECRET: 32 bytes hex (64 chars). Used by jsonwebtoken HS256 — any
+# string of sufficient entropy works.
 JWT_SECRET=$(openssl rand -hex 32)
-APP_ENCRYPTION_KEY=$(openssl rand -hex 32)
+# APP_ENCRYPTION_KEY: must be base64 of exactly 32 bytes. The API
+# validates this format on boot (zod refine in env.ts) so make sure
+# it stays base64 — switching to hex breaks every encrypted blob.
+APP_ENCRYPTION_KEY=$(openssl rand -base64 32)
+# METALS_PROXY_KEY: any random string >= 16 chars. Hex is fine here.
 METALS_PROXY_KEY=$(openssl rand -hex 24)
 INVOICE_DELETE_PIN=$(printf '%06d' $((RANDOM % 1000000)))
 
@@ -58,6 +64,7 @@ METALS_PROXY_KEY=$METALS_PROXY_KEY
 INVOICE_DELETE_PIN=$INVOICE_DELETE_PIN
 TOTP_ISSUER=<set this to the tenant's display name, e.g. "Acme Coin">
 WEB_ORIGIN=<set this to the final Vercel URL, e.g. https://desk.acmecoin.com>
+API_BASE_URL=<set this to the Railway-generated api URL, e.g. https://acme-api-production-XXXX.up.railway.app>
 METALS_PROXY_URL=<your central metals-proxy URL>
 SMTP_HOST=<their SMTP>
 SMTP_USER=<their SMTP user>
