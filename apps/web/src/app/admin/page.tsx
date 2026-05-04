@@ -71,6 +71,7 @@ interface MonthBucket {
 }
 
 export default function AdminDashboard() {
+  const clientTrackingEnabled = useFlag('client_tracking_enabled');
   const { data: invoices } = useQuery({
     queryKey: ['admin', 'invoices', 'dashboard-totals'],
     queryFn: () => apiFetch<InvoiceRow[]>('/admin/invoices'),
@@ -133,9 +134,11 @@ export default function AdminDashboard() {
           it's the first thing operators see after the volume row.
           Sourced from calendar event titles ("(N)" / "(R)") via
           /admin/clients/tracking. */}
-      <section className="mt-10">
-        <ClientTypeKpi />
-      </section>
+      {clientTrackingEnabled && (
+        <section className="mt-10">
+          <ClientTypeKpi />
+        </section>
+      )}
 
       {/* Daily update card — the main feed element. Comments thread below. */}
       <section className="mt-10">

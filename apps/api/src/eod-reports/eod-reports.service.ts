@@ -92,6 +92,11 @@ export class EodReportsService {
   })
   async scheduledSend(): Promise<void> {
     try {
+      const enabled = await this.settings.getFlag('eod_reports_enabled');
+      if (!enabled) {
+        this.logger.log('EOD report: skipped (eod_reports_enabled = false)');
+        return;
+      }
       const r = await this.send();
       this.logger.log(
         `EOD report: ${r.ok ? 'sent' : 'skipped'} → ${r.recipients.length} recipients (${r.message})`,

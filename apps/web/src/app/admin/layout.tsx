@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { useAuth } from '@/lib/auth-context';
 import { SpotTicker } from '@/components/spot-ticker';
 import { NotificationsBell } from '@/components/notifications-bell';
-import { useAppSettings } from '@/lib/use-app-settings';
+import { useAppSettings, type FlagName } from '@/lib/use-app-settings';
 import {
   BullionOSLogo,
   BullionOSWordmark,
@@ -49,16 +49,48 @@ import {
 interface NavChild {
   href: string;
   label: string;
+  /**
+   * If set, the entry only appears when the named feature flag is
+   * enabled. Flag absent or true → visible. Flag false → hidden.
+   * Flags are sourced from useAppSettings + useFlag.
+   */
+  flag?: FlagName;
 }
 interface NavGroup {
   href: string;
   label: string;
+  flag?: FlagName;
   children: NavChild[];
 }
 type NavEntry = NavChild | NavGroup;
 
 function isGroup(e: NavEntry): e is NavGroup {
   return 'children' in e;
+}
+
+/**
+ * Filter a nav tree by enabled feature flags. A group whose own flag
+ * is disabled is dropped entirely; otherwise its children are filtered
+ * individually. Groups with no surviving children also drop.
+ */
+function applyFlags(
+  items: NavEntry[],
+  flags: Record<FlagName, boolean>,
+): NavEntry[] {
+  const out: NavEntry[] = [];
+  for (const item of items) {
+    if (item.flag && !flags[item.flag]) continue;
+    if (isGroup(item)) {
+      const kids = item.children.filter(
+        (c) => !c.flag || flags[c.flag],
+      );
+      if (kids.length === 0) continue;
+      out.push({ ...item, children: kids });
+    } else {
+      out.push(item);
+    }
+  }
+  return out;
 }
 
 const NAV_ITEMS: NavEntry[] = [
@@ -80,12 +112,16 @@ const NAV_ITEMS: NavEntry[] = [
     href: '/admin/clients',
     label: 'Clients',
     children: [
-      { href: '/admin/clients/tracking', label: 'Client tracking' },
+      {
+        href: '/admin/clients/tracking',
+        label: 'Client tracking',
+        flag: 'client_tracking_enabled',
+      },
       { href: '/admin/requests', label: 'Deal requests' },
       { href: '/admin/quotes', label: 'Quotes' },
     ],
   },
-  { href: '/admin/shipments', label: 'Shipments' },
+  { href: '/admin/shipments', label: 'Shipments', flag: 'ifs_enabled' },
   // Price Sheet is a top-level tab — it's the single most-frequented
   // counter page, so burying it under Catalog costs an extra click
   // every quote. Catalog keeps the two less-used sheet siblings.
@@ -114,6 +150,7 @@ const NAV_ITEMS: NavEntry[] = [
   {
     href: '/admin/scrap/calculator',
     label: 'Scrap',
+    flag: 'scrap_enabled',
     children: [
       { href: '/admin/scrap/calculator', label: 'Scrap Calculator' },
       { href: '/admin/scrap/invoice', label: 'Scrap Invoice' },
@@ -123,6 +160,7 @@ const NAV_ITEMS: NavEntry[] = [
     href: '/admin/settings',
     label: 'Settings',
     children: [
+      { href: '/admin/settings/features', label: 'Features' },
       { href: '/admin/categories', label: 'Categories' },
       { href: '/admin/integrations', label: 'Integrations' },
       { href: '/admin/backups', label: 'Backups' },
@@ -275,6 +313,12 @@ function SidebarBody({
   // useAppSettings is cached by react-query — calling it here re-uses
   // the same fetch the parent layout kicked off.
   const { data: appSettings } = useAppSettings();
+  // While settings load, render the full nav (every flag treated as
+  // enabled). When settings arrive, items with disabled flags drop.
+  // This avoids the sidebar flickering missing items during nav.
+  const visibleNav = appSettings
+    ? applyFlags(NAV_ITEMS, appSettings.flags)
+    : NAV_ITEMS;
   return (
     <>
       <div className="flex items-center gap-2 px-2">
@@ -291,7 +335,7 @@ function SidebarBody({
       </div>
 
       <nav className="mt-8 flex flex-col gap-1 text-sm">
-        {NAV_ITEMS.map((item) =>
+        {visibleNav.map((item) =>
           isGroup(item) ? (
             <NavGroupLinks key={item.href} group={item} pathname={pathname} />
           ) : (

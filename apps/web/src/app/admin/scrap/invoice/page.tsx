@@ -19,6 +19,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, ApiError } from '@/lib/api-client';
+import { useFlag } from '@/lib/use-app-settings';
 import { useLiveSpot } from '@/lib/use-live-spot';
 import { ClientCombobox, type ComboboxClient } from '@/components/client-combobox';
 import { QuickAddClient } from '@/components/quick-add-client';
@@ -74,6 +75,7 @@ export default function ScrapInvoicePage() {
   const router = useRouter();
   const qc = useQueryClient();
   const { spot } = useLiveSpot();
+  const compliancePhotosEnabled = useFlag('compliance_photos_enabled');
 
   const [type, setType] = useState<'buy' | 'sell'>('buy');
   const [rows, setRows] = useState<ScrapRow[]>(() => [blankScrapRow()]);
@@ -537,36 +539,38 @@ export default function ScrapInvoicePage() {
       </section>
 
       {/* Compliance photos.
-          These three buckets cover Georgia's precious-metal-dealer
-          requirements + general fraud-prevention practice. All three
-          are operator-only — they DO NOT appear on the printed
-          invoice or the client-portal view. Stored against the
-          invoice via /admin/invoices/:id/attachments after the
-          invoice POST returns its id. */}
-      <div className="mt-4 space-y-3">
-        <p className="text-[11px] uppercase tracking-wide text-ink-400">
-          Compliance photos · operator-only · not shown on printed or digital invoice
-        </p>
-        <PhotoCapture
-          label="Attach ID"
-          help="Customer's driver's license, passport, or government-issued photo ID. Front + back if needed."
-          files={idPhotos}
-          onChange={setIdPhotos}
-        />
-        <PhotoCapture
-          label="Client Photo"
-          help="Customer themselves, ideally with the items they're selling."
-          single
-          files={clientPhotos}
-          onChange={setClientPhotos}
-        />
-        <PhotoCapture
-          label="Item(s)"
-          help="Each piece of scrap or a wide shot covering all of it. Multiple photos OK."
-          files={itemPhotos}
-          onChange={setItemPhotos}
-        />
-      </div>
+          Three operator-only photo buckets (ID, client, items) for
+          jurisdictions that require them (e.g. Georgia precious-metal
+          dealer rules) plus general fraud-prevention practice. None
+          appear on the printed invoice or the client-portal view.
+          Toggled via Settings → Features (`compliance_photos_enabled`)
+          for jurisdictions that don't need them. */}
+      {compliancePhotosEnabled && (
+        <div className="mt-4 space-y-3">
+          <p className="text-[11px] uppercase tracking-wide text-ink-400">
+            Compliance photos · operator-only · not shown on printed or digital invoice
+          </p>
+          <PhotoCapture
+            label="Attach ID"
+            help="Customer's driver's license, passport, or government-issued photo ID. Front + back if needed."
+            files={idPhotos}
+            onChange={setIdPhotos}
+          />
+          <PhotoCapture
+            label="Client Photo"
+            help="Customer themselves, ideally with the items they're selling."
+            single
+            files={clientPhotos}
+            onChange={setClientPhotos}
+          />
+          <PhotoCapture
+            label="Item(s)"
+            help="Each piece of scrap or a wide shot covering all of it. Multiple photos OK."
+            files={itemPhotos}
+            onChange={setItemPhotos}
+          />
+        </div>
+      )}
 
       {error && (
         <div className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
