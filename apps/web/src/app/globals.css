@@ -39,7 +39,12 @@ html {
 
 html, body {
   height: 100%;
-  background: #f7f7f8;
+  /* BullionOS dark backdrop. The admin shell (sidebar/header/footer)
+     paints its own slightly-lighter night tone on top; content cards
+     keep the existing white surfaces, which now reads as "floating
+     cards on a dark canvas" — intentional contrast between brand
+     chrome and per-feature content surfaces. */
+  background: #05060d;
   color: #17171a;
   font-feature-settings: "cv11", "ss01";
 }

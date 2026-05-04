@@ -16,8 +16,27 @@ const config: Config = {
           900: '#17171a',
         },
         gold: {
+          // Brighter accents added (300 / 400) for the BullionOS-
+          // branded chrome — sidebar active state, hero mark gradients,
+          // login wordmark. Existing 500/600 stay tuned for the inline
+          // "elegant tan" accents already used across forms + buttons.
+          300: '#f3d266',
+          400: '#e7b934',
           500: '#c9a96a',
           600: '#b08e4a',
+        },
+        // BullionOS-branded chrome surfaces. Used by AdminLayout's
+        // sidebar / header / footer + the login page. Content cards
+        // inside the main column keep the existing white/ink-* tones
+        // so per-feature pages don't all need a dark-mode pass at once
+        // — the dark chrome around light cards is the intentional
+        // "branded shell + content surface" look.
+        bos: {
+          black: '#05060d', // page backdrop
+          night: '#0a0d18', // sidebar / header / footer
+          line:  'rgba(231,185,52,0.10)', // subtle gold border
+          text:  '#c7beab', // warm gray for sidebar copy
+          mute:  '#9a907c', // dimmer copy / icons
         },
         // Semantic tints for buy-side (money-out, navy) and sell-side
         // (money-in, green) screens. Kept subtle — the numbers still

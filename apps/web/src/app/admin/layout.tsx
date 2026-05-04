@@ -6,6 +6,10 @@ import Link from 'next/link';
 import { useAuth } from '@/lib/auth-context';
 import { SpotTicker } from '@/components/spot-ticker';
 import { NotificationsBell } from '@/components/notifications-bell';
+import {
+  BullionOSLogo,
+  BullionOSWordmark,
+} from '@/components/bullion-os-logo';
 
 /**
  * Admin shell.
@@ -177,33 +181,35 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }
 
   return (
-    <div className="flex min-h-screen bg-ink-50 text-ink-900">
-      {/* Desktop sidebar */}
-      <aside className="sticky top-0 hidden h-screen w-60 flex-col overflow-y-auto border-r border-ink-200 bg-white px-4 py-6 md:flex">
+    <div className="flex min-h-screen bg-bos-black text-ink-900">
+      {/* Desktop sidebar — BullionOS night surface with subtle gold
+          edge. Sidebar background is pure-dark; content rendering is
+          unchanged inside (NavLink / NavGroupLinks restyle inline). */}
+      <aside className="sticky top-0 hidden h-screen w-60 flex-col overflow-y-auto border-r border-bos-line bg-bos-night px-4 py-6 md:flex">
         <SidebarBody user={user} onLogout={logout} pathname={pathname} />
       </aside>
 
-      {/* Mobile drawer — backdrop + sliding panel. */}
+      {/* Mobile drawer — same BullionOS night look on the sliding panel. */}
       {drawerOpen && (
         <div className="fixed inset-0 z-40 md:hidden" role="dialog" aria-modal="true">
           <div
-            className="absolute inset-0 bg-ink-900/40"
+            className="absolute inset-0 bg-black/60"
             onClick={() => setDrawerOpen(false)}
             aria-hidden
           />
-          <aside className="absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col overflow-y-auto border-r border-ink-200 bg-white px-4 py-6 shadow-xl">
+          <aside className="absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col overflow-y-auto border-r border-bos-line bg-bos-night px-4 py-6 shadow-xl">
             <SidebarBody user={user} onLogout={logout} pathname={pathname} />
           </aside>
         </div>
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-10 flex items-center gap-3 border-b border-ink-200 bg-white/90 px-4 py-3 backdrop-blur md:gap-4 md:px-10">
+        <header className="sticky top-0 z-10 flex items-center gap-3 border-b border-bos-line bg-bos-night/95 px-4 py-3 text-bos-text backdrop-blur md:gap-4 md:px-10">
           <button
             type="button"
             onClick={() => setDrawerOpen(true)}
             aria-label="Open navigation"
-            className="flex h-9 w-9 items-center justify-center rounded-md border border-ink-200 text-ink-700 hover:bg-ink-50 md:hidden"
+            className="flex h-9 w-9 items-center justify-center rounded-md border border-bos-line text-bos-text hover:bg-white/5 md:hidden"
           >
             {/* Hamburger — hand-rolled SVG, no icon lib. */}
             <svg width="18" height="14" viewBox="0 0 18 14" fill="none" aria-hidden>
@@ -220,9 +226,32 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           </div>
           <NotificationsBell />
         </header>
-        <main className="flex-1 px-4 py-6 md:px-10">{children}</main>
+        <main className="flex-1 bg-bos-black px-4 py-6 md:px-10">
+          {/* Card surfaces inside `children` keep their light tones —
+              the dark backdrop around them is what gives the brand
+              read. Content inside is unchanged. */}
+          <div className="rounded-xl bg-ink-50 px-4 py-6 shadow-[0_0_0_1px_rgba(255,255,255,0.04)] md:px-8">
+            {children}
+          </div>
+        </main>
+        <AdminFooter />
       </div>
     </div>
+  );
+}
+
+/**
+ * Branded footer that appears at the bottom of every admin page.
+ * Subtle "Powered by BullionOS" lockup over the dark night surface.
+ */
+function AdminFooter() {
+  return (
+    <footer className="border-t border-bos-line bg-bos-night px-4 py-4 text-center md:px-10">
+      <div className="flex items-center justify-center gap-2 text-[11px] uppercase tracking-[0.18em] text-bos-mute">
+        <span>Powered by</span>
+        <BullionOSWordmark size="sm" />
+      </div>
+    </footer>
   );
 }
 
@@ -239,18 +268,15 @@ function SidebarBody({
   return (
     <>
       <div className="flex items-center gap-2 px-2">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src="/api/v1/public/branding/logo"
-          alt="AGC"
-          className="h-7 w-7 rounded-md object-contain"
-          onError={(e) => {
-            (e.currentTarget as HTMLImageElement).style.display = 'none';
-          }}
-        />
+        <BullionOSLogo size={28} />
         <div>
-          <div className="font-semibold leading-none">AGC</div>
-          <div className="text-[10px] uppercase tracking-wide text-ink-400">Admin</div>
+          <div className="font-semibold leading-none text-white">
+            <span>bullion</span>
+            <span className="text-gold-400">OS</span>
+          </div>
+          <div className="text-[10px] uppercase tracking-wide text-bos-mute">
+            AGC Desk · Admin
+          </div>
         </div>
       </div>
 
@@ -259,7 +285,7 @@ function SidebarBody({
           isGroup(item) ? (
             <NavGroupLinks key={item.href} group={item} pathname={pathname} />
           ) : (
-            <NavLink key={item.href} href={item.href}>
+            <NavLink key={item.href} href={item.href} pathname={pathname}>
               {item.label}
             </NavLink>
           ),
@@ -267,19 +293,19 @@ function SidebarBody({
       </nav>
 
       <div className="mt-auto space-y-2 text-sm">
-        <div className="rounded-md bg-ink-50 p-3 text-xs text-ink-600">
-          <div className="truncate font-medium text-ink-900">{user.email}</div>
-          <div className="mt-0.5 text-ink-400">Role: {user.role}</div>
+        <div className="rounded-md bg-white/5 p-3 text-xs text-bos-text">
+          <div className="truncate font-medium text-white">{user.email}</div>
+          <div className="mt-0.5 text-bos-mute">Role: {user.role}</div>
         </div>
         <a
           href="/dashboard"
-          className="block w-full rounded-md border border-ink-200 px-3 py-1.5 text-center text-ink-700 hover:bg-ink-50"
+          className="block w-full rounded-md border border-bos-line px-3 py-1.5 text-center text-bos-text hover:bg-white/5 hover:text-white"
         >
           Client portal view →
         </a>
         <button
           onClick={onLogout}
-          className="w-full rounded-md border border-ink-200 px-3 py-1.5 text-left hover:bg-ink-50"
+          className="w-full rounded-md border border-bos-line px-3 py-1.5 text-left text-bos-text hover:bg-white/5 hover:text-white"
         >
           Sign out
         </button>
@@ -288,11 +314,25 @@ function SidebarBody({
   );
 }
 
-function NavLink({ href, children }: { href: string; children: React.ReactNode }) {
+function NavLink({
+  href,
+  children,
+  pathname,
+}: {
+  href: string;
+  children: React.ReactNode;
+  pathname?: string;
+}) {
+  const active = pathname === href || (pathname?.startsWith(href + '/') ?? false);
   return (
     <Link
       href={href}
-      className="rounded-md px-3 py-1.5 text-ink-600 transition hover:bg-ink-50 hover:text-ink-900"
+      className={
+        'rounded-md px-3 py-1.5 transition ' +
+        (active
+          ? 'bg-gold-400/10 text-gold-400'
+          : 'text-bos-text hover:bg-white/5 hover:text-white')
+      }
     >
       {children}
     </Link>
@@ -335,7 +375,12 @@ function NavGroupLinks({
       <div className="flex items-center gap-0.5">
         <Link
           href={group.href}
-          className="flex-1 rounded-md px-3 py-1.5 text-ink-600 transition hover:bg-ink-50 hover:text-ink-900"
+          className={
+            'flex-1 rounded-md px-3 py-1.5 transition ' +
+            (active
+              ? 'bg-gold-400/10 text-gold-400'
+              : 'text-bos-text hover:bg-white/5 hover:text-white')
+          }
         >
           {group.label}
         </Link>
@@ -344,7 +389,7 @@ function NavGroupLinks({
           onClick={() => setOpen((v) => !v)}
           aria-label={open ? `Collapse ${group.label}` : `Expand ${group.label}`}
           aria-expanded={open}
-          className="rounded-md p-1 text-ink-400 transition hover:bg-ink-50 hover:text-ink-900"
+          className="rounded-md p-1 text-bos-mute transition hover:bg-white/5 hover:text-white"
         >
           <span
             className={`inline-block transition-transform ${
@@ -356,16 +401,25 @@ function NavGroupLinks({
         </button>
       </div>
       {open && (
-        <div className="ml-3 mt-0.5 flex flex-col gap-0.5 border-l border-ink-100 pl-2">
-          {group.children.map((c) => (
-            <Link
-              key={c.href}
-              href={c.href}
-              className="rounded-md px-3 py-1 text-xs text-ink-600 transition hover:bg-ink-50 hover:text-ink-900"
-            >
-              {c.label}
-            </Link>
-          ))}
+        <div className="ml-3 mt-0.5 flex flex-col gap-0.5 border-l border-bos-line pl-2">
+          {group.children.map((c) => {
+            const childActive =
+              pathname === c.href || pathname.startsWith(c.href + '/');
+            return (
+              <Link
+                key={c.href}
+                href={c.href}
+                className={
+                  'rounded-md px-3 py-1 text-xs transition ' +
+                  (childActive
+                    ? 'bg-gold-400/10 text-gold-400'
+                    : 'text-bos-text hover:bg-white/5 hover:text-white')
+                }
+              >
+                {c.label}
+              </Link>
+            );
+          })}
         </div>
       )}
     </div>

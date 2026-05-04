@@ -6,6 +6,10 @@ import Link from 'next/link';
 import { loginSchema } from '@agc/shared';
 import { useAuth } from '@/lib/auth-context';
 import { ApiError } from '@/lib/api-client';
+import {
+  BullionOSHeroMark,
+  BullionOSWordmark,
+} from '@/components/bullion-os-logo';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -42,51 +46,57 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-ink-50 px-4">
-      <div className="w-full max-w-sm rounded-2xl bg-white p-8 shadow-sm ring-1 ring-ink-200">
+    <main className="flex min-h-screen flex-col items-center justify-center bg-bos-black px-4 py-12">
+      {/* BullionOS hero mark + wordmark — replaces the per-instance
+          AGC branding logo on the login surface. The mark is fully
+          inline SVG so it scales sharp + lives without an asset
+          upload step. AGC branding still appears post-login on the
+          admin shell + invoice PDFs as before. */}
+      <div className="mb-8 flex flex-col items-center">
+        <BullionOSHeroMark size={140} />
+        <div className="mt-4">
+          <BullionOSWordmark size="lg" withTagline />
+        </div>
+      </div>
+
+      <div className="w-full max-w-sm rounded-2xl border border-bos-line bg-bos-night p-8 shadow-2xl shadow-black/40">
         <div className="mb-6">
-          {/* Served from /api/v1/public/branding/logo — admins upload at /admin/settings */}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/api/v1/public/branding/logo"
-            alt="AGC"
-            className="h-12 w-12 rounded-md object-contain"
-            onError={(e) => {
-              // Fallback to a neutral block if the logo isn't configured yet.
-              (e.currentTarget as HTMLImageElement).style.display = 'none';
-            }}
-          />
-          <h1 className="mt-4 text-xl font-semibold text-ink-900">Sign in</h1>
-          <p className="mt-1 text-sm text-ink-400">AGC client portal</p>
+          <h1 className="text-xl font-semibold text-white">Sign in</h1>
+          <p className="mt-1 text-sm text-bos-mute">
+            Atlanta Gold &amp; Coin · Operator portal
+          </p>
         </div>
 
         <form onSubmit={onSubmit} className="space-y-4">
           <label className="block">
-            <span className="text-sm font-medium text-ink-800">Email</span>
+            <span className="text-sm font-medium text-bos-text">Email</span>
             <input
               type="email"
               autoComplete="email"
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="mt-1 block w-full rounded-md border border-ink-200 bg-white px-3 py-2 text-ink-900 outline-none ring-gold-500/30 focus:ring-2"
+              className="mt-1 block w-full rounded-md border border-bos-line bg-bos-black px-3 py-2 text-white outline-none ring-gold-400/40 placeholder:text-bos-mute focus:ring-2"
             />
           </label>
 
           <label className="block">
-            <span className="text-sm font-medium text-ink-800">Password</span>
+            <span className="text-sm font-medium text-bos-text">Password</span>
             <input
               type="password"
               autoComplete="current-password"
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="mt-1 block w-full rounded-md border border-ink-200 bg-white px-3 py-2 text-ink-900 outline-none ring-gold-500/30 focus:ring-2"
+              className="mt-1 block w-full rounded-md border border-bos-line bg-bos-black px-3 py-2 text-white outline-none ring-gold-400/40 placeholder:text-bos-mute focus:ring-2"
             />
           </label>
 
           {error && (
-            <div role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
+            <div
+              role="alert"
+              className="rounded-md border border-red-700/40 bg-red-900/30 px-3 py-2 text-sm text-red-300"
+            >
               {error}
             </div>
           )}
@@ -94,25 +104,37 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={submitting}
-            className="w-full rounded-md bg-ink-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-ink-800 disabled:opacity-60"
+            className="w-full rounded-md bg-gold-400 px-4 py-2 text-sm font-semibold text-bos-black transition hover:bg-gold-300 disabled:opacity-60"
           >
             {submitting ? 'Signing in…' : 'Sign in'}
           </button>
         </form>
 
-        <p className="mt-6 text-center text-sm text-ink-400">
+        <p className="mt-6 text-center text-sm text-bos-mute">
           New here?{' '}
-          <Link href="/register" className="text-ink-900 underline-offset-2 hover:underline">
+          <Link
+            href="/register"
+            className="text-gold-400 underline-offset-2 hover:underline"
+          >
             Create an account
           </Link>
         </p>
-        <p className="mt-2 text-center text-sm text-ink-400">
+        <p className="mt-2 text-center text-sm text-bos-mute">
           Want to book an appointment?{' '}
-          <Link href="/book" className="text-ink-900 underline-offset-2 hover:underline">
+          <Link
+            href="/book"
+            className="text-gold-400 underline-offset-2 hover:underline"
+          >
             Schedule online
           </Link>
         </p>
       </div>
+
+      <p className="mt-6 text-[10px] uppercase tracking-[0.18em] text-bos-mute">
+        Powered by{' '}
+        <span className="text-white">bullion</span>
+        <span className="text-gold-400">OS</span>
+      </p>
     </main>
   );
 }
