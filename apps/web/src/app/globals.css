@@ -52,6 +52,19 @@
      that has no explicit `text-*` class (falls through to body's
      #17171a otherwise, which is invisible on the dark page). */
   .bos-theme                         { color: #ebebef; }
+  /* Form elements (button/input/select/textarea) DON'T inherit
+   * `color` from their parent in any browser — they reset to the
+   * user-agent's `ButtonText` / `FieldText` system colors which are
+   * dark on light system themes. The InlineField pattern used on
+   * Catalog / In-Stock Sheet / What We Pay wraps each editable cell
+   * in a <button>; without this rule the product names render dark
+   * on dark and disappear. Explicit `text-*` classes still win via
+   * specificity, so this only fills the gap for unstyled elements.
+   */
+  .bos-theme button,
+  .bos-theme select,
+  .bos-theme input,
+  .bos-theme textarea                { color: inherit; }
 
   /* === Surfaces === */
   .bos-theme .bg-white               { background-color: #0f1320; }
@@ -133,14 +146,62 @@
   .bos-theme .border-sky-200         { border-color: rgba(14, 165, 233, 0.35); }
   .bos-theme .text-sky-700           { color: #7dd3fc; }
   .bos-theme .text-sky-800           { color: #bae6fd; }
-  /* Emerald — kept VISIBLE per user request, just on dark bg */
+  .bos-theme .text-sky-900           { color: #e0f2fe; }
+  /* Emerald — bright text on dark surface (the dashboard "New" tile
+   * + every emerald status pill needs the number itself to read). */
   .bos-theme .bg-emerald-50          { background-color: rgba(16, 185, 129, 0.10); }
   .bos-theme .bg-emerald-100         { background-color: rgba(16, 185, 129, 0.18); }
   .bos-theme .border-emerald-200     { border-color: rgba(16, 185, 129, 0.35); }
-  /* Red — kept VISIBLE per user request, just on dark bg */
+  .bos-theme .text-emerald-700       { color: #34d399; }
+  .bos-theme .text-emerald-800       { color: #6ee7b7; }
+  .bos-theme .text-emerald-900       { color: #a7f3d0; }
+  /* Red — bright text on dark surface */
   .bos-theme .bg-red-50              { background-color: rgba(239, 68, 68, 0.10); }
   .bos-theme .bg-red-100             { background-color: rgba(239, 68, 68, 0.18); }
   .bos-theme .border-red-200         { border-color: rgba(239, 68, 68, 0.35); }
+  .bos-theme .text-red-600           { color: #f87171; }
+  .bos-theme .text-red-700           { color: #fca5a5; }
+  .bos-theme .text-red-800           { color: #fecaca; }
+  .bos-theme .text-red-900           { color: #fee2e2; }
+  /* Green — bright */
+  .bos-theme .bg-green-50            { background-color: rgba(34, 197, 94, 0.10); }
+  .bos-theme .bg-green-100           { background-color: rgba(34, 197, 94, 0.18); }
+  .bos-theme .border-green-200       { border-color: rgba(34, 197, 94, 0.35); }
+  .bos-theme .text-green-700         { color: #4ade80; }
+  .bos-theme .text-green-800         { color: #86efac; }
+  .bos-theme .text-green-900         { color: #bbf7d0; }
+  /* Buy (semantic navy) — flip pastel bg + dark text to dark navy
+   * tint + bright sky text. The dashboard "Buy volume" tile + every
+   * buy-tagged badge use these. */
+  .bos-theme .bg-buy-50              { background-color: rgba(96, 165, 250, 0.12); }
+  .bos-theme .bg-buy-100             { background-color: rgba(96, 165, 250, 0.20); }
+  .bos-theme .border-buy-200         { border-color: rgba(96, 165, 250, 0.30); }
+  .bos-theme .text-buy-600           { color: #93c5fd; }
+  .bos-theme .text-buy-700           { color: #bfdbfe; }
+  /* Sell (semantic green) — same flip. */
+  .bos-theme .bg-sell-50             { background-color: rgba(52, 211, 153, 0.12); }
+  .bos-theme .bg-sell-100            { background-color: rgba(52, 211, 153, 0.20); }
+  .bos-theme .border-sell-200        { border-color: rgba(52, 211, 153, 0.30); }
+  .bos-theme .text-sell-600          { color: #6ee7b7; }
+  .bos-theme .text-sell-700          { color: #a7f3d0; }
+  /* Yellow (rare) */
+  .bos-theme .bg-yellow-50           { background-color: rgba(234, 179, 8, 0.10); }
+  .bos-theme .bg-yellow-100          { background-color: rgba(234, 179, 8, 0.18); }
+  .bos-theme .text-yellow-700        { color: #facc15; }
+  .bos-theme .text-yellow-800        { color: #fde047; }
+  /* Orange (rare) */
+  .bos-theme .bg-orange-50           { background-color: rgba(249, 115, 22, 0.10); }
+  .bos-theme .text-orange-700        { color: #fb923c; }
+  .bos-theme .text-orange-800        { color: #fdba74; }
+  /* Blue (generic — distinct from buy-* semantic) */
+  .bos-theme .bg-blue-50             { background-color: rgba(59, 130, 246, 0.10); }
+  .bos-theme .bg-blue-100            { background-color: rgba(59, 130, 246, 0.18); }
+  .bos-theme .text-blue-700          { color: #60a5fa; }
+  .bos-theme .text-blue-800          { color: #93c5fd; }
+  .bos-theme .text-blue-900          { color: #bfdbfe; }
+  /* Gold-text used as accent on body copy — keep tuned */
+  .bos-theme .text-gold-600          { color: #e7b934; }
+  .bos-theme .text-gold-700          { color: #f3d266; }
 
   /* === Form input override ===
    * The .input component class bakes in `bg-white` + `text-ink-900`
