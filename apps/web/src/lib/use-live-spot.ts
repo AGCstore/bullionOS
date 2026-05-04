@@ -30,26 +30,29 @@ export interface LiveSpot {
 /**
  * Live spot prices with session-change deltas.
  *
- * Previously this subscribed to the `/api/v1/sse/prices` SSE stream, but
- * Vercel's serverless functions buffer streaming responses when Next.js
- * rewrites proxy them — the client EventSource never received a single
- * `price` event in production and spot cards stayed blank. The admin
- * SpotTicker already uses the same polling-based pattern against
- * `/metals/spot` and works fine, so aligning here drops a whole class
- * of proxy bugs.
+ * Polls `/metals/spot` instead of subscribing to an SSE stream
+ * (Vercel's serverless functions buffer streaming responses when
+ * Next.js rewrites proxy them, so the client EventSource never
+ * received a single `price` event in production). The polling
+ * approach has no equivalent failure mode.
  *
- * Cadence: 15s, matching the old SSE emit interval. The API caches
- * upstream for 30s anyway, so every other request is a cheap Redis read.
- * `refetchIntervalInBackground: true` keeps prices fresh when the tab
- * isn't focused — sales shouldn't have to click away to get a fresh
- * number.
+ * Cadence: 30s while the tab is visible, paused entirely when the
+ * tab is in the background. The 30s matches the BE Redis cache TTL,
+ * so consecutive polls are cheap. Pausing in background trims
+ * unnecessary load when an operator has multiple AGC tabs open.
+ *
+ * Throttling rationale: every tenant deploy hits a shared metals.dev
+ * key (via the metals-proxy when configured). The 30s FE cadence +
+ * 30s BE cache + 60s proxy poll layered together cap effective
+ * upstream burn at 1 metals.dev call/min regardless of how many
+ * tabs / operators are open.
  */
 export function useLiveSpot(): { spot: LiveSpot | null; error: boolean } {
   const { data, isError } = useQuery<LiveSpot>({
     queryKey: ['live-spot'],
     queryFn: () => apiFetch<LiveSpot>('/metals/spot'),
-    refetchInterval: 15_000,
-    refetchIntervalInBackground: true,
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
     // Keep the last good value on screen while a refetch is in flight
     // instead of blanking to null — avoids the "—" flash on reconnect.
     placeholderData: (prev) => prev,

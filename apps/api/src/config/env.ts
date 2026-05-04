@@ -70,6 +70,16 @@ const envSchema = z.object({
   /** TOTP issuer label — appears in the user's authenticator app. */
   TOTP_ISSUER: z.string().optional(),
 
+  /**
+   * Optional shared metals-proxy. When set, MetalsService fetches
+   * cached snapshots from this URL using METALS_PROXY_KEY as a
+   * Bearer token instead of calling metals.dev directly. AGC runs
+   * the proxy centrally; tenant deploys point at it to consolidate
+   * metals.dev burn into one upstream call per minute.
+   */
+  METALS_PROXY_URL: z.string().url().optional(),
+  METALS_PROXY_KEY: z.string().optional(),
+
   TWILIO_ACCOUNT_SID: z.string().optional().default(''),
   TWILIO_AUTH_TOKEN: z.string().optional().default(''),
   TWILIO_FROM: z.string().optional().default(''),

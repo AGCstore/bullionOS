@@ -88,12 +88,23 @@ export class MetalsService {
     return this.refresh();
   }
 
-  /** Force a refresh from metals.dev. */
+  /** Force a refresh from upstream (proxy if configured, else metals.dev direct). */
   async refresh(): Promise<SpotPrices> {
+    // Prefer the central metals-proxy when configured: one shared
+    // metals.dev key, per-tenant Bearer auth. Falls through to
+    // direct metals.dev when METALS_PROXY_URL is unset.
+    const proxyUrl = this.config.get<string>('METALS_PROXY_URL') ?? '';
+    const proxyKey = this.config.get<string>('METALS_PROXY_KEY') ?? '';
+    if (proxyUrl && proxyKey) {
+      return this.refreshFromProxy(proxyUrl, proxyKey);
+    }
+
     const creds = await this.resolveCreds();
     if (!creds) {
       return this.onUpstreamFailure(
-        new Error('No metals.dev credentials configured (check /admin/integrations or METALS_API_KEY env)'),
+        new Error(
+          'No metals upstream configured: set METALS_PROXY_URL+KEY, or save metals creds in /admin/integrations, or set METALS_API_KEY env.',
+        ),
       );
     }
 
@@ -141,6 +152,58 @@ export class MetalsService {
 
     await this.redis.set(CACHE_KEY, JSON.stringify(prices), 'EX', this.ttlSec);
     // Seed today's baseline the first time we see a spot after midnight.
+    await this.ensureBaseline(prices);
+    return this.withChange(prices);
+  }
+
+  /**
+   * Read the shared metals-proxy. Same response normalization as the
+   * direct path so callers don't care which upstream produced the
+   * snapshot.
+   */
+  private async refreshFromProxy(
+    proxyUrl: string,
+    proxyKey: string,
+  ): Promise<SpotPrices> {
+    let res: Response;
+    try {
+      res = await fetch(proxyUrl.replace(/\/+$/, '') + '/spot', {
+        headers: { authorization: `Bearer ${proxyKey}` },
+        signal: AbortSignal.timeout(8_000),
+      });
+    } catch (err) {
+      return this.onUpstreamFailure(err);
+    }
+    if (!res.ok) {
+      return this.onUpstreamFailure(
+        new Error(`metals-proxy responded ${res.status}`),
+      );
+    }
+    const body = (await res.json()) as {
+      status?: string;
+      metals?: Partial<Record<Metal, number>>;
+      timestamps?: { metal?: string };
+    };
+    if (body.status && body.status !== 'success') {
+      return this.onUpstreamFailure(
+        new Error(`metals-proxy status: ${body.status}`),
+      );
+    }
+    const m = body.metals ?? {};
+    if (!m.gold || !m.silver || !m.platinum || !m.palladium) {
+      return this.onUpstreamFailure(
+        new Error('metals-proxy returned incomplete metals map'),
+      );
+    }
+    const prices: SpotPrices = {
+      gold: String(m.gold),
+      silver: String(m.silver),
+      platinum: String(m.platinum),
+      palladium: String(m.palladium),
+      asOf: body.timestamps?.metal ?? new Date().toISOString(),
+      cachedAt: Date.now(),
+    };
+    await this.redis.set(CACHE_KEY, JSON.stringify(prices), 'EX', this.ttlSec);
     await this.ensureBaseline(prices);
     return this.withChange(prices);
   }
