@@ -80,6 +80,7 @@
   .bos-theme .bg-ink-100\/40         { background-color: rgba(26, 31, 46, 0.4); }
   .bos-theme .bg-ink-100\/60         { background-color: rgba(26, 31, 46, 0.6); }
   .bos-theme .bg-white\/90           { background-color: rgba(15, 19, 32, 0.9); }
+  .bos-theme .bg-white\/95           { background-color: rgba(15, 19, 32, 0.95); }
   .bos-theme .bg-white\/70           { background-color: rgba(15, 19, 32, 0.7); }
 
   /* Hover states — subtle elevate (vs. light theme's slight darken) */
@@ -206,6 +207,30 @@
   /* Gold-text used as accent on body copy — keep tuned */
   .bos-theme .text-gold-600          { color: #e7b934; }
   .bos-theme .text-gold-700          { color: #f3d266; }
+
+  /* Slate / Violet — used by the metal-group accent pills (Silver
+   * = slate, Palladium = violet) on the buy-sheet + in-stock-sheet
+   * category nav strip. Without these the pills render as pale
+   * pastels with dark text against a now-near-white sticky nav bg
+   * (the bg-white/95 case the operator just spotted). */
+  .bos-theme .bg-slate-50            { background-color: rgba(148, 163, 184, 0.10); }
+  .bos-theme .bg-slate-100           { background-color: rgba(148, 163, 184, 0.18); }
+  .bos-theme .border-slate-200       { border-color: rgba(148, 163, 184, 0.30); }
+  .bos-theme .border-slate-300       { border-color: rgba(148, 163, 184, 0.45); }
+  .bos-theme .text-slate-600         { color: #cbd5e1; }
+  .bos-theme .text-slate-700         { color: #e2e8f0; }
+  .bos-theme .text-slate-800         { color: #f1f5f9; }
+  .bos-theme .bg-violet-50           { background-color: rgba(167, 139, 250, 0.10); }
+  .bos-theme .bg-violet-100          { background-color: rgba(167, 139, 250, 0.18); }
+  .bos-theme .border-violet-200      { border-color: rgba(167, 139, 250, 0.30); }
+  .bos-theme .border-violet-300      { border-color: rgba(167, 139, 250, 0.45); }
+  .bos-theme .text-violet-600        { color: #c4b5fd; }
+  .bos-theme .text-violet-700        { color: #ddd6fe; }
+  .bos-theme .text-violet-800        { color: #ede9fe; }
+  /* Sky/amber 300 borders rounded out — used on the metal-group
+   * pill outlines (gold = amber, platinum = sky). */
+  .bos-theme .border-sky-300         { border-color: rgba(14, 165, 233, 0.45); }
+  .bos-theme .border-amber-300       { border-color: rgba(245, 158, 11, 0.45); }
 
   /* === Form input override ===
    * The .input component class bakes in `bg-white` + `text-ink-900`
