@@ -3,11 +3,5 @@
   "framework": "nextjs",
   "buildCommand": "cd ../.. && pnpm --filter @agc/web build",
   "installCommand": "cd ../.. && pnpm install --frozen-lockfile",
-  "outputDirectory": ".next",
-  "rewrites": [
-    {
-      "source": "/api/:path*",
-      "destination": "https://agc-api-production.up.railway.app/api/:path*"
-    }
-  ]
+  "outputDirectory": ".next"
 }
