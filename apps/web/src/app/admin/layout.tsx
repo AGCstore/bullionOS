@@ -353,6 +353,12 @@ function SidebarBody({
           <div className="mt-0.5 text-bos-mute">Role: {user.role}</div>
         </div>
         <a
+          href="/dashboard/security"
+          className="block w-full rounded-md border border-bos-line px-3 py-1.5 text-center text-bos-text hover:bg-white/5 hover:text-white"
+        >
+          Account &amp; Security →
+        </a>
+        <a
           href="/dashboard"
           className="block w-full rounded-md border border-bos-line px-3 py-1.5 text-center text-bos-text hover:bg-white/5 hover:text-white"
         >
