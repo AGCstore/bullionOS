@@ -364,6 +364,19 @@ function SidebarBody({
         >
           Client portal view →
         </a>
+        {/* Cross-tenant dealer marketplace. Lives off-instance at
+            dealer.bullionostrading.com so dealers from any home tenant
+            (this bullionOS instance, agc-crm, future tenants) can
+            trade with each other. Opens in a new tab so it doesn't
+            disrupt the operator's session. */}
+        <a
+          href="https://dealer.bullionostrading.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block w-full rounded-md border border-gold-400/30 bg-gold-400/5 px-3 py-1.5 text-center text-gold-400 hover:bg-gold-400/10 hover:text-gold-300"
+        >
+          Dealer Board ↗
+        </a>
         <button
           onClick={onLogout}
           className="w-full rounded-md border border-bos-line px-3 py-1.5 text-center text-bos-text hover:bg-white/5 hover:text-white"
