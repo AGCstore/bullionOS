@@ -165,22 +165,24 @@ interface ClientLite {
 // ===== Defaults =====
 
 /**
- * AGC's default sender. Used only if #3 doesn't return a saved sender
- * matching this address (Hunter set this up on ifsclients.com; the
- * wizard will auto-pick it). Free-form free of the IFS sender list,
- * the operator can still edit any field before submit.
+ * Tenant-neutral fallback sender. Only used when IFS returns zero
+ * saved senders (new account case). Operators fill these in and IFS
+ * remembers it for next time. Country defaults to "United States"
+ * because that's what every tenant on this product is shipping from
+ * today; the rest is intentionally blank so nothing leaks across
+ * tenants.
  */
 const FALLBACK_SENDER = {
-  ca_company_name: 'Your ATL Taxidermy',
-  ca_name: 'Your ATL Taxidermy',
-  ca_label_name: 'Your ATL Taxidermy',
+  ca_company_name: '',
+  ca_name: '',
+  ca_label_name: '',
   ca_email: '',
-  ca_address1: '8480 Holcomb Bridge Rd #200',
+  ca_address1: '',
   ca_address2: '',
-  ca_city: 'Alpharetta',
-  ca_state: 'Georgia',
-  ca_state_id: 'GA',
-  ca_zip: '30022',
+  ca_city: '',
+  ca_state: '',
+  ca_state_id: '',
+  ca_zip: '',
   ca_country: 'United States',
   ca_phone: '',
   ca_fax: '',

@@ -282,7 +282,7 @@ function BrandingForm({
             {...field('address_city_state_zip')}
             className="input mt-1"
             maxLength={120}
-            placeholder="Alpharetta, GA 30022"
+            placeholder="City, State ZIP"
           />
         </label>
         <label className="block">
@@ -291,7 +291,7 @@ function BrandingForm({
             {...field('phone')}
             className="input mt-1"
             maxLength={40}
-            placeholder="404-236-9744"
+            placeholder="555-555-5555"
           />
         </label>
         <label className="block">
